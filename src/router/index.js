@@ -10,6 +10,7 @@ import CentrosListView from '../views/CentrosListView.vue'
 import CentroConfigView from '../views/CentroConfigView.vue'
 import InspeccionesListView from '../views/InspeccionesListView.vue'
 import InspeccionDetailView from '../views/InspeccionDetailView.vue'
+import CentroHistorialView from '../views/CentroHistorialView.vue'; // <-- SE AÑADE ESTA LÍNEA
 
 // Definición de las Rutas de la Aplicación
 const routes = [
@@ -37,7 +38,6 @@ const routes = [
     component: CentroConfigView,
     meta: { requiresAuth: true }
   },
-  // --- NUEVAS RUTAS DE INSPECCIÓN ---
   {
     path: '/inspecciones',
     name: 'InspeccionesList',
@@ -48,6 +48,13 @@ const routes = [
     path: '/inspecciones/:id',
     name: 'InspeccionDetail',
     component: InspeccionDetailView,
+    meta: { requiresAuth: true }
+  },
+  // --- NUEVA RUTA DE HISTORIAL ---
+  {
+    path: '/centros/:id/historial',
+    name: 'CentroHistorial',
+    component: CentroHistorialView,
     meta: { requiresAuth: true }
   }
 ]

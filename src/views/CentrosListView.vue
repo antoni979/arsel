@@ -2,7 +2,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { supabase } from '../supabase';
-import { PlusIcon, PencilIcon, MapPinIcon } from '@heroicons/vue/24/solid';
+import { PlusIcon, PencilIcon, MapPinIcon, ArchiveBoxIcon } from '@heroicons/vue/24/solid';
 import CentroFormModal from '../components/CentroFormModal.vue';
 
 const centros = ref([]);
@@ -75,7 +75,6 @@ onMounted(fetchCentros);
     <div v-if="loading" class="text-center text-slate-500">Cargando...</div>
     <div v-else class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
       <div class="min-w-full">
-        <!-- Encabezados de la tabla (visibles en pantallas grandes) -->
         <div class="hidden md:grid grid-cols-12 gap-4 px-6 py-4 bg-slate-50 border-b border-slate-200">
           <div class="col-span-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Centro / Dirección</div>
           <div class="col-span-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Responsable</div>
@@ -83,7 +82,6 @@ onMounted(fetchCentros);
           <div class="col-span-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Acciones</div>
         </div>
 
-        <!-- Cuerpo de la tabla -->
         <ul class="divide-y divide-slate-200">
           <li v-for="centro in filteredCentros" :key="centro.id" class="px-6 py-4 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
             <div class="col-span-1 md:col-span-4">
@@ -99,11 +97,15 @@ onMounted(fetchCentros);
                 {{ centro.zona }}
               </span>
             </div>
-            <div class="col-span-1 md:col-span-3 flex justify-end items-center gap-2">
+            <div class="col-span-1 md:col-span-3 flex justify-end items-center flex-wrap gap-2">
               <button @click="openEditModal(centro)" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
                 <PencilIcon class="h-4 w-4" />
                 Editar
               </button>
+              <router-link :to="`/centros/${centro.id}/historial`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
+                <ArchiveBoxIcon class="h-4 w-4" />
+                Historial
+              </router-link>
               <router-link :to="`/centros/${centro.id}/configurar`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-white bg-green-600 rounded-md hover:bg-green-700">
                 <MapPinIcon class="h-4 w-4" />
                 Puntos

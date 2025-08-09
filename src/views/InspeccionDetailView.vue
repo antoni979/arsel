@@ -1,12 +1,14 @@
 <!-- src/views/InspeccionDetailView.vue -->
 <script setup>
 import { ref, onMounted } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router'; // Importamos useRouter
 import { supabase } from '../supabase';
 import InteractiveMap from '../components/InteractiveMap.vue';
 import ChecklistModal from '../components/ChecklistModal.vue';
+import { CheckCircleIcon } from '@heroicons/vue/24/solid'; // Importamos un icono para el nuevo botón
 
 const route = useRoute();
+const router = useRouter(); // Inicializamos el router para poder navegar
 const inspeccionId = route.params.id;
 
 const inspeccion = ref(null);
@@ -21,11 +23,31 @@ const openChecklistFor = (punto) => {
   isModalOpen.value = true;
 };
 
+const onChecklistSaved = () => {
+  console.log("Checklist guardado.");
+};
+
+// --- NUEVA FUNCIÓN PARA FINALIZAR LA INSPECCIÓN ---
+const finalizarInspeccion = async () => {
+  if (confirm('¿Estás seguro de que quieres finalizar esta inspección? Una vez finalizada, no podrás editar las incidencias iniciales.')) {
+    const { error } = await supabase
+      .from('inspecciones')
+      .update({ estado: 'finalizada' }) // Cambiamos el estado a 'finalizada'
+      .eq('id', inspeccionId);
+
+    if (error) {
+      alert('Error al finalizar la inspección: ' + error.message);
+    } else {
+      alert('Inspección finalizada correctamente.');
+      router.push('/inspecciones'); // Redirigimos a la lista de inspecciones
+    }
+  }
+};
+
 onMounted(async () => {
-  // 1. Cargar los datos de la inspección actual
   const { data: inspectionData, error: inspectionError } = await supabase
     .from('inspecciones')
-    .select('*, centros(*)') // Cargamos la inspección y la info del centro asociado
+    .select('*, centros(*)')
     .eq('id', inspeccionId)
     .single();
   
@@ -38,7 +60,6 @@ onMounted(async () => {
   inspeccion.value = inspectionData;
   centro.value = inspectionData.centros;
 
-  // 2. Cargar los puntos maestros para ese centro
   if (centro.value) {
     const { data: puntosData } = await supabase
       .from('puntos_maestros')
@@ -56,11 +77,26 @@ onMounted(async () => {
   <div class="p-8 h-full flex flex-col">
     <div v-if="loading" class="text-center text-slate-500">Cargando datos de la inspección...</div>
     <div v-else-if="centro && inspeccion" class="flex-1 flex flex-col">
-      <h1 class="text-4xl font-bold text-slate-800 mb-2">Inspección: {{ centro.nombre }}</h1>
-      <p class="text-slate-500 mb-8">Selecciona un punto de la lista o del mapa para rellenar su checklist.</p>
+      <div class="flex-shrink-0 mb-8">
+        <div class="flex flex-col md:flex-row justify-between items-start gap-4">
+          <div>
+            <h1 class="text-4xl font-bold text-slate-800 mb-2">Inspección: {{ centro.nombre }}</h1>
+            <p class="text-slate-500">Técnico: <span class="font-medium">{{ inspeccion.tecnico_nombre }}</span> | Fecha: <span class="font-medium">{{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString() }}</span></p>
+          </div>
+          <!-- === BOTÓN DE FINALIZAR AÑADIDO AQUÍ === -->
+          <!-- Se muestra solo si la inspección está 'en_progreso' -->
+          <button 
+            v-if="inspeccion.estado === 'en_progreso'"
+            @click="finalizarInspeccion" 
+            class="flex items-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm"
+          >
+            <CheckCircleIcon class="h-5 w-5" />
+            Finalizar Inspección
+          </button>
+        </div>
+      </div>
       
       <div class="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-8 overflow-hidden">
-        <!-- Panel Izquierdo: Lista de Puntos -->
         <div class="lg:col-span-1 bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col">
           <h2 class="text-xl font-bold text-slate-800 mb-4 flex-shrink-0">Puntos de Inspección</h2>
           <div class="flex-1 overflow-y-auto -mr-4 pr-4">
@@ -74,9 +110,13 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- Panel Derecho: Mapa -->
         <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-2">
-          <InteractiveMap :image-url="centro.url_imagen_plano" :points="puntos" />
+          <InteractiveMap 
+            :image-url="centro.url_imagen_plano" 
+            :points="puntos"
+            :is-read-only="true"
+            @point-click="openChecklistFor"
+          />
         </div>
       </div>
     </div>
@@ -84,8 +124,10 @@ onMounted(async () => {
 
     <ChecklistModal 
       :is-open="isModalOpen" 
-      :punto="selectedPunto" 
+      :punto="selectedPunto"
+      :inspeccion-id="inspeccion ? inspeccion.id : null"
       @close="isModalOpen = false" 
+      @save="onChecklistSaved"
     />
   </div>
 </template>
