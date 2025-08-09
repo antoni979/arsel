@@ -1,0 +1,14 @@
+# netlify.toml
+
+# Reglas para el proceso de construcción
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Regla de redirección para que funcione como una Single Page Application (SPA)
+# Esto le dice a Netlify que para cualquier ruta que no encuentre,
+# debe servir el archivo index.html y dejar que Vue Router se encargue.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
