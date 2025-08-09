@@ -1,42 +1,37 @@
 <!-- src/views/DashboardView.vue -->
 <script setup>
-import { supabase } from '../supabase'
-import { useRouter } from 'vue-router'
-
-const router = useRouter()
-
-const handleLogout = async () => {
-  await supabase.auth.signOut()
-  router.push('/')
-}
+import { BuildingStorefrontIcon, DocumentMagnifyingGlassIcon } from '@heroicons/vue/24/outline';
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-100">
-    <header class="bg-white shadow">
-      <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 flex justify-between items-center">
-        <h1 class="text-3xl font-bold text-gray-900">Menú Principal</h1>
-        <button @click="handleLogout" class="px-4 py-2 font-semibold text-white bg-red-600 rounded-md hover:bg-red-700">
-          Cerrar Sesión
-        </button>
-      </div>
-    </header>
-    <main>
-      <div class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <!-- Tarjeta para ir a Centros -->
-          <router-link to="/centros" class="bg-white p-6 rounded-lg shadow-md hover:shadow-xl transition-shadow">
-            <h2 class="text-2xl font-bold text-gray-800">Maestro de Centros</h2>
-            <p class="text-gray-600 mt-2">Configurar los centros y definir los puntos de inspección en el plano.</p>
-          </router-link>
-
-          <!-- Tarjeta para ir a Inspecciones -->
-          <router-link to="/inspecciones" class="bg-white p-6 rounded-lg shadow-md hover:shadow-xl transition-shadow">
-            <h2 class="text-2xl font-bold text-gray-800">Inspecciones</h2>
-            <p class="text-gray-600 mt-2">Iniciar o continuar una inspección basada en una plantilla de centro.</p>
-          </router-link>
+  <div class="p-8">
+    <h1 class="text-4xl font-bold text-slate-800 mb-8">Menú Principal</h1>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <!-- Tarjeta para Maestro de Centros -->
+      <router-link to="/centros" class="group block bg-white p-8 rounded-xl shadow-sm hover:shadow-lg transition-shadow border border-slate-200">
+        <div class="flex items-center gap-6">
+          <div class="bg-blue-100 p-4 rounded-lg">
+            <BuildingStorefrontIcon class="h-8 w-8 text-blue-600" />
+          </div>
+          <div>
+            <h2 class="text-2xl font-bold text-slate-800 group-hover:text-blue-600 transition-colors">Maestro de Centros</h2>
+            <p class="text-slate-500 mt-1">Configurar los centros y definir los puntos de inspección en el plano.</p>
+          </div>
         </div>
-      </div>
-    </main>
+      </router-link>
+
+      <!-- Tarjeta para Inspecciones -->
+      <router-link to="/inspecciones" class="group block bg-white p-8 rounded-xl shadow-sm hover:shadow-lg transition-shadow border border-slate-200">
+        <div class="flex items-center gap-6">
+          <div class="bg-teal-100 p-4 rounded-lg">
+            <DocumentMagnifyingGlassIcon class="h-8 w-8 text-teal-600" />
+          </div>
+          <div>
+            <h2 class="text-2xl font-bold text-slate-800 group-hover:text-teal-600 transition-colors">Inspecciones</h2>
+            <p class="text-slate-500 mt-1">Iniciar o continuar una inspección basada en una plantilla de centro.</p>
+          </div>
+        </div>
+      </router-link>
+    </div>
   </div>
 </template>

@@ -8,6 +8,8 @@ import DashboardView from '../views/DashboardView.vue'
 import Login from '../components/Login.vue'
 import CentrosListView from '../views/CentrosListView.vue'
 import CentroConfigView from '../views/CentroConfigView.vue'
+import InspeccionesListView from '../views/InspeccionesListView.vue'
+import InspeccionDetailView from '../views/InspeccionDetailView.vue'
 
 // Definición de las Rutas de la Aplicación
 const routes = [
@@ -15,13 +17,13 @@ const routes = [
     path: '/',
     name: 'Login',
     component: Login,
-    meta: { layout: 'Blank' } // El Login usa el layout vacío, sin barra lateral
+    meta: { layout: 'Blank' }
   },
   {
     path: '/dashboard',
     name: 'Dashboard',
     component: DashboardView,
-    meta: { requiresAuth: true } // El resto de rutas usan el layout por defecto con la barra lateral
+    meta: { requiresAuth: true }
   },
   {
     path: '/centros',
@@ -33,6 +35,19 @@ const routes = [
     path: '/centros/:id/configurar',
     name: 'CentroConfig',
     component: CentroConfigView,
+    meta: { requiresAuth: true }
+  },
+  // --- NUEVAS RUTAS DE INSPECCIÓN ---
+  {
+    path: '/inspecciones',
+    name: 'InspeccionesList',
+    component: InspeccionesListView,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/inspecciones/:id',
+    name: 'InspeccionDetail',
+    component: InspeccionDetailView,
     meta: { requiresAuth: true }
   }
 ]
@@ -48,15 +63,12 @@ router.beforeEach(async (to, from, next) => {
   const { data: { session } } = await supabase.auth.getSession()
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
 
-  // Si la ruta requiere login y el usuario no está autenticado, se le redirige al Login
   if (requiresAuth && !session) {
     next({ name: 'Login' })
   } 
-  // Si el usuario ya está logueado e intenta ir a la página de Login, se le redirige al Dashboard
   else if (session && to.name === 'Login') {
     next({ name: 'Dashboard' })
   }
-  // En cualquier otro caso, se permite la navegación
   else {
     next()
   }
