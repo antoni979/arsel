@@ -1,0 +1,2343 @@
+--- INICIO DEL ARCHIVO: package.json ---
+{
+  "name": "arsel",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tailwind:init": "tailwindcss init -p"
+  },
+  "dependencies": {
+    "@heroicons/vue": "^2.2.0",
+    "@supabase/supabase-js": "^2.53.1",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^3.0.1",
+    "jspdf-autotable": "^5.0.2",
+    "vue": "^3.5.18",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "vite": "^7.1.0"
+  }
+}
+
+--- FIN DEL ARCHIVO: package.json ---
+
+--- INICIO DEL ARCHIVO: vite.config.js ---
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [vue()],
+})
+
+--- FIN DEL ARCHIVO: vite.config.js ---
+
+--- INICIO DEL ARCHIVO: src\App.vue ---
+<!-- src/App.vue -->
+<script setup>
+import { computed } from 'vue';
+import { useRoute } from 'vue-router';
+import DefaultLayout from './layouts/DefaultLayout.vue';
+import BlankLayout from './layouts/BlankLayout.vue';
+
+const route = useRoute();
+const layout = computed(() => {
+  if (route.meta.layout === 'Blank') {
+    return BlankLayout;
+  }
+  return DefaultLayout;
+});
+</script>
+
+<template>
+  <component :is="layout">
+    <router-view />
+  </component>
+</template>
+--- FIN DEL ARCHIVO: src\App.vue ---
+
+--- INICIO DEL ARCHIVO: src\main.js ---
+// src/main.js
+import { createApp } from 'vue'
+import './style.css'
+import App from './App.vue'
+import router from './router' // Importamos nuestro router
+
+const app = createApp(App)
+
+app.use(router) // Le decimos a la app que use el router
+
+app.mount('#app')
+--- FIN DEL ARCHIVO: src\main.js ---
+
+--- INICIO DEL ARCHIVO: src\style.css ---
+/* src/style.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+--- FIN DEL ARCHIVO: src\style.css ---
+
+--- INICIO DEL ARCHIVO: src\supabase.js ---
+// src/supabase.js
+import { createClient } from '@supabase/supabase-js'
+
+// Estas líneas leen las claves que pusiste en el archivo .env.local
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+// Exportamos el cliente para poder usarlo en toda la aplicación
+export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+--- FIN DEL ARCHIVO: src\supabase.js ---
+
+--- INICIO DEL ARCHIVO: src\assets\vue.svg ---
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="37.07" height="36" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 198"><path fill="#41B883" d="M204.8 0H256L128 220.8L0 0h97.92L128 51.2L157.44 0h47.36Z"></path><path fill="#41B883" d="m0 0l128 220.8L256 0h-51.2L128 132.48L50.56 0H0Z"></path><path fill="#35495E" d="M50.56 0L128 133.12L204.8 0h-47.36L128 51.2L97.92 0H50.56Z"></path></svg>
+--- FIN DEL ARCHIVO: src\assets\vue.svg ---
+
+--- INICIO DEL ARCHIVO: src\components\AddPointForm.vue ---
+<!-- src/components/AddPointForm.vue -->
+<script setup>
+import { ref } from 'vue';
+
+defineProps({
+  salas: {
+    type: Array,
+    required: true
+  }
+});
+
+const emit = defineEmits(['save', 'cancel']);
+
+const selectedSalaId = ref(null);
+
+const handleSave = () => {
+  if (!selectedSalaId.value) {
+    alert("Por favor, selecciona una sala.");
+    return;
+  }
+  emit('save', selectedSalaId.value);
+};
+</script>
+
+<template>
+  <div class="p-2 bg-slate-50 rounded-lg">
+    <h4 class="font-bold text-sm mb-2">Añadir Nuevo Punto</h4>
+    <select v-model="selectedSalaId" class="block w-full rounded-md border-slate-300 shadow-sm text-sm mb-2">
+      <option :value="null" disabled>Selecciona una sala...</option>
+      <option v-for="sala in salas" :key="sala.id" :value="sala.id">{{ sala.nombre }}</option>
+    </select>
+    <div class="flex gap-2">
+      <button @click="$emit('cancel')" class="w-full text-sm py-1 px-2 rounded bg-white border hover:bg-slate-50">Cancelar</button>
+      <button @click="handleSave" class="w-full text-sm py-1 px-2 rounded bg-blue-600 text-white hover:bg-blue-700">Guardar</button>
+    </div>
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\components\AddPointForm.vue ---
+
+--- INICIO DEL ARCHIVO: src\components\CentroFormModal.vue ---
+<!-- src/components/CentroFormModal.vue -->
+<script setup>
+import { ref, watch, nextTick } from 'vue';
+import { provincias } from '../utils/provincias';
+import { supabase } from '../supabase';
+import { ArrowUpTrayIcon } from '@heroicons/vue/24/outline';
+
+const props = defineProps({
+  isOpen: Boolean,
+  centro: Object,
+});
+
+const emit = defineEmits(['close', 'save']);
+
+const form = ref({});
+const isUploadingLogo = ref(false);
+const logoInput = ref(null); // Referencia para el input de tipo file
+const zonas = ['Norte', 'Sur', 'Este', 'Oeste', 'Centro', 'Noreste', 'Noroeste', 'Sureste', 'Islas Baleares', 'Islas Canarias'];
+
+watch(() => props.isOpen, (newVal) => {
+  if (newVal) {
+    // Usamos un clon del objeto para no modificar el original hasta guardar
+    form.value = props.centro ? { ...props.centro } : { nombre: '', direccion: '', responsable_nombre: '', responsable_email: '', provincia: '', zona: '', url_logo_cliente: null };
+  }
+});
+
+const handleLogoSelected = async (event) => {
+  const file = event.target.files[0];
+  if (!file || !form.value.id) {
+    if(!form.value.id) alert("Guarda primero el centro para poder asignarle un logo.");
+    return;
+  }
+  
+  isUploadingLogo.value = true;
+  const fileName = `cliente_${form.value.id}/${Date.now()}_${file.name}`;
+  
+  // Subir el nuevo logo
+  const { error: uploadError } = await supabase.storage.from('logos-clientes').upload(fileName, file);
+  if (uploadError) {
+    alert("Error al subir el logo: " + uploadError.message);
+    isUploadingLogo.value = false;
+    return;
+  }
+
+  // Obtener la URL pública
+  const { data: { publicUrl } } = supabase.storage.from('logos-clientes').getPublicUrl(fileName);
+
+  // Actualizar el campo en la BBDD y en el formulario
+  const { error: updateError } = await supabase
+    .from('centros')
+    .update({ url_logo_cliente: publicUrl })
+    .eq('id', form.value.id);
+
+  if (updateError) {
+    alert("Error al guardar la URL del logo: " + updateError.message);
+  } else {
+    // Actualizamos el logo en el formulario para que se vea el cambio al instante
+    form.value.url_logo_cliente = publicUrl;
+  }
+  isUploadingLogo.value = false;
+};
+
+
+const handleSubmit = () => {
+  // Simplemente emitimos los datos del formulario. La subida del logo es independiente.
+  emit('save', form.value);
+};
+</script>
+
+<template>
+  <div v-if="isOpen" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+      <div class="p-6 border-b">
+        <h2 class="text-2xl font-bold text-slate-800">{{ centro ? 'Editar Centro' : 'Agregar Nuevo Centro' }}</h2>
+      </div>
+      <form @submit.prevent="handleSubmit">
+        <div class="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+          <!-- Columna 1 y 2: Campos del formulario -->
+          <div class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="md:col-span-2">
+              <label for="nombre" class="block text-sm font-medium text-slate-600">Nombre del Centro</label>
+              <input v-model="form.nombre" type="text" id="nombre" required class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div class="md:col-span-2">
+              <label for="direccion" class="block text-sm font-medium text-slate-600">Dirección</label>
+              <input v-model="form.direccion" type="text" id="direccion" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
+              <label for="responsable_nombre" class="block text-sm font-medium text-slate-600">Nombre del Responsable</label>
+              <input v-model="form.responsable_nombre" type="text" id="responsable_nombre" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
+              <label for="responsable_email" class="block text-sm font-medium text-slate-600">Email del Responsable</label>
+              <input v-model="form.responsable_email" type="email" id="responsable_email" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
+              <label for="provincia" class="block text-sm font-medium text-slate-600">Provincia</label>
+              <select v-model="form.provincia" id="provincia" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <option disabled value="">Selecciona una provincia</option>
+                <option v-for="p in provincias" :key="p" :value="p">{{ p }}</option>
+              </select>
+            </div>
+            <div>
+              <label for="zona" class="block text-sm font-medium text-slate-600">Zona</label>
+              <select v-model="form.zona" id="zona" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <option disabled value="">Selecciona una zona</option>
+                <option v-for="z in zonas" :key="z" :value="z">{{ z }}</option>
+              </select>
+            </div>
+          </div>
+          
+          <!-- Columna 3: Logo del Cliente -->
+          <div class="md:col-span-1">
+             <input type="file" ref="logoInput" @change="handleLogoSelected" accept="image/*" class="hidden">
+             <label class="block text-sm font-medium text-slate-600 mb-1">Logo del Cliente</label>
+             <div class="aspect-video bg-slate-100 rounded-md flex items-center justify-center border-2 border-dashed">
+                <img v-if="form.url_logo_cliente" :src="form.url_logo_cliente" class="object-contain w-full h-full p-2">
+                <div v-else class="text-center text-slate-500 p-4">Sin logo</div>
+             </div>
+             <button 
+                type="button" 
+                @click="logoInput.click()" 
+                :disabled="!form.id || isUploadingLogo"
+                class="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold rounded-md transition-colors
+                       disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed
+                       text-slate-700 bg-white border border-slate-300 hover:bg-slate-50"
+              >
+               <ArrowUpTrayIcon class="h-4 w-4" />
+               {{ isUploadingLogo ? 'Subiendo...' : (form.url_logo_cliente ? 'Cambiar Logo' : 'Subir Logo') }}
+             </button>
+             <p v-if="!form.id" class="text-xs text-slate-500 mt-1 text-center">Debes guardar el centro antes de subir un logo.</p>
+          </div>
+        </div>
+        <div class="p-6 bg-slate-50 border-t flex justify-end space-x-4">
+          <button type="button" @click="$emit('close')" class="px-4 py-2 font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">Cancelar</button>
+          <button type="submit" class="px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">Guardar Cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\components\CentroFormModal.vue ---
+
+--- INICIO DEL ARCHIVO: src\components\ChecklistModal.vue ---
+<!-- src/components/ChecklistModal.vue -->
+<script setup>
+import { ref, watch } from 'vue';
+import { supabase } from '../supabase';
+import { checklistItems } from '../utils/checklist';
+import { ArrowUpTrayIcon } from '@heroicons/vue/24/solid';
+
+const props = defineProps({
+  isOpen: Boolean,
+  punto: Object,
+  inspeccionId: Number,
+});
+
+const emit = defineEmits(['close', 'save']);
+
+const incidencias = ref([]);
+const loading = ref(false);
+const isUploading = ref(false);
+const puntoInspeccionadoId = ref(null);
+
+const gravedadOptions = [
+  { label: 'Leve', value: 'verde' },
+  { label: 'Moderado', value: 'ambar' },
+  { label: 'Grave', value: 'rojo' },
+];
+
+const loadIncidencias = async () => {
+  if (!props.punto || !props.inspeccionId) return;
+  loading.value = true;
+  puntoInspeccionadoId.value = null;
+
+  // === INICIO DE LA CORRECCIÓN (v2) ===
+  // Cambiamos .single() por .maybeSingle() para evitar el error 406 si el punto no existe todavía.
+  const { data: puntoRelacionado } = await supabase
+    .from('puntos_inspeccionados')
+    .select('id')
+    .eq('inspeccion_id', props.inspeccionId)
+    .eq('punto_maestro_id', props.punto.id)
+    .maybeSingle(); // <-- ¡ESTE ES EL CAMBIO!
+  // === FIN DE LA CORRECCIÓN (v2) ===
+
+  if (puntoRelacionado) {
+    puntoInspeccionadoId.value = puntoRelacionado.id;
+  } else {
+    const { data: nuevoPunto, error } = await supabase
+      .from('puntos_inspeccionados')
+      .insert({
+        inspeccion_id: props.inspeccionId,
+        punto_maestro_id: props.punto.id,
+        nomenclatura: props.punto.nomenclatura,
+        coordenada_x: props.punto.coordenada_x,
+        coordenada_y: props.punto.coordenada_y,
+      })
+      .select('id')
+      .single();
+    
+    if (error) {
+        console.error("Error crítico al crear el punto de inspección:", error);
+        loading.value = false;
+        return;
+    }
+    puntoInspeccionadoId.value = nuevoPunto.id;
+  }
+
+  const { data } = await supabase
+    .from('incidencias')
+    .select('*')
+    .eq('inspeccion_id', props.inspeccionId)
+    .eq('punto_inspeccionado_id', puntoInspeccionadoId.value);
+    
+  incidencias.value = data || [];
+  loading.value = false;
+};
+
+watch(() => props.isOpen, (newVal) => {
+  if (newVal) loadIncidencias();
+});
+
+const getIncidenciaForItem = (itemId) => {
+  return incidencias.value.find(inc => inc.item_checklist === itemId);
+};
+
+const toggleStatus = async (itemId) => {
+  if (!puntoInspeccionadoId.value) {
+    alert("Error: No se ha podido identificar el punto de inspección. Por favor, cierre y abra el checklist de nuevo.");
+    return;
+  }
+
+  const incidencia = getIncidenciaForItem(itemId);
+  if (incidencia) {
+    const { error } = await supabase.from('incidencias').delete().eq('id', incidencia.id);
+    if (!error) {
+      incidencias.value = incidencias.value.filter(inc => inc.id !== incidencia.id);
+    }
+  } else {
+    const { data: newIncidencia } = await supabase
+      .from('incidencias')
+      .insert({
+        inspeccion_id: props.inspeccionId,
+        punto_inspeccionado_id: puntoInspeccionadoId.value,
+        item_checklist: itemId,
+        gravedad: 'verde',
+      }).select().single();
+      
+    if (newIncidencia) {
+      incidencias.value.push(newIncidencia);
+    }
+  }
+};
+
+const handleFileChange = async (event, incidencia) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  isUploading.value = true;
+  const fileName = `inspeccion_${props.inspeccionId}/punto_${puntoInspeccionadoId.value}/${Date.now()}_${file.name}`;
+  
+  const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, file);
+  if (uploadError) {
+    alert("Error al subir la foto: " + uploadError.message);
+    isUploading.value = false;
+    return;
+  }
+
+  const { data: { publicUrl } } = supabase.storage.from('incidencias').getPublicUrl(fileName);
+  incidencia.url_foto_antes = publicUrl;
+  await saveIncidencia(incidencia);
+  isUploading.value = false;
+};
+
+const saveIncidencia = async (incidencia) => {
+  const { id, ...dataToUpdate } = incidencia;
+  await supabase.from('incidencias').update(dataToUpdate).eq('id', id);
+};
+
+const handleClose = () => {
+  emit('save');
+  emit('close');
+}
+</script>
+
+<template>
+  <div v-if="isOpen" @click.self="handleClose" class="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
+    <div class="bg-slate-50 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+      <header class="p-4 border-b bg-white rounded-t-lg flex justify-between items-center">
+        <h2 class="text-xl font-bold text-slate-800">Checklist para Punto: {{ punto?.nomenclatura }}</h2>
+        <button @click="handleClose" class="text-slate-400 hover:text-slate-600 text-2xl">&times;</button>
+      </header>
+      
+      <main class="flex-1 overflow-y-auto p-6 space-y-3">
+        <div v-if="loading">Cargando...</div>
+        <div v-else v-for="item in checklistItems" :key="item.id" class="bg-white rounded-lg shadow-sm border transition-all duration-300">
+          <div class="p-3 flex items-center justify-between">
+            <p class="text-slate-700">{{ item.id }}. {{ item.text }}</p>
+            <button 
+              @click="toggleStatus(item.id)"
+              :class="['px-3 py-1 text-xs font-bold rounded-full', getIncidenciaForItem(item.id) ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800']"
+            >
+              {{ getIncidenciaForItem(item.id) ? 'INSATISFACTORIO' : 'SATISFACTORIO' }}
+            </button>
+          </div>
+          
+          <div v-if="getIncidenciaForItem(item.id)" class="border-t bg-slate-50 p-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-xs font-medium text-slate-600">Gravedad</label>
+                  <select v-model="getIncidenciaForItem(item.id).gravedad" @change="saveIncidencia(getIncidenciaForItem(item.id))" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm text-sm">
+                    <option v-for="opt in gravedadOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-slate-600">Observaciones</label>
+                  <textarea v-model="getIncidenciaForItem(item.id).observaciones" @blur="saveIncidencia(getIncidenciaForItem(item.id))" rows="3" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm text-sm"></textarea>
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-600 mb-1">Foto de la Incidencia</label>
+                <div class="aspect-video bg-slate-200 rounded-md flex items-center justify-center overflow-hidden relative group">
+                  <img v-if="getIncidenciaForItem(item.id).url_foto_antes" :src="getIncidenciaForItem(item.id).url_foto_antes" class="object-cover w-full h-full">
+                  
+                  <div v-else class="text-center">
+                    <input type="file" @change="handleFileChange($event, getIncidenciaForItem(item.id))" class="hidden" :id="'fileInput-' + item.id">
+                    <label :for="'fileInput-' + item.id" :disabled="isUploading" class="cursor-pointer flex items-center gap-2 px-3 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">
+                      <ArrowUpTrayIcon class="h-4 w-4" />
+                      {{ isUploading ? 'Subiendo...' : 'Subir Foto' }}
+                    </label>
+                  </div>
+                  
+                  <div v-if="getIncidenciaForItem(item.id).url_foto_antes" class="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                     <input type="file" @change="handleFileChange($event, getIncidenciaForItem(item.id))" class="hidden" :id="'fileInput-change-' + item.id">
+                     <label :for="'fileInput-change-' + item.id" class="cursor-pointer text-white text-sm font-semibold">Cambiar Foto</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <footer class="p-4 bg-white border-t rounded-b-lg flex justify-end">
+        <button @click="handleClose" class="px-5 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">
+          Cerrar
+        </button>
+      </footer>
+    </div>
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\components\ChecklistModal.vue ---
+
+--- INICIO DEL ARCHIVO: src\components\InteractiveMap.vue ---
+<!-- src/components/InteractiveMap.vue -->
+<script setup>
+import { ref, computed, onMounted, onUnmounted } from 'vue';
+
+const props = defineProps({
+  imageUrl: { type: String, required: true },
+  points: { type: Array, default: () => [] },
+  salas: { type: Array, default: () => [] },
+  isReadOnly: { type: Boolean, default: false },
+  isPlacementMode: { type: Boolean, default: false }
+});
+
+const emit = defineEmits(['add-point', 'delete-point', 'update-point-position', 'point-click']);
+
+const mapContainerRef = ref(null);
+const draggedPointId = ref(null);
+const mapDimensions = ref({ width: 0, height: 0 });
+
+const getSalaColor = (salaId) => {
+  const sala = props.salas.find(s => s.id === salaId);
+  return sala ? sala.color : '#9CA3AF'; 
+};
+
+const displayPoints = computed(() => {
+  if (!mapDimensions.value.width || !props.points.length) return props.points.map(p => ({ ...p, visualOffsetX: 0, visualOffsetY: 0 }));
+  const pixelPoints = props.points.map(p => ({
+    ...p,
+    x: p.coordenada_x * mapDimensions.value.width,
+    y: p.coordenada_y * mapDimensions.value.height,
+    visualOffsetX: 0,
+    visualOffsetY: 0,
+  }));
+  const COLLISION_RADIUS = 28;
+  const SPIDER_RADIUS = 25;
+  for (let i = 0; i < pixelPoints.length; i++) {
+    const collisions = [];
+    for (let j = 0; j < pixelPoints.length; j++) {
+      if (i === j) continue;
+      const dx = pixelPoints[i].x - pixelPoints[j].x;
+      const dy = pixelPoints[i].y - pixelPoints[j].y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance < COLLISION_RADIUS) {
+        collisions.push(pixelPoints[j]);
+      }
+    }
+    if (collisions.length > 0) {
+      collisions.push(pixelPoints[i]);
+      collisions.sort((a, b) => a.id - b.id);
+      collisions.forEach((point, index) => {
+        const angle = (index / collisions.length) * 2 * Math.PI;
+        point.visualOffsetX = SPIDER_RADIUS * Math.cos(angle);
+        point.visualOffsetY = SPIDER_RADIUS * Math.sin(angle);
+      });
+    }
+  }
+  return pixelPoints;
+});
+
+const startDrag = (pointId) => {
+  if (props.isReadOnly || props.isPlacementMode) return;
+  draggedPointId.value = pointId;
+};
+
+const onDrag = (event) => {
+  if (props.isReadOnly || props.isPlacementMode || draggedPointId.value === null) return;
+  const point = props.points.find(p => p.id === draggedPointId.value);
+  if (!point) return;
+  const mapRect = mapContainerRef.value.getBoundingClientRect();
+  point.coordenada_x = (event.clientX - mapRect.left) / mapRect.width;
+  point.coordenada_y = (event.clientY - mapRect.top) / mapRect.height;
+};
+
+const stopDrag = () => {
+  if (props.isReadOnly || props.isPlacementMode || draggedPointId.value === null) return;
+  const point = props.points.find(p => p.id === draggedPointId.value);
+  if (point) {
+    emit('update-point-position', point);
+  }
+  draggedPointId.value = null;
+};
+
+const handleMapClick = (event) => {
+  if (draggedPointId.value) {
+    return;
+  }
+  
+  // La lógica clave está aquí: el mapa emite el evento, y el padre decidirá qué hacer.
+  const mapRect = mapContainerRef.value.getBoundingClientRect();
+  const x = (event.clientX - mapRect.left) / mapRect.width;
+  const y = (event.clientY - mapRect.top) / mapRect.height;
+  emit('add-point', { x, y });
+};
+
+const handleDeleteClick = (pointId) => {
+  if (props.isReadOnly) return;
+  if (confirm('¿Estás seguro de que quieres borrar este punto?')) {
+    emit('delete-point', pointId);
+  }
+};
+
+const handlePointClick = (point) => {
+  if (props.isPlacementMode) return;
+  if (props.isReadOnly) {
+    emit('point-click', point);
+  }
+};
+
+const updateMapDimensions = () => {
+  if (mapContainerRef.value) {
+    mapDimensions.value = {
+      width: mapContainerRef.value.offsetWidth,
+      height: mapContainerRef.value.offsetHeight,
+    };
+  }
+};
+
+onMounted(() => {
+  const resizeObserver = new ResizeObserver(updateMapDimensions);
+  if (mapContainerRef.value) {
+    resizeObserver.observe(mapContainerRef.value);
+  }
+  onUnmounted(() => resizeObserver.disconnect());
+});
+</script>
+
+<template>
+  <div 
+    ref="mapContainerRef"
+    :class="['relative w-full border-2 border-gray-300 overflow-hidden', { 'cursor-crosshair': isPlacementMode, 'cursor-default': isReadOnly && !isPlacementMode }]"
+    @click.self="handleMapClick"
+    @mousemove="onDrag"
+    @mouseup="stopDrag"
+    @mouseleave="stopDrag" 
+  >
+    <div v-if="isPlacementMode" class="absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-lg z-20 pointer-events-none">
+      Haz clic en el plano para situar el nuevo punto.
+    </div>
+  
+    <img :src="imageUrl" alt="Plano del centro" class="w-full h-auto block select-none" draggable="false" @load="updateMapDimensions" />
+
+    <template v-for="sala in salas" :key="`sala-area-${sala.id}`">
+      <div
+        v-if="sala && sala.area_x1 && sala.area_y1 && sala.area_x2 && sala.area_y2"
+        class="absolute pointer-events-none border-2"
+        :style="{
+          left: `${Math.min(sala.area_x1, sala.area_x2) * 100}%`,
+          top: `${Math.min(sala.area_y1, sala.area_y2) * 100}%`,
+          width: `${Math.abs(sala.area_x2 - sala.area_x1) * 100}%`,
+          height: `${Math.abs(sala.area_y2 - sala.area_y1) * 100}%`,
+          backgroundColor: `${getSalaColor(sala.id)}20`,
+          borderColor: `${getSalaColor(sala.id)}80`
+        }"
+      ></div>
+    </template>
+
+    <div
+      v-for="point in displayPoints"
+      :key="point.id"
+      :class="['absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 border-2 border-white rounded-full flex items-center justify-center text-white text-xs font-bold group shadow-lg', { 'cursor-grab active:cursor-grabbing': !isReadOnly, 'cursor-pointer hover:scale-110 transition-transform': isReadOnly }]"
+      :style="{ 
+        left: (point.coordenada_x * 100) + '%', 
+        top: (point.coordenada_y * 100) + '%',
+        transform: `translate(-50%, -50%) translate(${point.visualOffsetX}px, ${point.visualOffsetY}px)`,
+        backgroundColor: getSalaColor(point.sala_id)
+      }"
+      @mousedown.stop="startDrag(point.id)"
+      @click.stop="handlePointClick(point)"
+    >
+      {{ point.nomenclatura.split('-').pop() || '?' }}
+      <button 
+        v-if="!isReadOnly"
+        @click.stop="handleDeleteClick(point.id)"
+        class="absolute -top-2 -right-2 w-5 h-5 bg-red-600 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        X
+      </button>
+    </div>
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\components\InteractiveMap.vue ---
+
+--- INICIO DEL ARCHIVO: src\components\Login.vue ---
+<!-- src/components/Login.vue -->
+<script setup>
+import { ref } from 'vue'
+import { supabase } from '../supabase'
+import { useRouter } from 'vue-router' // <-- AÑADIR ESTA LÍNEA
+
+const router = useRouter() // <-- AÑADIR ESTA LÍNEA
+const loading = ref(false)
+const email = ref('')
+const password = ref('')
+
+const handleLogin = async () => {
+  try {
+    loading.value = true
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.value,
+      password: password.value,
+    })
+    if (error) throw error
+    // alert('¡Login correcto!') // <-- BORRAMOS EL ALERT
+    router.push('/dashboard') // <-- AÑADIMOS LA REDIRECCIÓN
+  } catch (error) {
+    alert(error.error_description || error.message)
+  } finally {
+    loading.value = false
+  }
+}
+</script>
+
+<template>
+  <!-- Cambiamos los colores de fondo y texto principales -->
+  <div class="flex items-center justify-center min-h-screen bg-gray-100 text-gray-800">
+    <!-- El contenedor del formulario ahora es blanco con una sombra sutil -->
+    <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md">
+      <h1 class="text-3xl font-bold text-center text-gray-900">Inspección de Estanterías</h1>
+      <p class="text-center text-gray-600">Inicia sesión para continuar</p>
+      <form @submit.prevent="handleLogin" class="space-y-6">
+        <div>
+          <label for="email" class="block text-sm font-medium text-gray-700">Email</label>
+          <!-- Los inputs ahora tienen un fondo más claro -->
+          <input 
+            id="email" 
+            type="email" 
+            v-model="email" 
+            class="w-full px-3 py-2 mt-1 text-gray-900 bg-gray-50 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
+        </div>
+        <div>
+          <label for="password" class="block text-sm font-medium text-gray-700">Contraseña</label>
+          <input 
+            id="password" 
+            type="password" 
+            v-model="password" 
+            class="w-full px-3 py-2 mt-1 text-gray-900 bg-gray-50 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
+        </div>
+        <div>
+          <button 
+            type="submit" 
+            :disabled="loading" 
+            class="w-full py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            {{ loading ? 'Cargando...' : 'Acceder' }}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\components\Login.vue ---
+
+--- INICIO DEL ARCHIVO: src\components\PointList.vue ---
+<!-- src/components/PointList.vue -->
+<script setup>
+import { EyeSlashIcon, ArrowUturnLeftIcon } from '@heroicons/vue/24/solid';
+
+defineProps({
+  groupedPoints: {
+    type: Array,
+    required: true
+  }
+});
+
+defineEmits(['select-point', 'update-state']);
+</script>
+
+<template>
+  <div v-for="grupo in groupedPoints" :key="grupo.id" class="mb-4">
+    <h3 class="font-bold text-slate-600 px-3 pb-1 border-b mb-2">{{ grupo.nombre }}</h3>
+    <ul class="space-y-1">
+      <li v-for="punto in grupo.puntos" :key="punto.id">
+        <div :class="['p-3 rounded-lg flex items-center justify-between group', { 'bg-slate-100': punto.estado === 'suprimido' }]">
+          <button @click="$emit('select-point', punto)" 
+                  :disabled="punto.estado === 'suprimido'"
+                  class="flex-1 text-left disabled:cursor-not-allowed">
+            <div class="flex items-center">
+              <span class="w-3 h-3 rounded-full flex-shrink-0" :style="{ backgroundColor: punto.color }"></span>
+              <span :class="['font-semibold ml-3', { 'line-through text-slate-500': punto.estado === 'suprimido', 'text-slate-700': punto.estado !== 'suprimido' }]">
+                {{ punto.nomenclatura }}
+              </span>
+              <span v-if="punto.estado === 'nuevo'" class="ml-2 text-xs font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full">NUEVO</span>
+            </div>
+          </button>
+          <div class="opacity-0 group-hover:opacity-100 transition-opacity">
+            <button v-if="punto.estado !== 'suprimido'" @click="$emit('update-state', punto, 'suprimido')" class="p-1 text-slate-400 hover:text-red-500" title="Marcar como suprimido">
+              <EyeSlashIcon class="h-5 w-5" />
+            </button>
+            <button v-else @click="$emit('update-state', punto, 'existente')" class="p-1 text-slate-500 hover:text-blue-500" title="Reactivar punto">
+              <ArrowUturnLeftIcon class="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+      </li>
+    </ul>
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\components\PointList.vue ---
+
+--- INICIO DEL ARCHIVO: src\layouts\BlankLayout.vue ---
+<!-- src/layouts/BlankLayout.vue -->
+<template>
+  <router-view />
+</template>
+--- FIN DEL ARCHIVO: src\layouts\BlankLayout.vue ---
+
+--- INICIO DEL ARCHIVO: src\layouts\DefaultLayout.vue ---
+<!-- src/layouts/DefaultLayout.vue -->
+<script setup>
+import { RouterLink, useRoute } from 'vue-router';
+import { HomeIcon, ListBulletIcon, DocumentMagnifyingGlassIcon } from '@heroicons/vue/24/outline';
+import { supabase } from '../supabase';
+import { useRouter } from 'vue-router';
+
+const route = useRoute();
+const router = useRouter();
+
+const navigation = [
+  { name: 'Menú Principal', href: '/dashboard', icon: HomeIcon },
+  { name: 'Maestro de Centros', href: '/centros', icon: ListBulletIcon },
+  { name: 'Inspecciones', href: '/inspecciones', icon: DocumentMagnifyingGlassIcon },
+];
+
+const isActive = (href) => {
+  return route.path === href || (href !== '/dashboard' && route.path.startsWith(href));
+};
+
+const handleLogout = async () => {
+  await supabase.auth.signOut();
+  router.push('/');
+};
+</script>
+
+<template>
+  <div class="flex h-screen bg-slate-100">
+    <!-- Barra Lateral Oscura -->
+    <aside class="w-64 flex-shrink-0 bg-slate-800 flex flex-col">
+      <div class="h-20 flex items-center justify-center">
+        <h1 class="text-2xl font-bold text-white tracking-wider">Arsel</h1>
+      </div>
+      <nav class="flex-1 px-4 py-2 space-y-2">
+        <RouterLink
+          v-for="item in navigation"
+          :key="item.name"
+          :to="item.href"
+          :class="[
+            'flex items-center px-3 py-3 text-sm font-medium rounded-lg transition-colors',
+            isActive(item.href)
+              ? 'bg-blue-600 text-white shadow-inner'
+              : 'text-slate-300 hover:bg-slate-700 hover:text-white',
+          ]"
+        >
+          <component :is="item.icon" class="h-6 w-6 mr-3" />
+          {{ item.name }}
+        </RouterLink>
+      </nav>
+      <div class="p-4 border-t border-slate-700">
+        <button @click="handleLogout" class="w-full px-4 py-2 font-semibold text-white bg-red-600 rounded-md hover:bg-red-700">
+          Cerrar Sesión
+        </button>
+      </div>
+    </aside>
+
+    <!-- Contenido Principal -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <main class="flex-1 overflow-y-auto">
+        <router-view />
+      </main>
+    </div>
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\layouts\DefaultLayout.vue ---
+
+--- INICIO DEL ARCHIVO: src\router\index.js ---
+// src/router/index.js
+
+import { createRouter, createWebHistory } from 'vue-router'
+import { supabase } from '../supabase'
+
+// Importación de Vistas y Componentes
+import DashboardView from '../views/DashboardView.vue'
+import Login from '../components/Login.vue'
+import CentrosListView from '../views/CentrosListView.vue'
+import CentroConfigView from '../views/CentroConfigView.vue'
+import InspeccionesListView from '../views/InspeccionesListView.vue'
+import InspeccionDetailView from '../views/InspeccionDetailView.vue'
+import CentroHistorialView from '../views/CentroHistorialView.vue'; // <-- SE AÑADE ESTA LÍNEA
+
+// Definición de las Rutas de la Aplicación
+const routes = [
+  {
+    path: '/',
+    name: 'Login',
+    component: Login,
+    meta: { layout: 'Blank' }
+  },
+  {
+    path: '/dashboard',
+    name: 'Dashboard',
+    component: DashboardView,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/centros',
+    name: 'CentrosList',
+    component: CentrosListView,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/centros/:id/configurar',
+    name: 'CentroConfig',
+    component: CentroConfigView,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/inspecciones',
+    name: 'InspeccionesList',
+    component: InspeccionesListView,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/inspecciones/:id',
+    name: 'InspeccionDetail',
+    component: InspeccionDetailView,
+    meta: { requiresAuth: true }
+  },
+  // --- NUEVA RUTA DE HISTORIAL ---
+  {
+    path: '/centros/:id/historial',
+    name: 'CentroHistorial',
+    component: CentroHistorialView,
+    meta: { requiresAuth: true }
+  }
+]
+
+// Creación de la instancia del Router
+const router = createRouter({
+  history: createWebHistory(),
+  routes
+})
+
+// Guardia de Navegación Global para la seguridad
+router.beforeEach(async (to, from, next) => {
+  const { data: { session } } = await supabase.auth.getSession()
+  const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
+
+  if (requiresAuth && !session) {
+    next({ name: 'Login' })
+  } 
+  else if (session && to.name === 'Login') {
+    next({ name: 'Dashboard' })
+  }
+  else {
+    next()
+  }
+})
+
+export default router
+--- FIN DEL ARCHIVO: src\router\index.js ---
+
+--- INICIO DEL ARCHIVO: src\utils\checklist.js ---
+// src/utils/checklist.js
+export const checklistItems = [
+  { id: 1, text: "Existe copia de la documentación de validación" },
+  { id: 2, text: "Tiene las placas de identificación correctamente colocadas y son legibles." },
+  { id: 3, text: "El número de módulos y niveles se corresponde con el establecido en el documento de validación." },
+  { id: 4, text: "Los niveles de altura están dentro de los límites establecidos." },
+  { id: 5, text: "El tipo de puntal se corresponde con el del documento de validación." },
+  { id: 6, text: "La verticalidad de los puntales está dentro de los límites permitidos." },
+  { id: 7, text: "Las placas base no presentan deterioro y tienen todos los tornillos de fijación previsto." },
+  { id: 8, text: "Las placas base no presentan descalce." },
+  { id: 9, text: "La estantería no está fijada a otros elementos." },
+  { id: 10, text: "La estantería no sirve de soporte a otros elementos." },
+  { id: 11, text: "Los puntales no presentan deterioro." },
+  { id: 12, text: "Las diagonales y horizontales de bastidores no presentan deterioro." },
+  { id: 13, text: "El tipo de larguero se corresponde con el del documento de validación." },
+  { id: 14, text: "Los largueros no presentan deterioro." },
+  { id: 15, text: "Los largueros están montados horizontales y a la misma altura que el larguero opuesto." },
+  { id: 16, text: "La flecha de los largueros está dentro de los límites establecidos en el documento de validación." },
+  { id: 17, text: "Los largueros tienen puesto correctamente el dispositivo de fijación (horquillas)." },
+  { id: 18, text: "No se aprecia en inspección visual grietas en soldadura o material base." },
+  { id: 19, text: "Los elementos del sistema no presentan degradación por pérdida de pintura de protección y/o oxidación." },
+  { id: 20, text: "El estado de las protecciones en el bastidor es correcto (mantienen distancia de seguridad y están correctamente fijadas al suelo)." },
+  { id: 21, text: "Las cargas se ajustan a las dimensiones estandarizadas para las paletas." },
+  { id: 22, text: "Las cargas a nivel de suelo no sobresalen de la alineación, respetando los anchos de pasillo." },
+  { id: 23, text: "La iluminación es adecuada." },
+  { id: 24, text: "En estanterías de picking las barandillas de segundo nivel están en perfecto estado, tienen pasamanos superior, intermedio y rodapié." },
+  { id: 25, text: "En estanterías de picking se mantienen todos los elementos de los niveles previstos y en caso contrario se mantiene los largueros y/o baldas superiores y se ha señalizado correctamente 'no utilizar'." },
+  { id: 26, text: "La carga se distribuye uniformemente y de forma ordenada." },
+  { id: 27, text: "Las cargas están dentro de los límites establecidos en las placas identificativas." },
+];
+--- FIN DEL ARCHIVO: src\utils\checklist.js ---
+
+--- INICIO DEL ARCHIVO: src\utils\pdfGenerator.js ---
+// src/utils/pdfGenerator.js
+
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import html2canvas from 'html2canvas';
+import { supabase } from '../supabase';
+import { checklistItems } from './checklist';
+
+const MARGIN = 15;
+const DOC_WIDTH = 210;
+const FONT_SIZES = { title: 16, h1: 14, h2: 12, body: 11, small: 8 };
+
+// ¡IMPORTANTE! PEGA AQUÍ LA URL PÚBLICA REAL DE TU LOGO DE ARSEL
+const ARSEL_LOGO_URL = "URL_PUBLICA_DE_TU_LOGO_DE_ARSEL_AQUI"; // <-- REEMPLAZA ESTO
+
+async function loadImageAsBase64(url) {
+  if (!url || !url.startsWith('http')) return null;
+  try {
+    const response = await fetch(url);
+    const contentType = response.headers.get("content-type");
+    if (!contentType || !contentType.startsWith("image/")) {
+      console.warn(`La URL no devolvió una imagen: ${url}`);
+      return null;
+    }
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (error) {
+    console.error("Error cargando imagen para PDF:", url, error);
+    return null;
+  }
+}
+
+async function drawHeader(pdf, inspectionData) {
+  const [clientLogoBase64, arselLogoBase64] = await Promise.all([
+    loadImageAsBase64(inspectionData.centros.url_logo_cliente),
+    loadImageAsBase64(ARSEL_LOGO_URL)
+  ]);
+
+  const headerY = MARGIN - 8;
+  const headerHeight = 20;
+  const contentWidth = DOC_WIDTH - (MARGIN * 2);
+  const cell1Width = 40;
+  const cell3Width = 40;
+  const cell2Width = contentWidth - cell1Width - cell3Width;
+
+  pdf.rect(MARGIN, headerY, contentWidth, headerHeight);
+  pdf.line(MARGIN, headerY + 8, DOC_WIDTH - MARGIN, headerY + 8);
+  pdf.line(MARGIN + cell1Width, headerY + 8, MARGIN + cell1Width, headerY + headerHeight);
+  pdf.line(MARGIN + cell1Width + cell2Width, headerY + 8, MARGIN + cell1Width + cell2Width, headerY + headerHeight);
+
+  pdf.setFontSize(FONT_SIZES.h2);
+  pdf.setFont(undefined, 'bold');
+  pdf.text(`HIPERMERCADO ${inspectionData.centros.nombre.toUpperCase()}`, DOC_WIDTH / 2, headerY + 5.5, { align: 'center' });
+
+  if (clientLogoBase64) {
+    pdf.addImage(clientLogoBase64, 'PNG', MARGIN + 2, headerY + 9.5, cell1Width - 4, 9, undefined, 'FAST');
+  }
+
+  pdf.setFontSize(FONT_SIZES.small);
+  pdf.setFont(undefined, 'normal');
+  const titleText = 'INFORME VISITA INSPECCIÓN DEL SISTEMA DE ALMACENAJE PARA CARGAS PALETIZADAS Y MANUALES';
+  pdf.text(titleText, MARGIN + cell1Width + (cell2Width / 2), headerY + 12.5, {
+    maxWidth: cell2Width - 4,
+    align: 'center',
+    lineHeightFactor: 1.2
+  });
+  
+  if (arselLogoBase64) {
+    pdf.addImage(arselLogoBase64, 'PNG', MARGIN + cell1Width + cell2Width + 2, headerY + 9.5, cell3Width - 4, 9, undefined, 'FAST');
+  }
+}
+
+export async function generateReport(inspeccionId) {
+  try {
+    const { data: inspectionData } = await supabase.from('inspecciones').select('*, centros(*)').eq('id', inspeccionId).single();
+    const { data: salasData } = await supabase.from('salas').select('*').eq('centro_id', inspectionData.centros.id).order('nombre');
+    const { data: puntosMaestrosData } = await supabase.from('puntos_maestros').select('*').eq('centro_id', inspectionData.centros.id);
+    const { data: puntosInspeccionadosData } = await supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId);
+    const { data: incidenciasData } = await supabase.from('incidencias').select('*').eq('inspeccion_id', inspeccionId);
+
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    
+    await addTextPages(pdf, inspectionData, incidenciasData, puntosMaestrosData, puntosInspeccionadosData, salasData);
+
+    const incidenciasConFoto = incidenciasData.filter(inc => inc.url_foto_antes);
+    if (incidenciasConFoto.length > 0) {
+      pdf.addPage();
+      await drawHeader(pdf, inspectionData);
+      pdf.setFontSize(FONT_SIZES.title);
+      pdf.text('ANEXO 01: REPORTAJE FOTOGRÁFICO', DOC_WIDTH / 2, 150, { align: 'center' });
+      for (const incidencia of incidenciasConFoto) {
+        const puntoInspeccionado = puntosInspeccionadosData.find(pi => pi.id === incidencia.punto_inspeccionado_id);
+        const puntoMaestro = puntoInspeccionado ? puntosMaestrosData.find(pm => pm.id === puntoInspeccionado.punto_maestro_id) : null;
+        if (!puntoMaestro) continue;
+
+        pdf.addPage();
+        await drawHeader(pdf, inspectionData);
+        pdf.setFontSize(FONT_SIZES.h2);
+        pdf.text(`Alineación: ${puntoMaestro.nomenclatura}`, MARGIN, 45);
+        
+        const photoContainer = document.createElement('div');
+        photoContainer.style.position = 'absolute'; photoContainer.style.left = '-9999px';
+        photoContainer.style.width = '180mm'; photoContainer.style.height = '100mm';
+        photoContainer.innerHTML = `<img src="${incidencia.url_foto_antes}" crossorigin="anonymous" style="width: 100%; height: 100%; object-fit: contain;" />`;
+        document.body.appendChild(photoContainer);
+        
+        const canvas = await html2canvas(photoContainer, { useCORS: true, allowTaint: true });
+        const imgData = canvas.toDataURL('image/jpeg', 0.85);
+        pdf.addImage(imgData, 'JPEG', MARGIN, 55, 180, 100, undefined, 'FAST');
+        document.body.removeChild(photoContainer);
+
+        pdf.setFontSize(FONT_SIZES.body);
+        pdf.text('Observaciones:', MARGIN, 170);
+        pdf.text(incidencia.observaciones || '', MARGIN, 175, { maxWidth: DOC_WIDTH - (MARGIN * 2) });
+      }
+    }
+
+    if (salasData.length > 0) {
+      pdf.addPage();
+      await drawHeader(pdf, inspectionData);
+      pdf.setFontSize(FONT_SIZES.title);
+      pdf.text('ANEXO 02: CHECKLIST', DOC_WIDTH / 2, 150, { align: 'center' });
+      
+      for (const sala of salasData) {
+        const puntosDeLaSala = puntosMaestrosData.filter(pm => pm.sala_id === sala.id).sort((a,b) => a.nomenclatura.localeCompare(b.nomenclatura, undefined, {numeric: true}));
+        if (puntosDeLaSala.length === 0) continue;
+
+        for (const puntoMaestro of puntosDeLaSala) {
+          pdf.addPage();
+          await drawHeader(pdf, inspectionData);
+          pdf.setFontSize(FONT_SIZES.body);
+          pdf.text(`Sala: ${sala.nombre}`, MARGIN, 45);
+          pdf.text(`Alineación: ${puntoMaestro.nomenclatura.split('-').pop()}`, DOC_WIDTH - MARGIN, 45, { align: 'right' });
+
+          const puntoInspeccionado = puntosInspeccionadosData.find(pi => pi.punto_maestro_id === puntoMaestro.id);
+          const puntoInspeccionadoId = puntoInspeccionado ? puntoInspeccionado.id : null;
+          const head = [
+              [{ content: 'Parámetro de control', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+               { content: 'S', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+               { content: 'I', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+               { content: 'RIESGO', colSpan: 3, styles: { halign: 'center' } }],
+              ['V', 'A', 'R']
+          ];
+          const body = checklistItems.map(item => {
+            const incidencia = incidenciasData.find(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && inc.item_checklist === item.id);
+            return [
+              `${item.id}. ${item.text}`,
+              incidencia ? '' : 'X',
+              incidencia ? 'X' : '',
+              incidencia?.gravedad === 'verde' ? 'X' : '',
+              incidencia?.gravedad === 'ambar' ? 'X' : '',
+              incidencia?.gravedad === 'rojo' ? 'X' : '',
+            ];
+          });
+          autoTable(pdf, {
+            head, body, startY: 50, margin: { left: MARGIN, right: MARGIN }, theme: 'grid',
+            styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
+            headStyles: { fillColor: [238, 238, 238], textColor: 0, fontStyle: 'bold', halign: 'center', fontSize: 7 },
+            columnStyles: {
+              0: { cellWidth: 115 }, 1: { cellWidth: 10, halign: 'center' }, 2: { cellWidth: 10, halign: 'center' },
+              3: { cellWidth: 10, halign: 'center' }, 4: { cellWidth: 10, halign: 'center' }, 5: { cellWidth: 10, halign: 'center' },
+            },
+          });
+        }
+      }
+    }
+
+    pdf.save(`Informe_${inspectionData.centros.nombre.replace(/ /g, '_')}_${inspectionData.fecha_inspeccion}.pdf`);
+
+  } catch (err) {
+    console.error("Error generando el PDF:", err);
+    alert("Hubo un error al generar el informe en PDF. Revisa la consola.");
+  }
+}
+
+async function addTextPages(pdf, inspectionData, incidenciasData, puntosMaestrosData, puntosInspeccionadosData, salasData) {
+  const fecha = new Date(inspectionData.fecha_inspeccion).toLocaleDateString('es-ES');
+  const puntoMaestroASalaMap = new Map();
+  puntosMaestrosData.forEach(pm => {
+    const sala = salasData.find(s => s.id === pm.sala_id);
+    if (sala) puntoMaestroASalaMap.set(pm.id, sala);
+  });
+  const puntoInspeccionadoAMaestroMap = new Map(puntosInspeccionadosData.map(pi => [pi.id, pi.punto_maestro_id]));
+
+  const agruparPuntosPorEstadoYSala = (estado) => {
+    const puntosFiltrados = puntosInspeccionadosData.filter(pi => pi.estado === estado);
+    const grupos = {};
+    puntosFiltrados.forEach(pi => {
+      const sala = puntoMaestroASalaMap.get(pi.punto_maestro_id);
+      if (sala) {
+        if (!grupos[sala.nombre]) grupos[sala.nombre] = new Set();
+        grupos[sala.nombre].add(pi.nomenclatura.split('-').pop());
+      }
+    });
+    return Object.entries(grupos).map(([nombreSala, numerosSet]) => 
+      `${nombreSala.toUpperCase()}: ${[...numerosSet].sort((a, b) => parseInt(a) - parseInt(b)).join(', ')}`
+    );
+  };
+
+  const lineasDesmontadas = agruparPuntosPorEstadoYSala('desmontado');
+  const lineasNuevas = agruparPuntosPorEstadoYSala('nuevo');
+  
+  const getSalaYNumeroDeIncidencia = (incidencia) => {
+    const puntoMaestroId = puntoInspeccionadoAMaestroMap.get(incidencia.punto_inspeccionado_id);
+    if (!puntoMaestroId) return null;
+    const sala = puntoMaestroASalaMap.get(puntoMaestroId);
+    const puntoMaestro = puntosMaestrosData.find(pm => pm.id === puntoMaestroId);
+    if (!sala || !puntoMaestro) return null;
+    return { nombreSala: sala.nombre, numeroPunto: puntoMaestro.nomenclatura.split('-').pop() };
+  };
+
+  const agruparIncidenciasPorSala = (incidencias) => {
+    const grupos = {};
+    incidencias.forEach(inc => {
+      const info = getSalaYNumeroDeIncidencia(inc);
+      if (info) {
+        if (!grupos[info.nombreSala]) grupos[info.nombreSala] = new Set();
+        grupos[info.nombreSala].add(info.numeroPunto);
+      }
+    });
+    const nombresDeSalas = Object.keys(grupos);
+    if (nombresDeSalas.length === 1 && nombresDeSalas[0].toLowerCase() === 'única') {
+        const numerosSet = grupos[nombresDeSalas[0]];
+        return `Única: ${[...numerosSet].sort((a, b) => a - b).join(', ')}`;
+    }
+    return Object.entries(grupos).map(([nombreSala, numerosSet]) => 
+      `${nombreSala}: ${[...numerosSet].sort((a, b) => parseInt(a) - parseInt(b)).join(', ')}`
+    ).join('\n');
+  };
+
+  const incidenciasVerdeAmbar = incidenciasData.filter(i => i.gravedad === 'verde' || i.gravedad === 'ambar');
+  const incidenciasRojo = incidenciasData.filter(i => i.gravedad === 'rojo');
+  const textoVerdeAmbar = agruparIncidenciasPorSala(incidenciasVerdeAmbar);
+  const textoRojo = agruparIncidenciasPorSala(incidenciasRojo);
+
+  // --- PÁGINA 1 ---
+  await drawHeader(pdf, inspectionData);
+  let currentY = 40;
+
+  if (lineasDesmontadas.length > 0) {
+    pdf.setFontSize(FONT_SIZES.body); pdf.setFont(undefined, 'bold');
+    pdf.text('Alineaciones desmontadas desde la inspección anterior:', MARGIN, currentY);
+    currentY += 7;
+    pdf.setFont(undefined, 'normal');
+    lineasDesmontadas.forEach(linea => {
+      pdf.text(linea, MARGIN + 5, currentY);
+      currentY += 6;
+    });
+    currentY += 5;
+  }
+
+  if (lineasNuevas.length > 0) {
+    pdf.setFontSize(FONT_SIZES.body); pdf.setFont(undefined, 'bold');
+    pdf.text('Alineaciones nuevas montadas desde la inspección anterior:', MARGIN, currentY);
+    currentY += 7;
+    pdf.setFont(undefined, 'normal');
+    lineasNuevas.forEach(linea => {
+      pdf.text(linea, MARGIN + 5, currentY);
+      currentY += 6;
+    });
+    currentY += 10;
+  }
+  
+  currentY = Math.max(currentY, 60);
+  pdf.setFontSize(FONT_SIZES.h2); pdf.setFont(undefined, 'bold');
+  pdf.text('1. OBJETO', MARGIN, currentY);
+  currentY += 8;
+  pdf.setFontSize(FONT_SIZES.body); pdf.setFont(undefined, 'normal');
+  pdf.text(`Con motivo de la visita programada para la inspección del sistema de almacenaje para cargas paletizadas y manuales del ${inspectionData.centros.nombre}, se redacta el presente informe que recoge de forma somera el resultado de la visita.`, MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 });
+  currentY += 25;
+
+  pdf.setFontSize(FONT_SIZES.h2); pdf.setFont(undefined, 'bold');
+  pdf.text('2. ANTECEDENTES', MARGIN, currentY);
+  currentY += 8;
+  pdf.setFontSize(FONT_SIZES.body); pdf.setFont(undefined, 'normal');
+  pdf.text('Para realizar la inspección del sistema de almacenaje de cargas paletizadas y manuales ubicadas en las reservas se toma como base la memoria técnica previa de evaluación de dichos sistemas facilitada al centro para la realización de las correcciones oportunas. Este documento establece los parámetros dimensionales y de carga, así como los elementos y medidas de seguridad que deben contemplar los sistemas de almacenaje para garantizar su estabilidad y uso seguro.', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 });
+  currentY += 40;
+  pdf.text('La inspección consiste en la revisión visual del sistema llevada a cabo por un técnico cualificado, con la comprobación de los puntos recogidos en el checklist previsto para tal fin en la memoria de evaluación previa, con el consiguiente registro escrito de los resultados obtenidos.', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 });
+  currentY += 30;
+  
+  pdf.setFontSize(FONT_SIZES.h2); pdf.setFont(undefined, 'bold');
+  pdf.text('3. RESULTADO DE LA VISITA', MARGIN, currentY);
+  currentY += 8;
+  pdf.setFontSize(FONT_SIZES.body); pdf.setFont(undefined, 'normal');
+  pdf.text('En rasgos generales los sistemas de almacenaje cumplen los parámetros establecidos en la memoria técnica de evaluación.', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 });
+  currentY += 15;
+  pdf.text('Se han detectado anomalías de riesgo verde y/o ámbar, tal y como se refleja en los listados de inspección elaborados durante la visita en:', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 });
+  
+  // --- PÁGINA 2 ---
+  pdf.addPage();
+  await drawHeader(pdf, inspectionData);
+  currentY = 50;
+  
+  pdf.setFontSize(FONT_SIZES.body); pdf.setFont(undefined, 'bold');
+  if (textoVerdeAmbar) {
+    pdf.text(textoVerdeAmbar, MARGIN, currentY, { lineHeightFactor: 1.5 });
+    currentY += (textoVerdeAmbar.split('\n').length) * 8;
+  }
+  
+  pdf.setFontSize(FONT_SIZES.body); pdf.setFont(undefined, 'normal');
+  currentY = Math.max(currentY, 65);
+  pdf.text('Estas anomalías, si bien no comprometen de forma inmediata la estabilidad ni seguridad del sistema, deben subsanarse lo antes posible para evitar que puedan derivar en un riesgo mayor. (Se adjuntan listados de chequeo y reportaje fotográfico de la visita).', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 });
+  currentY += 30;
+
+  pdf.text('Puntualmente, se han detectado anomalías de riesgo rojo en:', MARGIN, currentY);
+  currentY += 8;
+  
+  pdf.setFontSize(FONT_SIZES.body); pdf.setFont(undefined, 'bold');
+  if (textoRojo) {
+    pdf.text(textoRojo, MARGIN, currentY, { lineHeightFactor: 1.5 });
+    currentY += (textoRojo.split('\n').length) * 8;
+  }
+  
+  pdf.setFontSize(FONT_SIZES.body); pdf.setFont(undefined, 'normal');
+  currentY = Math.max(currentY, 130);
+  pdf.text('Estas anomalías deben subsanarse inmediatamente para evitar el colapso de las estanterías en el caso de una combinación de cargas desfavorables, procediendo a la descarga de la mercancía de los módulos afectados y señalizando la zona para que no se almacene producto en los mismos hasta que puedan ser sustituidos los elementos dañados. La sustitución se llevará a cabo con nuevo material que se tiene que solicitar si no cuenta con repuesto en el centro.', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 });
+
+  // --- PÁGINA 3 ---
+  pdf.addPage();
+  await drawHeader(pdf, inspectionData);
+  currentY = 50;
+  pdf.setFontSize(FONT_SIZES.body); pdf.setFont(undefined, 'normal');
+  pdf.text('Para cerrar el proceso de inspección completo, el centro subsanará las deficiencias de menor grado detectadas en los próximos días, comunicando la resolución de las mismas mediante correo electrónico a ARSEL Ingeniería y al Técnico de Prevención Regional.', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 });
+  currentY += 40;
+  
+  pdf.text('Informe realizado por:', MARGIN, currentY);
+  currentY += 15;
+  pdf.setFont(undefined, 'bold');
+  pdf.text('ARSEL INGENIERIA', MARGIN, currentY);
+  currentY += 5;
+  pdf.setFont(undefined, 'normal');
+  pdf.text(`Valencia, ${fecha}`, MARGIN, currentY);
+}
+--- FIN DEL ARCHIVO: src\utils\pdfGenerator.js ---
+
+--- INICIO DEL ARCHIVO: src\utils\provincias.js ---
+// src/utils/provincias.js
+export const provincias = [
+  'Álava', 'Albacete', 'Alicante', 'Almería', 'Asturias', 'Ávila', 'Badajoz', 'Barcelona', 'Burgos', 'Cáceres', 
+  'Cádiz', 'Cantabria', 'Castellón', 'Ciudad Real', 'Córdoba', 'La Coruña', 'Cuenca', 'Gerona', 'Granada', 'Guadalajara', 
+  'Guipúzcoa', 'Huelva', 'Huesca', 'Islas Baleares', 'Jaén', 'León', 'Lérida', 'Lugo', 'Madrid', 'Málaga', 'Murcia', 
+  'Navarra', 'Orense', 'Palencia', 'Las Palmas', 'Pontevedra', 'La Rioja', 'Salamanca', 'Segovia', 'Sevilla', 
+  'Soria', 'Tarragona', 'Santa Cruz de Tenerife', 'Teruel', 'Toledo', 'Valencia', 'Valladolid', 'Vizcaya', 'Zamora', 'Zaragoza'
+];
+--- FIN DEL ARCHIVO: src\utils\provincias.js ---
+
+--- INICIO DEL ARCHIVO: src\views\CentroConfigView.vue ---
+<!-- src/views/CentroConfigView.vue -->
+<script setup>
+import { ref, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { supabase } from '../supabase';
+import InteractiveMap from '../components/InteractiveMap.vue';
+import { ArrowUpTrayIcon, ArrowPathIcon, PlusIcon, TrashIcon, MapIcon } from '@heroicons/vue/24/solid';
+
+const route = useRoute();
+const router = useRouter();
+const centroId = route.params.id;
+
+const loading = ref(true);
+const centro = ref(null);
+const puntos = ref([]);
+const salas = ref([]);
+const activeSalaId = ref(null);
+const newSalaName = ref('');
+
+const fileInput = ref(null);
+const selectedFile = ref(null);
+const isUploading = ref(false);
+
+// === INICIO: LÓGICA DE DIBUJO DE ÁREAS (CORREGIDA) ===
+const mapContainerRef = ref(null);
+const isDrawingMode = ref(false);
+const drawingRect = ref(null);
+
+const startDrawing = (event) => {
+  if (!isDrawingMode.value || !activeSalaId.value) return;
+  const mapRect = mapContainerRef.value.getBoundingClientRect();
+  const x = (event.clientX - mapRect.left) / mapRect.width;
+  const y = (event.clientY - mapRect.top) / mapRect.height;
+  drawingRect.value = { area_x1: x, area_y1: y, area_x2: x, area_y2: y };
+};
+
+const drawRect = (event) => {
+  if (!drawingRect.value) return;
+  const mapRect = mapContainerRef.value.getBoundingClientRect();
+  drawingRect.value.area_x2 = (event.clientX - mapRect.left) / mapRect.width;
+  drawingRect.value.area_y2 = (event.clientY - mapRect.top) / mapRect.height;
+};
+
+// --- LA FUNCIÓN CORREGIDA ---
+const finishDrawing = async (event) => {
+  if (!drawingRect.value) return;
+  
+  // ¡LA CORRECCIÓN ESTÁ AQUÍ!
+  // Si recibimos un evento (de @mouseup), actualizamos las coordenadas una última vez
+  // para garantizar la posición exacta donde se soltó el clic.
+  if (event && event.clientX) {
+    const mapRect = mapContainerRef.value.getBoundingClientRect();
+    drawingRect.value.area_x2 = (event.clientX - mapRect.left) / mapRect.width;
+    drawingRect.value.area_y2 = (event.clientY - mapRect.top) / mapRect.height;
+  }
+
+  const areaToSave = { ...drawingRect.value };
+  drawingRect.value = null;
+  isDrawingMode.value = false;
+
+  const { error } = await supabase
+    .from('salas')
+    .update({
+      area_x1: areaToSave.area_x1,
+      area_y1: areaToSave.area_y1,
+      area_x2: areaToSave.area_x2,
+      area_y2: areaToSave.area_y2,
+    })
+    .eq('id', activeSalaId.value);
+  
+  if (error) {
+    alert("Error al guardar el área: " + error.message);
+  } else {
+    const sala = salas.value.find(s => s.id === activeSalaId.value);
+    if (sala) Object.assign(sala, areaToSave);
+  }
+};
+
+const toggleDrawingMode = () => {
+  if (!activeSalaId.value) {
+    alert("Selecciona una sala para poder definir su área.");
+    return;
+  }
+  isDrawingMode.value = true;
+  alert("Modo de dibujo activado.\n\nHaz clic y arrastra sobre el plano para definir el área de la sala seleccionada.");
+};
+// === FIN: LÓGICA DE DIBUJO DE ÁREAS ===
+
+// --- LÓGICA DE GESTIÓN DE SALAS ---
+const fetchSalas = async () => {
+  const { data } = await supabase.from('salas').select('*').eq('centro_id', centroId).order('nombre');
+  salas.value = data || [];
+  if (salas.value.length > 0 && !activeSalaId.value) {
+    activeSalaId.value = salas.value[0].id;
+  }
+};
+
+const addSala = async () => {
+  if (!newSalaName.value.trim()) return;
+  const { data, error } = await supabase
+    .from('salas')
+    .insert({ centro_id: centroId, nombre: newSalaName.value.trim() })
+    .select()
+    .single();
+  
+  if (data) {
+    salas.value.push(data);
+    activeSalaId.value = data.id;
+    newSalaName.value = '';
+  } else if (error) {
+    alert("Error al crear la sala: " + error.message);
+  }
+};
+
+const deleteSala = async (salaId) => {
+  if (confirm('¿Estás seguro de que quieres borrar esta sala? Se borrarán TODOS los puntos que contiene.')) {
+    const { error } = await supabase.from('salas').delete().eq('id', salaId);
+    if (error) {
+      alert("Error al borrar la sala: " + error.message);
+    } else {
+      salas.value = salas.value.filter(s => s.id !== salaId);
+      puntos.value = puntos.value.filter(p => p.sala_id !== salaId);
+      if (activeSalaId.value === salaId) {
+        activeSalaId.value = salas.value.length > 0 ? salas.value[0].id : null;
+      }
+    }
+  }
+};
+
+const saveSalaColor = async (sala) => {
+  const { error } = await supabase.from('salas').update({ color: sala.color }).eq('id', sala.id);
+  if (error) alert("Error al guardar el color: " + error.message);
+};
+
+// --- LÓGICA DE NOMENCLATURA (POR SALA) ---
+const getNextNomenclature = () => {
+  if (!activeSalaId.value) return 'Err-Sala';
+  const activeSala = salas.value.find(s => s.id === activeSalaId.value);
+  if (!activeSala) return 'Err-Sala';
+  
+  const puntosDeLaSala = puntos.value.filter(p => p.sala_id === activeSalaId.value);
+  if (puntosDeLaSala.length === 0) {
+    return `${activeSala.nombre}-1`;
+  }
+  
+  const existingNumbers = puntosDeLaSala.map(p => {
+    const parts = p.nomenclatura.split('-');
+    return parseInt(parts[parts.length - 1] || 0);
+  });
+  
+  const maxNumber = Math.max(0, ...existingNumbers);
+  return `${activeSala.nombre}-${maxNumber + 1}`;
+};
+
+// --- LÓGICA DE GESTIÓN DE PUNTOS ---
+const handleNewPoint = async (coords) => {
+  if (!activeSalaId.value) {
+    alert("Por favor, selecciona o crea una sala antes de añadir un punto.");
+    return;
+  }
+  const newNomenclature = getNextNomenclature();
+  const { data, error } = await supabase
+    .from('puntos_maestros')
+    .insert({ 
+      centro_id: centroId, 
+      sala_id: activeSalaId.value,
+      nomenclatura: newNomenclature, 
+      coordenada_x: coords.x, 
+      coordenada_y: coords.y 
+    })
+    .select().single();
+  
+  if (data) puntos.value.push(data);
+  else if (error) alert(error.message);
+};
+
+const handleDeletePoint = async (pointId) => {
+  const { error } = await supabase.from('puntos_maestros').delete().eq('id', pointId);
+  if (!error) puntos.value = puntos.value.filter(p => p.id !== pointId);
+  else alert('Error al borrar el punto: ' + error.message);
+};
+
+const handleUpdatePosition = async (point) => {
+  const { error } = await supabase.from('puntos_maestros').update({ coordenada_x: point.coordenada_x, coordenada_y: point.coordenada_y }).eq('id', point.id);
+  if (error) alert('Error al guardar la nueva posición: ' + error.message);
+};
+
+// --- LÓGICA DE SUBIDA DE PLANO ---
+const onFileSelected = (event) => {
+  selectedFile.value = event.target.files[0];
+  if (selectedFile.value) handleFileUpload();
+};
+const handleFileUpload = async () => { /* Implementación sin cambios */ };
+
+// --- CARGA INICIAL ---
+onMounted(async () => {
+  const { data: centroData } = await supabase.from('centros').select('*').eq('id', centroId).single();
+  centro.value = centroData;
+  await fetchSalas();
+  if (centro.value.url_imagen_plano) {
+    const { data: puntosData } = await supabase.from('puntos_maestros').select('*').eq('centro_id', centroId);
+    puntos.value = puntosData || [];
+  }
+  loading.value = false;
+});
+</script>
+
+<template>
+  <div class="p-4 sm:p-8 h-full flex flex-col">
+    <input type="file" @change="onFileSelected" accept="image/*" class="hidden" ref="fileInput">
+    <div v-if="loading" class="flex justify-center items-center h-full">Cargando...</div>
+    <div v-else-if="centro" class="flex-1 flex flex-col">
+      <div v-if="centro.url_imagen_plano" class="flex-1 flex flex-col">
+        <div class="flex-shrink-0 flex justify-between items-start mb-6 gap-4">
+          <div>
+            <h1 class="text-3xl font-bold text-slate-800">Configurar: {{ centro.nombre }}</h1>
+            <p class="text-slate-600 mt-2">Gestiona las salas y sus puntos de inspección.</p>
+          </div>
+          <div class="flex gap-2 flex-shrink-0">
+            <button @click="fileInput.click()" class="flex items-center gap-2 px-4 py-2 font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
+              <ArrowPathIcon class="h-5 w-5" /> Cambiar Plano
+            </button>
+            <button @click="router.push('/centros')" class="px-4 py-2 font-semibold text-white bg-slate-600 rounded-md hover:bg-slate-700">Volver</button>
+          </div>
+        </div>
+        
+        <div class="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-8 overflow-hidden">
+          <div class="lg:col-span-1 bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col">
+            <h2 class="text-xl font-bold text-slate-800 mb-4 flex-shrink-0">Salas</h2>
+            <div class="flex-1 overflow-y-auto -mr-4 pr-4">
+              <ul class="space-y-2">
+                <li v-for="sala in salas" :key="sala.id">
+                  <div @click="activeSalaId = sala.id" 
+                       :class="['w-full p-3 rounded-lg transition-colors flex justify-between items-center group cursor-pointer', activeSalaId === sala.id ? 'bg-blue-100' : 'hover:bg-slate-100']">
+                    <div class="flex items-center gap-3">
+                      <input type="color" v-model="sala.color" @change="saveSalaColor(sala)" 
+                             class="w-6 h-6 p-0 border-none rounded-md cursor-pointer flex-shrink-0" :title="`Cambiar color para ${sala.nombre}`">
+                      <span class="font-semibold" :class="{'text-blue-800': activeSalaId === sala.id}">{{ sala.nombre }}</span>
+                    </div>
+                    <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                       <button @click.stop="toggleDrawingMode" v-if="activeSalaId === sala.id" class="p-1 text-slate-500 hover:text-blue-600" title="Definir área de la sala">
+                        <MapIcon class="h-5 w-5" />
+                      </button>
+                      <button @click.stop="deleteSala(sala.id)" class="p-1 text-slate-400 hover:text-red-600">
+                        <TrashIcon class="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <form @submit.prevent="addSala" class="mt-4 flex-shrink-0 flex gap-2">
+              <input v-model="newSalaName" type="text" placeholder="Nueva sala..." class="flex-1 block w-full rounded-md border-slate-300 shadow-sm text-sm">
+              <button type="submit" class="p-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                <PlusIcon class="h-5 w-5" />
+              </button>
+            </form>
+          </div>
+
+          <div class="lg:col-span-3 bg-white p-2 rounded-lg shadow-sm border border-slate-200 relative" ref="mapContainerRef">
+             <div
+                class="absolute inset-0 z-10"
+                :class="{ 'cursor-crosshair': isDrawingMode, 'pointer-events-none': !isDrawingMode }"
+                @mousedown="startDrawing($event)"
+                @mousemove="drawRect($event)"
+                @mouseup="finishDrawing($event)"
+                @mouseleave="finishDrawing"
+             >
+                <div v-if="drawingRect" class="absolute bg-blue-500 bg-opacity-20 border-2 border-blue-600 border-dashed"
+                     :style="{
+                        left: `${Math.min(drawingRect.area_x1, drawingRect.area_x2) * 100}%`,
+                        top: `${Math.min(drawingRect.area_y1, drawingRect.area_y2) * 100}%`,
+                        width: `${Math.abs(drawingRect.area_x2 - drawingRect.area_x1) * 100}%`,
+                        height: `${Math.abs(drawingRect.area_y2 - drawingRect.area_y1) * 100}%`
+                     }">
+                </div>
+             </div>
+            <InteractiveMap 
+              :image-url="centro.url_imagen_plano" 
+              :points="puntos" 
+              :salas="salas"
+              @add-point="handleNewPoint" 
+              @delete-point="handleDeletePoint" 
+              @update-point-position="handleUpdatePosition" />
+          </div>
+        </div>
+      </div>
+      
+      <div v-else>
+         <div class="max-w-3xl mx-auto text-center">
+          <h1 class="text-3xl font-bold text-slate-800">Se necesita un plano</h1>
+          <p class="text-slate-600 mt-4 text-lg">Este centro no tiene un plano asignado. Sube una imagen para empezar a definir los puntos.</p>
+        </div>
+        <div class="mt-8 max-w-lg mx-auto bg-white p-8 rounded-lg shadow-md border">
+          <button @click="fileInput.click()" class="w-full flex flex-col items-center justify-center gap-4 px-6 py-10 border-2 border-dashed border-slate-300 rounded-lg hover:border-blue-500 transition-colors">
+            <ArrowUpTrayIcon class="h-10 w-10 text-slate-400" />
+            <span class="text-slate-500 font-medium">Haz clic aquí para seleccionar un archivo</span>
+          </button>
+        </div>
+        <div class="text-center mt-8">
+          <button @click="router.push('/centros')" class="font-semibold text-slate-600 hover:text-slate-800">Volver a Centros sin guardar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\views\CentroConfigView.vue ---
+
+--- INICIO DEL ARCHIVO: src\views\CentroHistorialView.vue ---
+<!-- src/views/CentroHistorialView.vue -->
+<script setup>
+import { ref, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { supabase } from '../supabase';
+import { EyeIcon, TrashIcon, ArrowDownTrayIcon } from '@heroicons/vue/24/outline';
+import { generateReport } from '../utils/pdfGenerator'; // <-- IMPORTAMOS NUESTRO GENERADOR
+
+const route = useRoute();
+const router = useRouter();
+const centroId = route.params.id;
+
+const loading = ref(true);
+const centro = ref(null);
+const inspecciones = ref([]);
+const isGeneratingPdf = ref(false);
+
+const handleGeneratePdf = async (inspeccionId) => {
+  isGeneratingPdf.value = true;
+  await generateReport(inspeccionId);
+  isGeneratingPdf.value = false;
+};
+
+const fetchData = async () => {
+  loading.value = true;
+  const { data: centroData } = await supabase.from('centros').select('nombre').eq('id', centroId).single();
+  centro.value = centroData;
+  const { data: inspeccionesData } = await supabase.from('inspecciones').select('*').eq('centro_id', centroId).order('fecha_inspeccion', { ascending: false });
+  inspecciones.value = inspeccionesData || [];
+  loading.value = false;
+};
+
+const handleDelete = async (inspeccionId) => {
+  if (confirm('¿Estás seguro de que quieres borrar esta inspección y todas sus incidencias?')) {
+    const { error } = await supabase.from('inspecciones').delete().eq('id', inspeccionId);
+    if (error) {
+      alert('Error al borrar la inspección: ' + error.message);
+    } else {
+      inspecciones.value = inspecciones.value.filter(i => i.id !== inspeccionId);
+    }
+  }
+};
+
+onMounted(fetchData);
+</script>
+
+<template>
+  <div class="p-8">
+    <div v-if="loading">Cargando historial...</div>
+    <div v-else-if="centro">
+      <div class="flex justify-between items-center mb-8">
+        <div>
+          <h1 class="text-4xl font-bold text-slate-800">Historial de Inspecciones</h1>
+          <p class="text-xl text-slate-600 mt-2">{{ centro.nombre }}</p>
+        </div>
+        <button @click="router.push('/centros')" class="px-4 py-2 font-semibold text-white bg-slate-600 rounded-md hover:bg-slate-700">
+          Volver a Centros
+        </button>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <ul class="divide-y divide-slate-200">
+          <li v-if="inspecciones.length === 0" class="p-8 text-center text-slate-500">
+            No se han encontrado inspecciones para este centro.
+          </li>
+          <li v-for="inspeccion in inspecciones" :key="inspeccion.id" class="p-4 grid grid-cols-1 md:grid-cols-5 gap-4 items-center">
+            <div class="md:col-span-1">
+              <p class="font-semibold text-slate-800">Fecha:</p>
+              <p class="text-slate-600">{{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString() }}</p>
+            </div>
+            <div class="md:col-span-1">
+              <p class="font-semibold text-slate-800">Técnico:</p>
+              <p class="text-slate-600">{{ inspeccion.tecnico_nombre }}</p>
+            </div>
+            <div class="md:col-span-1">
+              <p class="font-semibold text-slate-800">Estado:</p>
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                    :class="{ 'bg-blue-100 text-blue-800': inspeccion.estado === 'en_progreso', 'bg-green-100 text-green-800': inspeccion.estado === 'finalizada', 'bg-slate-100 text-slate-800': inspeccion.estado === 'cerrada' }">
+                {{ inspeccion.estado.replace('_', ' ') }}
+              </span>
+            </div>
+            <div class="md:col-span-2 flex justify-end items-center gap-2">
+              <!-- === BOTÓN DE DESCARGA AÑADIDO === -->
+              <button 
+                v-if="inspeccion.estado !== 'en_progreso'" 
+                @click="handleGeneratePdf(inspeccion.id)" 
+                :disabled="isGeneratingPdf"
+                class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-slate-400"
+              >
+                <ArrowDownTrayIcon class="h-4 w-4" />
+                {{ isGeneratingPdf ? 'Generando...' : 'Informe' }}
+              </button>
+              <router-link :to="`/inspecciones/${inspeccion.id}`" class="p-2 text-slate-500 hover:text-blue-600" title="Ver Inspección">
+                <EyeIcon class="h-5 w-5" />
+              </router-link>
+              <button @click="handleDelete(inspeccion.id)" class="p-2 text-slate-500 hover:text-red-600" title="Borrar Inspección">
+                <TrashIcon class="h-5 w-5" />
+              </button>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\views\CentroHistorialView.vue ---
+
+--- INICIO DEL ARCHIVO: src\views\CentrosListView.vue ---
+<!-- src/views/CentrosListView.vue -->
+<script setup>
+import { ref, onMounted, computed } from 'vue';
+import { supabase } from '../supabase';
+import { PlusIcon, PencilIcon, MapPinIcon, ArchiveBoxIcon } from '@heroicons/vue/24/solid';
+import CentroFormModal from '../components/CentroFormModal.vue';
+
+const centros = ref([]);
+const loading = ref(true);
+const isModalOpen = ref(false);
+const selectedCentro = ref(null);
+const filterZona = ref('');
+
+const zonas = ['Norte', 'Sur', 'Este', 'Oeste', 'Centro', 'Noreste', 'Noroeste', 'Sureste', 'Islas Baleares', 'Islas Canarias'];
+
+const filteredCentros = computed(() => {
+  if (!filterZona.value) return centros.value;
+  return centros.value.filter(c => c.zona === filterZona.value);
+});
+
+const openCreateModal = () => {
+  selectedCentro.value = null;
+  isModalOpen.value = true;
+};
+
+const openEditModal = (centro) => {
+  selectedCentro.value = centro;
+  isModalOpen.value = true;
+};
+
+const handleSaveCentro = async (centroData) => {
+  const dataToSave = { ...centroData };
+  let error;
+  if (dataToSave.id) {
+    const { error: updateError } = await supabase.from('centros').update(dataToSave).eq('id', dataToSave.id);
+    error = updateError;
+  } else {
+    delete dataToSave.id;
+    const { error: insertError } = await supabase.from('centros').insert(dataToSave);
+    error = insertError;
+  }
+  if (error) alert(error.message);
+  else {
+    isModalOpen.value = false;
+    fetchCentros();
+  }
+};
+
+const fetchCentros = async () => {
+  loading.value = true;
+  const { data } = await supabase.from('centros').select('*').order('nombre');
+  if (data) centros.value = data;
+  loading.value = false;
+};
+
+onMounted(fetchCentros);
+</script>
+
+<template>
+  <div class="p-8">
+    <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+      <h1 class="text-4xl font-bold text-slate-800">Maestro de Centros</h1>
+      <div class="flex items-center gap-4">
+        <select v-model="filterZona" class="rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm">
+          <option value="">Todas las Zonas</option>
+          <option v-for="z in zonas" :key="z" :value="z">{{ z }}</option>
+        </select>
+        <button @click="openCreateModal" class="flex items-center gap-2 px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 shadow-sm">
+          <PlusIcon class="h-5 w-5" />
+          Agregar Centro
+        </button>
+      </div>
+    </div>
+    
+    <div v-if="loading" class="text-center text-slate-500">Cargando...</div>
+    <div v-else class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="min-w-full">
+        <div class="hidden md:grid grid-cols-12 gap-4 px-6 py-4 bg-slate-50 border-b border-slate-200">
+          <div class="col-span-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Centro / Dirección</div>
+          <div class="col-span-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Responsable</div>
+          <div class="col-span-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Zona</div>
+          <div class="col-span-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Acciones</div>
+        </div>
+
+        <ul class="divide-y divide-slate-200">
+          <li v-for="centro in filteredCentros" :key="centro.id" class="px-6 py-4 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+            <div class="col-span-1 md:col-span-4">
+              <p class="text-lg font-bold text-slate-900">{{ centro.nombre }}</p>
+              <p class="text-sm text-slate-500">{{ centro.direccion }}</p>
+            </div>
+            <div class="col-span-1 md:col-span-3">
+              <p class="text-sm font-medium text-slate-800">{{ centro.responsable_nombre }}</p>
+              <p class="text-sm text-slate-500">{{ centro.responsable_email }}</p>
+            </div>
+            <div class="col-span-1 md:col-span-2">
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">
+                {{ centro.zona }}
+              </span>
+            </div>
+            <div class="col-span-1 md:col-span-3 flex justify-end items-center flex-wrap gap-2">
+              <button @click="openEditModal(centro)" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
+                <PencilIcon class="h-4 w-4" />
+                Editar
+              </button>
+              <router-link :to="`/centros/${centro.id}/historial`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
+                <ArchiveBoxIcon class="h-4 w-4" />
+                Historial
+              </router-link>
+              <router-link :to="`/centros/${centro.id}/configurar`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-white bg-green-600 rounded-md hover:bg-green-700">
+                <MapPinIcon class="h-4 w-4" />
+                Puntos
+              </router-link>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <CentroFormModal :is-open="isModalOpen" :centro="selectedCentro" @close="isModalOpen = false" @save="handleSaveCentro" />
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\views\CentrosListView.vue ---
+
+--- INICIO DEL ARCHIVO: src\views\DashboardView.vue ---
+<!-- src/views/DashboardView.vue -->
+<script setup>
+import { BuildingStorefrontIcon, DocumentMagnifyingGlassIcon } from '@heroicons/vue/24/outline';
+</script>
+
+<template>
+  <div class="p-8">
+    <h1 class="text-4xl font-bold text-slate-800 mb-8">Menú Principal</h1>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <!-- Tarjeta para Maestro de Centros -->
+      <router-link to="/centros" class="group block bg-white p-8 rounded-xl shadow-sm hover:shadow-lg transition-shadow border border-slate-200">
+        <div class="flex items-center gap-6">
+          <div class="bg-blue-100 p-4 rounded-lg">
+            <BuildingStorefrontIcon class="h-8 w-8 text-blue-600" />
+          </div>
+          <div>
+            <h2 class="text-2xl font-bold text-slate-800 group-hover:text-blue-600 transition-colors">Maestro de Centros</h2>
+            <p class="text-slate-500 mt-1">Configurar los centros y definir los puntos de inspección en el plano.</p>
+          </div>
+        </div>
+      </router-link>
+
+      <!-- Tarjeta para Inspecciones -->
+      <router-link to="/inspecciones" class="group block bg-white p-8 rounded-xl shadow-sm hover:shadow-lg transition-shadow border border-slate-200">
+        <div class="flex items-center gap-6">
+          <div class="bg-teal-100 p-4 rounded-lg">
+            <DocumentMagnifyingGlassIcon class="h-8 w-8 text-teal-600" />
+          </div>
+          <div>
+            <h2 class="text-2xl font-bold text-slate-800 group-hover:text-teal-600 transition-colors">Inspecciones</h2>
+            <p class="text-slate-500 mt-1">Iniciar o continuar una inspección basada en una plantilla de centro.</p>
+          </div>
+        </div>
+      </router-link>
+    </div>
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\views\DashboardView.vue ---
+
+--- INICIO DEL ARCHIVO: src\views\InspeccionDetailView.vue ---
+<!-- src/views/InspeccionDetailView.vue -->
+<script setup>
+import { ref, onMounted, computed } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { supabase } from '../supabase';
+import InteractiveMap from '../components/InteractiveMap.vue';
+import ChecklistModal from '../components/ChecklistModal.vue';
+import PointList from '../components/PointList.vue';
+import AddPointForm from '../components/AddPointForm.vue';
+import { CheckCircleIcon, PlusIcon, XCircleIcon } from '@heroicons/vue/24/solid';
+
+const route = useRoute();
+const router = useRouter();
+const inspeccionId = Number(route.params.id);
+
+const loading = ref(true);
+const inspeccion = ref(null);
+const centro = ref(null);
+const salas = ref([]);
+const puntosMaestros = ref([]);
+const puntosInspeccionados = ref([]);
+
+const isModalOpen = ref(false);
+const selectedPunto = ref(null);
+const showAddPointForm = ref(false);
+
+const isPlacementMode = ref(false);
+const newPointSalaId = ref(null);
+
+const handleMapClick = (coords) => {
+  if (!isPlacementMode.value) return;
+  createNewPointAt(coords, newPointSalaId.value);
+};
+
+const initializeInspectionPoints = async () => {
+  const { data: existingPoints } = await supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId);
+  puntosInspeccionados.value = existingPoints || [];
+
+  if (puntosInspeccionados.value.length === 0 && puntosMaestros.value.length > 0) {
+    const pointsToCreate = puntosMaestros.value.map(pm => ({
+      inspeccion_id: inspeccionId,
+      punto_maestro_id: pm.id,
+      nomenclatura: pm.nomenclatura,
+      coordenada_x: pm.coordenada_x,
+      coordenada_y: pm.coordenada_y,
+      estado: 'existente'
+    }));
+    
+    if (pointsToCreate.length > 0) {
+      const { data: newPoints, error } = await supabase.from('puntos_inspeccionados').insert(pointsToCreate).select();
+      if (error) console.error("Error al hidratar la inspección:", error);
+      else puntosInspeccionados.value = newPoints;
+    }
+  }
+};
+
+const getSalaColor = (salaId) => {
+  const sala = salas.value.find(s => s.id === salaId);
+  return sala ? sala.color : '#9CA3AF';
+};
+
+const puntosParaMostrar = computed(() => {
+  return puntosInspeccionados.value.map(pi => {
+    const maestro = puntosMaestros.value.find(pm => pm.id === pi.punto_maestro_id);
+    return { ...pi, sala_id: maestro?.sala_id, color: getSalaColor(maestro?.sala_id) };
+  });
+});
+
+const puntosAgrupadosPorSala = computed(() => {
+  if (!salas.value.length) return [];
+  return salas.value.map(sala => ({
+    ...sala,
+    puntos: puntosParaMostrar.value
+      .filter(p => p.sala_id === sala.id)
+      .sort((a,b) => a.nomenclatura.localeCompare(b.nomenclatura, undefined, {numeric: true}))
+  })).filter(g => g.puntos.length > 0);
+});
+
+const updatePuntoEstado = async (punto, nuevoEstado) => {
+  const puntoOriginal = puntosInspeccionados.value.find(p => p.id === punto.id);
+  if (!puntoOriginal) return;
+
+  const estadoAnterior = puntoOriginal.estado;
+  puntoOriginal.estado = nuevoEstado;
+
+  const { error } = await supabase
+    .from('puntos_inspeccionados')
+    .update({ estado: nuevoEstado })
+    .eq('id', punto.id);
+
+  if (error) {
+    alert("Error al actualizar el estado del punto.");
+    puntoOriginal.estado = estadoAnterior;
+  }
+};
+
+const startPlacementMode = (salaId) => {
+  showAddPointForm.value = false;
+  newPointSalaId.value = salaId;
+  isPlacementMode.value = true;
+};
+
+const cancelPlacementMode = () => {
+    isPlacementMode.value = false;
+    newPointSalaId.value = null;
+}
+
+const createNewPointAt = async (coords, salaId) => {
+  isPlacementMode.value = false;
+  newPointSalaId.value = null;
+
+  const salaSeleccionada = salas.value.find(s => s.id === salaId);
+  const puntosDeLaSala = puntosMaestros.value.filter(p => p.sala_id === salaId);
+  const ultimoNumero = Math.max(0, ...puntosDeLaSala.map(p => parseInt(p.nomenclatura.split('-').pop() || 0)));
+  const nuevaNomenclatura = `${salaSeleccionada.nombre}-${ultimoNumero + 1}`;
+
+  const { data: nuevoPuntoMaestro, error: maestroError } = await supabase
+    .from('puntos_maestros')
+    .insert({
+      centro_id: centro.value.id,
+      sala_id: salaId,
+      nomenclatura: nuevaNomenclatura,
+      coordenada_x: coords.x,
+      coordenada_y: coords.y,
+    }).select().single();
+
+  if (maestroError) {
+    alert("Error al crear el punto maestro: " + maestroError.message);
+    return;
+  }
+  puntosMaestros.value.push(nuevoPuntoMaestro);
+
+  const { data: nuevoPuntoIns, error: insError } = await supabase
+    .from('puntos_inspeccionados')
+    .insert({
+      inspeccion_id: inspeccionId,
+      punto_maestro_id: nuevoPuntoMaestro.id,
+      nomenclatura: nuevoPuntoMaestro.nomenclatura,
+      coordenada_x: nuevoPuntoMaestro.coordenada_x,
+      coordenada_y: nuevoPuntoMaestro.coordenada_y,
+      estado: 'nuevo'
+    }).select().single();
+  
+  if (insError) {
+    alert("Error al registrar el nuevo punto en la inspección: " + insError.message);
+    return;
+  }
+  puntosInspeccionados.value.push(nuevoPuntoIns);
+};
+
+const openChecklistFor = (punto) => {
+  if (isPlacementMode.value) return;
+  selectedPunto.value = puntosMaestros.value.find(pm => pm.id === punto.punto_maestro_id);
+  isModalOpen.value = true;
+};
+
+const finalizarInspeccion = async () => {
+  if (confirm('¿Estás seguro de que quieres finalizar esta inspección? Una vez finalizada, no podrás editar las incidencias iniciales.')) {
+    const { error } = await supabase
+      .from('inspecciones')
+      .update({ estado: 'finalizada' })
+      .eq('id', inspeccionId);
+
+    if (error) {
+      alert('Error al finalizar la inspección: ' + error.message);
+    } else {
+      alert('Inspección finalizada correctamente.');
+      router.push('/inspecciones');
+    }
+  }
+};
+
+onMounted(async () => {
+  loading.value = true;
+  const { data: inspectionData } = await supabase.from('inspecciones').select('*, centros(*)').eq('id', inspeccionId).single();
+  
+  if (!inspectionData) {
+      alert('Error: No se pudo cargar la inspección o no tienes permiso para verla.');
+      loading.value = false;
+      return;
+  }
+
+  inspeccion.value = inspectionData;
+  centro.value = inspectionData.centros;
+  
+  if (centro.value) {
+    const [salasRes, puntosMaestrosRes] = await Promise.all([
+      supabase.from('salas').select('*').eq('centro_id', centro.value.id).order('nombre'),
+      supabase.from('puntos_maestros').select('*').eq('centro_id', centro.value.id)
+    ]);
+    salas.value = salasRes.data || [];
+    puntosMaestros.value = puntosMaestrosRes.data || [];
+    await initializeInspectionPoints();
+  }
+  loading.value = false;
+});
+</script>
+
+<template>
+  <div class="p-8 h-full flex flex-col">
+    <div v-if="loading" class="text-center text-slate-500">Cargando...</div>
+    <div v-else-if="centro && inspeccion" class="flex-1 flex flex-col">
+      <div class="flex-shrink-0 mb-8">
+        <div class="flex flex-col md:flex-row justify-between items-start gap-4">
+          <div>
+            <h1 class="text-4xl font-bold text-slate-800 mb-2">Inspección: {{ centro.nombre }}</h1>
+            <p class="text-slate-500">Técnico: <span class="font-medium">{{ inspeccion.tecnico_nombre }}</span> | Fecha: <span class="font-medium">{{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString() }}</span></p>
+          </div>
+          <button 
+            v-if="inspeccion.estado === 'en_progreso'"
+            @click="finalizarInspeccion" 
+            class="flex items-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm">
+            <CheckCircleIcon class="h-5 w-5" />
+            Finalizar Inspección
+          </button>
+        </div>
+      </div>
+      
+      <div class="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-8 overflow-hidden">
+        <div class="lg:col-span-1 bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col">
+          <h2 class="text-xl font-bold text-slate-800 mb-4 flex-shrink-0">Puntos de Inspección</h2>
+          <div class="flex-1 overflow-y-auto -mr-4 pr-4">
+            <PointList 
+              :grouped-points="puntosAgrupadosPorSala"
+              @select-point="openChecklistFor"
+              @update-state="updatePuntoEstado"
+            />
+          </div>
+          <div class="mt-4 flex-shrink-0 border-t pt-4">
+             <AddPointForm 
+                v-if="showAddPointForm"
+                :salas="salas"
+                @save="startPlacementMode"
+                @cancel="showAddPointForm = false"
+             />
+             <button v-else-if="!isPlacementMode" @click="showAddPointForm = true" class="w-full flex items-center justify-center gap-2 px-4 py-2 font-semibold text-slate-600 bg-slate-100 rounded-md hover:bg-slate-200">
+                <PlusIcon class="h-5 w-5" />
+                Agregar Punto Nuevo
+             </button>
+             <button v-if="isPlacementMode" @click="cancelPlacementMode" class="w-full flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-red-600 rounded-md hover:bg-red-700">
+                <XCircleIcon class="h-5 w-5" />
+                Cancelar Colocación
+             </button>
+          </div>
+        </div>
+
+        <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-2">
+          <InteractiveMap 
+            :image-url="centro.url_imagen_plano" 
+            :points="puntosParaMostrar.filter(p => p.estado !== 'suprimido')"
+            :salas="salas"
+            :is-read-only="true"
+            :is-placement-mode="isPlacementMode"
+            @point-click="openChecklistFor"
+            @add-point="handleMapClick"
+          />
+        </div>
+      </div>
+    </div>
+    <div v-else class="text-center text-red-500">No se encontraron datos para esta inspección.</div>
+
+    <ChecklistModal 
+      :is-open="isModalOpen" 
+      :punto="selectedPunto"
+      :inspeccion-id="inspeccionId" 
+      @close="isModalOpen = false" 
+    />
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\views\InspeccionDetailView.vue ---
+
+--- INICIO DEL ARCHIVO: src\views\InspeccionesListView.vue ---
+<!-- src/views/InspeccionesListView.vue -->
+<script setup>
+import { ref, onMounted, computed } from 'vue';
+import { useRouter } from 'vue-router';
+import { supabase } from '../supabase';
+
+const router = useRouter();
+const centros = ref([]);
+const loading = ref(true); // Para la carga inicial de centros
+const isStarting = ref(false); // Para la acción de comenzar una inspección
+const searchTerm = ref('');
+const tecnicoNombre = ref('');
+
+// Propiedad computada para filtrar los centros en tiempo real según la búsqueda
+const filteredCentros = computed(() => {
+  if (!searchTerm.value) {
+    return centros.value;
+  }
+  return centros.value.filter(centro =>
+    centro.nombre.toLowerCase().includes(searchTerm.value.toLowerCase())
+  );
+});
+
+// Función que se ejecuta al hacer clic en un centro de la lista
+const startInspection = async (centroId) => {
+  if (!tecnicoNombre.value.trim()) {
+    alert('Por favor, introduce el nombre del técnico para continuar.');
+    return;
+  }
+  isStarting.value = true;
+
+  // 1. Buscar una inspección 'en_progreso' para este centro
+  let { data: inspection, error: findError } = await supabase
+    .from('inspecciones')
+    .select('id')
+    .eq('centro_id', centroId)
+    .eq('estado', 'en_progreso')
+    .maybeSingle();
+
+  if (findError) {
+    alert('Error buscando inspección: ' + findError.message);
+    isStarting.value = false;
+    return;
+  }
+
+  // 2. Si no existe, crear una nueva con los datos del técnico y la fecha
+  if (!inspection) {
+    const { data: newInspection, error: createError } = await supabase
+      .from('inspecciones')
+      .insert({ 
+        centro_id: centroId, 
+        estado: 'en_progreso',
+        tecnico_nombre: tecnicoNombre.value.trim(),
+        fecha_inspeccion: new Date().toISOString().slice(0, 10) // Fecha de hoy
+      })
+      .select('id')
+      .single();
+    
+    if (createError) {
+      alert('Error creando inspección: ' + createError.message);
+      isStarting.value = false;
+      return;
+    }
+    inspection = newInspection;
+  } else {
+    // Si ya existía, actualizamos los datos por si ha cambiado el técnico o el día
+    await supabase.from('inspecciones').update({ 
+      tecnico_nombre: tecnicoNombre.value.trim(),
+      fecha_inspeccion: new Date().toISOString().slice(0, 10)
+    }).eq('id', inspection.id);
+  }
+
+  // 3. Navegar a la página de detalle de la inspección
+  router.push(`/inspecciones/${inspection.id}`);
+};
+
+// Carga inicial de todos los centros
+onMounted(async () => {
+  loading.value = true;
+  const { data } = await supabase.from('centros').select('id, nombre').order('nombre');
+  if (data) centros.value = data;
+  loading.value = false;
+});
+</script>
+
+<template>
+  <div class="p-8">
+    <h1 class="text-4xl font-bold text-slate-800 mb-8">Iniciar Inspección</h1>
+    <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 max-w-3xl mx-auto">
+      
+      <!-- Paso 1: Nombre del Técnico -->
+      <div class="mb-6">
+        <label for="tecnico" class="block text-sm font-medium text-slate-700 mb-1">Nombre del Técnico</label>
+        <input 
+          v-model="tecnicoNombre" 
+          id="tecnico" 
+          type="text" 
+          placeholder="Escribe tu nombre..." 
+          class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+        >
+      </div>
+
+      <!-- Paso 2: Buscador y Lista de Centros -->
+      <div>
+        <label for="search" class="block text-sm font-medium text-slate-700 mb-1">Buscar y Seleccionar Centro</label>
+        <input 
+          v-model="searchTerm" 
+          id="search" 
+          type="search" 
+          placeholder="Escribe para buscar un centro..." 
+          class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+        >
+      </div>
+      
+      <!-- Lista de Resultados -->
+      <div class="mt-4 max-h-60 overflow-y-auto border rounded-md">
+        <div v-if="loading" class="p-4 text-center text-slate-500">Cargando centros...</div>
+        <ul v-else-if="filteredCentros.length > 0">
+          <li v-for="centro in filteredCentros" :key="centro.id" class="border-b last:border-b-0">
+            <button 
+              @click="startInspection(centro.id)" 
+              :disabled="isStarting"
+              class="w-full text-left p-4 hover:bg-blue-50 transition-colors disabled:bg-slate-100 disabled:cursor-wait"
+            >
+              {{ centro.nombre }}
+            </button>
+          </li>
+        </ul>
+        <div v-else class="p-4 text-center text-slate-500">No se encontraron centros.</div>
+      </div>
+
+    </div>
+  </div>
+</template>
+--- FIN DEL ARCHIVO: src\views\InspeccionesListView.vue ---
+
+--- INICIO DEL ARCHIVO: .env.local ---
+VITE_SUPABASE_URL="https://bgltxcklvjumltuktdvv.supabase.co"
+VITE_SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJnbHR4Y2tsdmp1bWx0dWt0ZHZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM3MjkyMTUsImV4cCI6MjA2OTMwNTIxNX0.TtxL8haxS8ez9DgwMKiAGs4FVRkibg_FkULQjXAUqiA"
+--- FIN DEL ARCHIVO: .env.local ---
+

@@ -5,7 +5,9 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 const props = defineProps({
   imageUrl: { type: String, required: true },
   points: { type: Array, default: () => [] },
-  isReadOnly: { type: Boolean, default: false } // Prop para modo solo lectura
+  salas: { type: Array, default: () => [] },
+  isReadOnly: { type: Boolean, default: false },
+  isPlacementMode: { type: Boolean, default: false }
 });
 
 const emit = defineEmits(['add-point', 'delete-point', 'update-point-position', 'point-click']);
@@ -14,7 +16,11 @@ const mapContainerRef = ref(null);
 const draggedPointId = ref(null);
 const mapDimensions = ref({ width: 0, height: 0 });
 
-// --- LÓGICA DE DES-SOLAPAMIENTO (SPIDERING) ---
+const getSalaColor = (salaId) => {
+  const sala = props.salas.find(s => s.id === salaId);
+  return sala ? sala.color : '#9CA3AF'; 
+};
+
 const displayPoints = computed(() => {
   if (!mapDimensions.value.width || !props.points.length) return props.points.map(p => ({ ...p, visualOffsetX: 0, visualOffsetY: 0 }));
   const pixelPoints = props.points.map(p => ({
@@ -50,46 +56,53 @@ const displayPoints = computed(() => {
   return pixelPoints;
 });
 
-// --- LÓGICA DE MOVIMIENTO (DRAG & DROP) ---
 const startDrag = (pointId) => {
-  if (props.isReadOnly) return;
+  if (props.isReadOnly || props.isPlacementMode) return;
   draggedPointId.value = pointId;
 };
+
 const onDrag = (event) => {
-  if (props.isReadOnly || draggedPointId.value === null) return;
+  if (props.isReadOnly || props.isPlacementMode || draggedPointId.value === null) return;
   const point = props.points.find(p => p.id === draggedPointId.value);
+  if (!point) return;
   const mapRect = mapContainerRef.value.getBoundingClientRect();
   point.coordenada_x = (event.clientX - mapRect.left) / mapRect.width;
   point.coordenada_y = (event.clientY - mapRect.top) / mapRect.height;
 };
+
 const stopDrag = () => {
-  if (props.isReadOnly || draggedPointId.value === null) return;
+  if (props.isReadOnly || props.isPlacementMode || draggedPointId.value === null) return;
   const point = props.points.find(p => p.id === draggedPointId.value);
-  emit('update-point-position', point);
+  if (point) {
+    emit('update-point-position', point);
+  }
   draggedPointId.value = null;
 };
 
-// --- LÓGICA DE CLICS ---
 const handleMapClick = (event) => {
-  if (props.isReadOnly) return;
+  if (draggedPointId.value) {
+    return;
+  }
   const mapRect = mapContainerRef.value.getBoundingClientRect();
   const x = (event.clientX - mapRect.left) / mapRect.width;
   const y = (event.clientY - mapRect.top) / mapRect.height;
   emit('add-point', { x, y });
 };
+
 const handleDeleteClick = (pointId) => {
   if (props.isReadOnly) return;
   if (confirm('¿Estás seguro de que quieres borrar este punto?')) {
     emit('delete-point', pointId);
   }
 };
+
 const handlePointClick = (point) => {
+  if (props.isPlacementMode) return;
   if (props.isReadOnly) {
     emit('point-click', point);
   }
 };
 
-// --- MANEJO DEL TAMAÑO DEL MAPA ---
 const updateMapDimensions = () => {
   if (mapContainerRef.value) {
     mapDimensions.value = {
@@ -98,6 +111,7 @@ const updateMapDimensions = () => {
     };
   }
 };
+
 onMounted(() => {
   const resizeObserver = new ResizeObserver(updateMapDimensions);
   if (mapContainerRef.value) {
@@ -110,26 +124,47 @@ onMounted(() => {
 <template>
   <div 
     ref="mapContainerRef"
-    :class="['relative w-full border-2 border-gray-300 overflow-hidden', { 'cursor-crosshair': !isReadOnly, 'cursor-default': isReadOnly }]"
+    :class="['relative w-full border-2 border-gray-300 overflow-hidden', { 'cursor-crosshair': isPlacementMode, 'cursor-default': isReadOnly && !isPlacementMode }]"
     @click="handleMapClick"
     @mousemove="onDrag"
     @mouseup="stopDrag"
     @mouseleave="stopDrag" 
   >
+    <div v-if="isPlacementMode" class="absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-lg z-20 pointer-events-none">
+      Haz clic en el plano para situar el nuevo punto.
+    </div>
+  
     <img :src="imageUrl" alt="Plano del centro" class="w-full h-auto block select-none" draggable="false" @load="updateMapDimensions" />
+
+    <template v-for="sala in salas" :key="`sala-area-${sala.id}`">
+      <div
+        v-if="sala && sala.area_x1 && sala.area_y1 && sala.area_x2 && sala.area_y2"
+        class="absolute pointer-events-none border-2"
+        :style="{
+          left: `${Math.min(sala.area_x1, sala.area_x2) * 100}%`,
+          top: `${Math.min(sala.area_y1, sala.area_y2) * 100}%`,
+          width: `${Math.abs(sala.area_x2 - sala.area_x1) * 100}%`,
+          height: `${Math.abs(sala.area_y2 - sala.area_y1) * 100}%`,
+          backgroundColor: `${getSalaColor(sala.id)}20`,
+          borderColor: `${getSalaColor(sala.id)}80`
+        }"
+      ></div>
+    </template>
+
     <div
       v-for="point in displayPoints"
       :key="point.id"
-      :class="['absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 bg-blue-600 border-2 border-white rounded-full flex items-center justify-center text-white text-xs font-bold group shadow-lg', { 'cursor-grab active:cursor-grabbing': !isReadOnly, 'cursor-pointer hover:scale-110 transition-transform': isReadOnly }]"
+      :class="['absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 border-2 border-white rounded-full flex items-center justify-center text-white text-xs font-bold group shadow-lg', { 'cursor-grab active:cursor-grabbing': !isReadOnly, 'cursor-pointer hover:scale-110 transition-transform': isReadOnly }]"
       :style="{ 
         left: (point.coordenada_x * 100) + '%', 
         top: (point.coordenada_y * 100) + '%',
-        transform: `translate(-50%, -50%) translate(${point.visualOffsetX}px, ${point.visualOffsetY}px)`
+        transform: `translate(-50%, -50%) translate(${point.visualOffsetX}px, ${point.visualOffsetY}px)`,
+        backgroundColor: getSalaColor(point.sala_id)
       }"
       @mousedown.stop="startDrag(point.id)"
       @click.stop="handlePointClick(point)"
     >
-      {{ point.nomenclatura.split('-')[1] || '?' }}
+      {{ point.nomenclatura.split('-').pop() || '?' }}
       <button 
         v-if="!isReadOnly"
         @click.stop="handleDeleteClick(point.id)"

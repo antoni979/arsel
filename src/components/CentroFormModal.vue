@@ -1,68 +1,134 @@
 <!-- src/components/CentroFormModal.vue -->
 <script setup>
-import { ref, watchEffect } from 'vue';
+import { ref, watch, nextTick } from 'vue';
 import { provincias } from '../utils/provincias';
+import { supabase } from '../supabase';
+import { ArrowUpTrayIcon } from '@heroicons/vue/24/outline';
 
 const props = defineProps({
   isOpen: Boolean,
-  centro: Object, // Será null si es para crear, o un objeto si es para editar
+  centro: Object,
 });
 
 const emit = defineEmits(['close', 'save']);
 
 const form = ref({});
+const isUploadingLogo = ref(false);
+const logoInput = ref(null); // Referencia para el input de tipo file
 const zonas = ['Norte', 'Sur', 'Este', 'Oeste', 'Centro', 'Noreste', 'Noroeste', 'Sureste', 'Islas Baleares', 'Islas Canarias'];
 
-// Cuando el modal se abre o el centro a editar cambia, reseteamos el formulario
-watchEffect(() => {
-  if (props.isOpen) {
-    form.value = props.centro ? { ...props.centro } : { nombre: '', direccion: '', responsable_nombre: '', responsable_email: '', provincia: '', zona: '' };
+watch(() => props.isOpen, (newVal) => {
+  if (newVal) {
+    // Usamos un clon del objeto para no modificar el original hasta guardar
+    form.value = props.centro ? { ...props.centro } : { nombre: '', direccion: '', responsable_nombre: '', responsable_email: '', provincia: '', zona: '', url_logo_cliente: null };
   }
 });
 
+const handleLogoSelected = async (event) => {
+  const file = event.target.files[0];
+  if (!file || !form.value.id) {
+    if(!form.value.id) alert("Guarda primero el centro para poder asignarle un logo.");
+    return;
+  }
+  
+  isUploadingLogo.value = true;
+  const fileName = `cliente_${form.value.id}/${Date.now()}_${file.name}`;
+  
+  // Subir el nuevo logo
+  const { error: uploadError } = await supabase.storage.from('logos-clientes').upload(fileName, file);
+  if (uploadError) {
+    alert("Error al subir el logo: " + uploadError.message);
+    isUploadingLogo.value = false;
+    return;
+  }
+
+  // Obtener la URL pública
+  const { data: { publicUrl } } = supabase.storage.from('logos-clientes').getPublicUrl(fileName);
+
+  // Actualizar el campo en la BBDD y en el formulario
+  const { error: updateError } = await supabase
+    .from('centros')
+    .update({ url_logo_cliente: publicUrl })
+    .eq('id', form.value.id);
+
+  if (updateError) {
+    alert("Error al guardar la URL del logo: " + updateError.message);
+  } else {
+    // Actualizamos el logo en el formulario para que se vea el cambio al instante
+    form.value.url_logo_cliente = publicUrl;
+  }
+  isUploadingLogo.value = false;
+};
+
+
 const handleSubmit = () => {
+  // Simplemente emitimos los datos del formulario. La subida del logo es independiente.
   emit('save', form.value);
 };
 </script>
 
 <template>
   <div v-if="isOpen" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
-    <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
       <div class="p-6 border-b">
         <h2 class="text-2xl font-bold text-slate-800">{{ centro ? 'Editar Centro' : 'Agregar Nuevo Centro' }}</h2>
       </div>
       <form @submit.prevent="handleSubmit">
-        <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-          <!-- Campos del formulario -->
-          <div class="md:col-span-2">
-            <label for="nombre" class="block text-sm font-medium text-slate-600">Nombre del Centro</label>
-            <input v-model="form.nombre" type="text" id="nombre" required class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+        <div class="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+          <!-- Columna 1 y 2: Campos del formulario -->
+          <div class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="md:col-span-2">
+              <label for="nombre" class="block text-sm font-medium text-slate-600">Nombre del Centro</label>
+              <input v-model="form.nombre" type="text" id="nombre" required class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div class="md:col-span-2">
+              <label for="direccion" class="block text-sm font-medium text-slate-600">Dirección</label>
+              <input v-model="form.direccion" type="text" id="direccion" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
+              <label for="responsable_nombre" class="block text-sm font-medium text-slate-600">Nombre del Responsable</label>
+              <input v-model="form.responsable_nombre" type="text" id="responsable_nombre" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
+              <label for="responsable_email" class="block text-sm font-medium text-slate-600">Email del Responsable</label>
+              <input v-model="form.responsable_email" type="email" id="responsable_email" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
+              <label for="provincia" class="block text-sm font-medium text-slate-600">Provincia</label>
+              <select v-model="form.provincia" id="provincia" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <option disabled value="">Selecciona una provincia</option>
+                <option v-for="p in provincias" :key="p" :value="p">{{ p }}</option>
+              </select>
+            </div>
+            <div>
+              <label for="zona" class="block text-sm font-medium text-slate-600">Zona</label>
+              <select v-model="form.zona" id="zona" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                <option disabled value="">Selecciona una zona</option>
+                <option v-for="z in zonas" :key="z" :value="z">{{ z }}</option>
+              </select>
+            </div>
           </div>
-          <div class="md:col-span-2">
-            <label for="direccion" class="block text-sm font-medium text-slate-600">Dirección</label>
-            <input v-model="form.direccion" type="text" id="direccion" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-          </div>
-          <div>
-            <label for="responsable_nombre" class="block text-sm font-medium text-slate-600">Nombre del Responsable</label>
-            <input v-model="form.responsable_nombre" type="text" id="responsable_nombre" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-          </div>
-          <div>
-            <label for="responsable_email" class="block text-sm font-medium text-slate-600">Email del Responsable</label>
-            <input v-model="form.responsable_email" type="email" id="responsable_email" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-          </div>
-          <div>
-            <label for="provincia" class="block text-sm font-medium text-slate-600">Provincia</label>
-            <select v-model="form.provincia" id="provincia" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-              <option disabled value="">Selecciona una provincia</option>
-              <option v-for="p in provincias" :key="p" :value="p">{{ p }}</option>
-            </select>
-          </div>
-          <div>
-            <label for="zona" class="block text-sm font-medium text-slate-600">Zona</label>
-            <select v-model="form.zona" id="zona" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-              <option disabled value="">Selecciona una zona</option>
-              <option v-for="z in zonas" :key="z" :value="z">{{ z }}</option>
-            </select>
+          
+          <!-- Columna 3: Logo del Cliente -->
+          <div class="md:col-span-1">
+             <input type="file" ref="logoInput" @change="handleLogoSelected" accept="image/*" class="hidden">
+             <label class="block text-sm font-medium text-slate-600 mb-1">Logo del Cliente</label>
+             <div class="aspect-video bg-slate-100 rounded-md flex items-center justify-center border-2 border-dashed">
+                <img v-if="form.url_logo_cliente" :src="form.url_logo_cliente" class="object-contain w-full h-full p-2">
+                <div v-else class="text-center text-slate-500 p-4">Sin logo</div>
+             </div>
+             <button 
+                type="button" 
+                @click="logoInput.click()" 
+                :disabled="!form.id || isUploadingLogo"
+                class="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold rounded-md transition-colors
+                       disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed
+                       text-slate-700 bg-white border border-slate-300 hover:bg-slate-50"
+              >
+               <ArrowUpTrayIcon class="h-4 w-4" />
+               {{ isUploadingLogo ? 'Subiendo...' : (form.url_logo_cliente ? 'Cambiar Logo' : 'Subir Logo') }}
+             </button>
+             <p v-if="!form.id" class="text-xs text-slate-500 mt-1 text-center">Debes guardar el centro antes de subir un logo.</p>
           </div>
         </div>
         <div class="p-6 bg-slate-50 border-t flex justify-end space-x-4">

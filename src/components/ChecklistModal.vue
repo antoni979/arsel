@@ -16,6 +16,7 @@ const emit = defineEmits(['close', 'save']);
 const incidencias = ref([]);
 const loading = ref(false);
 const isUploading = ref(false);
+const puntoInspeccionadoId = ref(null);
 
 const gravedadOptions = [
   { label: 'Leve', value: 'verde' },
@@ -26,11 +27,47 @@ const gravedadOptions = [
 const loadIncidencias = async () => {
   if (!props.punto || !props.inspeccionId) return;
   loading.value = true;
+  puntoInspeccionadoId.value = null;
+
+  // === INICIO DE LA CORRECCIÓN (v2) ===
+  // Cambiamos .single() por .maybeSingle() para evitar el error 406 si el punto no existe todavía.
+  const { data: puntoRelacionado } = await supabase
+    .from('puntos_inspeccionados')
+    .select('id')
+    .eq('inspeccion_id', props.inspeccionId)
+    .eq('punto_maestro_id', props.punto.id)
+    .maybeSingle(); // <-- ¡ESTE ES EL CAMBIO!
+  // === FIN DE LA CORRECCIÓN (v2) ===
+
+  if (puntoRelacionado) {
+    puntoInspeccionadoId.value = puntoRelacionado.id;
+  } else {
+    const { data: nuevoPunto, error } = await supabase
+      .from('puntos_inspeccionados')
+      .insert({
+        inspeccion_id: props.inspeccionId,
+        punto_maestro_id: props.punto.id,
+        nomenclatura: props.punto.nomenclatura,
+        coordenada_x: props.punto.coordenada_x,
+        coordenada_y: props.punto.coordenada_y,
+      })
+      .select('id')
+      .single();
+    
+    if (error) {
+        console.error("Error crítico al crear el punto de inspección:", error);
+        loading.value = false;
+        return;
+    }
+    puntoInspeccionadoId.value = nuevoPunto.id;
+  }
+
   const { data } = await supabase
     .from('incidencias')
     .select('*')
     .eq('inspeccion_id', props.inspeccionId)
-    .eq('punto_maestro_id', props.punto.id);
+    .eq('punto_inspeccionado_id', puntoInspeccionadoId.value);
+    
   incidencias.value = data || [];
   loading.value = false;
 };
@@ -44,6 +81,11 @@ const getIncidenciaForItem = (itemId) => {
 };
 
 const toggleStatus = async (itemId) => {
+  if (!puntoInspeccionadoId.value) {
+    alert("Error: No se ha podido identificar el punto de inspección. Por favor, cierre y abra el checklist de nuevo.");
+    return;
+  }
+
   const incidencia = getIncidenciaForItem(itemId);
   if (incidencia) {
     const { error } = await supabase.from('incidencias').delete().eq('id', incidencia.id);
@@ -55,10 +97,11 @@ const toggleStatus = async (itemId) => {
       .from('incidencias')
       .insert({
         inspeccion_id: props.inspeccionId,
-        punto_maestro_id: props.punto.id,
+        punto_inspeccionado_id: puntoInspeccionadoId.value,
         item_checklist: itemId,
         gravedad: 'verde',
       }).select().single();
+      
     if (newIncidencia) {
       incidencias.value.push(newIncidencia);
     }
@@ -70,7 +113,7 @@ const handleFileChange = async (event, incidencia) => {
   if (!file) return;
 
   isUploading.value = true;
-  const fileName = `inspeccion_${props.inspeccionId}/punto_${props.punto.id}/${Date.now()}_${file.name}`;
+  const fileName = `inspeccion_${props.inspeccionId}/punto_${puntoInspeccionadoId.value}/${Date.now()}_${file.name}`;
   
   const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, file);
   if (uploadError) {
@@ -136,10 +179,8 @@ const handleClose = () => {
                 <div class="aspect-video bg-slate-200 rounded-md flex items-center justify-center overflow-hidden relative group">
                   <img v-if="getIncidenciaForItem(item.id).url_foto_antes" :src="getIncidenciaForItem(item.id).url_foto_antes" class="object-cover w-full h-full">
                   
-                  <!-- === INICIO DEL ARREGLO === -->
                   <div v-else class="text-center">
                     <input type="file" @change="handleFileChange($event, getIncidenciaForItem(item.id))" class="hidden" :id="'fileInput-' + item.id">
-                    <!-- El botón ahora es una etiqueta <label> que activa el input -->
                     <label :for="'fileInput-' + item.id" :disabled="isUploading" class="cursor-pointer flex items-center gap-2 px-3 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">
                       <ArrowUpTrayIcon class="h-4 w-4" />
                       {{ isUploading ? 'Subiendo...' : 'Subir Foto' }}
@@ -148,10 +189,8 @@ const handleClose = () => {
                   
                   <div v-if="getIncidenciaForItem(item.id).url_foto_antes" class="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                      <input type="file" @change="handleFileChange($event, getIncidenciaForItem(item.id))" class="hidden" :id="'fileInput-change-' + item.id">
-                     <!-- El botón para cambiar también es una etiqueta <label> -->
                      <label :for="'fileInput-change-' + item.id" class="cursor-pointer text-white text-sm font-semibold">Cambiar Foto</label>
                   </div>
-                  <!-- === FIN DEL ARREGLO === -->
                 </div>
               </div>
             </div>
