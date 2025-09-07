@@ -1,77 +1,95 @@
 <!-- src/components/InteractiveMap.vue -->
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed } from 'vue';
 
 const props = defineProps({
   imageUrl: { type: String, required: true },
   points: { type: Array, default: () => [] },
   salas: { type: Array, default: () => [] },
   isReadOnly: { type: Boolean, default: false },
-  isPlacementMode: { type: Boolean, default: false }
+  isPlacementMode: { type: Boolean, default: false },
+  isAreaDrawingMode: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['add-point', 'delete-point', 'update-point-position', 'point-click']);
+const emit = defineEmits(['add-point', 'delete-point', 'update-point-position', 'point-click', 'area-drawn']);
 
-const mapContainerRef = ref(null);
+const overlayRef = ref(null);
 const draggedPointId = ref(null);
-const mapDimensions = ref({ width: 0, height: 0 });
+const isDrawing = ref(false);
+const drawingState = ref({ startX: 0, startY: 0, currentX: 0, currentY: 0 });
+
+const drawingStyle = computed(() => {
+  if (!isDrawing.value) return { display: 'none' };
+  const { startX, startY, currentX, currentY } = drawingState.value;
+  return {
+    left: `${Math.min(startX, currentX) * 100}%`,
+    top: `${Math.min(startY, currentY) * 100}%`,
+    width: `${Math.abs(currentX - startX) * 100}%`,
+    height: `${Math.abs(currentY - startY) * 100}%`,
+    display: 'block',
+  };
+});
+
+const startAreaDrawing = (event) => {
+  if (!props.isAreaDrawingMode) return;
+  event.preventDefault();
+  if (!overlayRef.value) return;
+  const overlayRect = overlayRef.value.getBoundingClientRect();
+  const getCoords = (e) => {
+    const x = (e.clientX - overlayRect.left) / overlayRect.width;
+    const y = (e.clientY - overlayRect.top) / overlayRect.height;
+    return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
+  };
+  const startCoords = getCoords(event);
+  drawingState.value = { 
+    startX: startCoords.x, 
+    startY: startCoords.y, 
+    currentX: startCoords.x, 
+    currentY: startCoords.y 
+  };
+  isDrawing.value = true;
+  const handleDrawing = (e) => {
+    const currentCoords = getCoords(e);
+    drawingState.value.currentX = currentCoords.x;
+    drawingState.value.currentY = currentCoords.y;
+  };
+  const stopDrawing = () => {
+    window.removeEventListener('mousemove', handleDrawing);
+    window.removeEventListener('mouseup', stopDrawing);
+    isDrawing.value = false;
+    const { startX, startY, currentX, currentY } = drawingState.value;
+    emit('area-drawn', {
+      area_x1: Math.min(startX, currentX), 
+      area_y1: Math.min(startY, currentY),
+      area_x2: Math.max(startX, currentX), 
+      area_y2: Math.max(startY, currentY),
+    });
+  };
+  window.addEventListener('mousemove', handleDrawing);
+  window.addEventListener('mouseup', stopDrawing);
+};
 
 const getSalaColor = (salaId) => {
   const sala = props.salas.find(s => s.id === salaId);
-  return sala ? sala.color : '#9CA3AF'; 
+  return sala ? sala.color : '#9CA3AF';
 };
 
-const displayPoints = computed(() => {
-  if (!mapDimensions.value.width || !props.points.length) return props.points.map(p => ({ ...p, visualOffsetX: 0, visualOffsetY: 0 }));
-  const pixelPoints = props.points.map(p => ({
-    ...p,
-    x: p.coordenada_x * mapDimensions.value.width,
-    y: p.coordenada_y * mapDimensions.value.height,
-    visualOffsetX: 0,
-    visualOffsetY: 0,
-  }));
-  const COLLISION_RADIUS = 28;
-  const SPIDER_RADIUS = 25;
-  for (let i = 0; i < pixelPoints.length; i++) {
-    const collisions = [];
-    for (let j = 0; j < pixelPoints.length; j++) {
-      if (i === j) continue;
-      const dx = pixelPoints[i].x - pixelPoints[j].x;
-      const dy = pixelPoints[i].y - pixelPoints[j].y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      if (distance < COLLISION_RADIUS) {
-        collisions.push(pixelPoints[j]);
-      }
-    }
-    if (collisions.length > 0) {
-      collisions.push(pixelPoints[i]);
-      collisions.sort((a, b) => a.id - b.id);
-      collisions.forEach((point, index) => {
-        const angle = (index / collisions.length) * 2 * Math.PI;
-        point.visualOffsetX = SPIDER_RADIUS * Math.cos(angle);
-        point.visualOffsetY = SPIDER_RADIUS * Math.sin(angle);
-      });
-    }
-  }
-  return pixelPoints;
-});
-
-const startDrag = (pointId) => {
-  if (props.isReadOnly || props.isPlacementMode) return;
-  draggedPointId.value = pointId;
+const startDrag = (point) => {
+  if (props.isReadOnly) return;
+  draggedPointId.value = point.id;
 };
 
 const onDrag = (event) => {
-  if (props.isReadOnly || props.isPlacementMode || draggedPointId.value === null) return;
+  if (props.isReadOnly || draggedPointId.value === null) return;
   const point = props.points.find(p => p.id === draggedPointId.value);
-  if (!point) return;
-  const mapRect = mapContainerRef.value.getBoundingClientRect();
-  point.coordenada_x = (event.clientX - mapRect.left) / mapRect.width;
-  point.coordenada_y = (event.clientY - mapRect.top) / mapRect.height;
+  if (!point || !overlayRef.value) return;
+  const overlayRect = overlayRef.value.getBoundingClientRect();
+  point.coordenada_x = (event.clientX - overlayRect.left) / overlayRect.width;
+  point.coordenada_y = (event.clientY - overlayRect.top) / overlayRect.height;
 };
 
 const stopDrag = () => {
-  if (props.isReadOnly || props.isPlacementMode || draggedPointId.value === null) return;
+  if (draggedPointId.value === null) return;
   const point = props.points.find(p => p.id === draggedPointId.value);
   if (point) {
     emit('update-point-position', point);
@@ -80,98 +98,93 @@ const stopDrag = () => {
 };
 
 const handleMapClick = (event) => {
-  if (draggedPointId.value) {
-    return;
-  }
-  const mapRect = mapContainerRef.value.getBoundingClientRect();
-  const x = (event.clientX - mapRect.left) / mapRect.width;
-  const y = (event.clientY - mapRect.top) / mapRect.height;
+  if (isDrawing.value || draggedPointId.value || !props.isPlacementMode) return;
+  if (!overlayRef.value) return;
+  const overlayRect = overlayRef.value.getBoundingClientRect();
+  const x = (event.clientX - overlayRect.left) / overlayRect.width;
+  const y = (event.clientY - overlayRect.top) / overlayRect.height;
   emit('add-point', { x, y });
 };
 
-const handleDeleteClick = (pointId) => {
-  if (props.isReadOnly) return;
-  if (confirm('¿Estás seguro de que quieres borrar este punto?')) {
-    emit('delete-point', pointId);
-  }
+const handleDeleteClick = (point) => {
+  emit('delete-point', point);
 };
 
 const handlePointClick = (point) => {
-  if (props.isPlacementMode) return;
-  if (props.isReadOnly) {
-    emit('point-click', point);
-  }
+  if (props.isPlacementMode || props.isAreaDrawingMode) return;
+  emit('point-click', point);
 };
-
-const updateMapDimensions = () => {
-  if (mapContainerRef.value) {
-    mapDimensions.value = {
-      width: mapContainerRef.value.offsetWidth,
-      height: mapContainerRef.value.offsetHeight,
-    };
-  }
-};
-
-onMounted(() => {
-  const resizeObserver = new ResizeObserver(updateMapDimensions);
-  if (mapContainerRef.value) {
-    resizeObserver.observe(mapContainerRef.value);
-  }
-  onUnmounted(() => resizeObserver.disconnect());
-});
 </script>
 
 <template>
   <div 
-    ref="mapContainerRef"
-    :class="['relative w-full border-2 border-gray-300 overflow-hidden', { 'cursor-crosshair': isPlacementMode, 'cursor-default': isReadOnly && !isPlacementMode }]"
-    @click="handleMapClick"
+    class="relative w-full h-full flex justify-center items-center bg-slate-100"
     @mousemove="onDrag"
     @mouseup="stopDrag"
-    @mouseleave="stopDrag" 
+    @mouseleave="stopDrag"
   >
-    <div v-if="isPlacementMode" class="absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-lg z-20 pointer-events-none">
-      Haz clic en el plano para situar el nuevo punto.
-    </div>
-  
-    <img :src="imageUrl" alt="Plano del centro" class="w-full h-auto block select-none" draggable="false" @load="updateMapDimensions" />
-
-    <template v-for="sala in salas" :key="`sala-area-${sala.id}`">
+    <div class="relative max-w-full max-h-full">
+      <img :src="imageUrl" class="block max-w-full max-h-full object-contain pointer-events-none" alt="Plano del centro">
       <div
-        v-if="sala && sala.area_x1 && sala.area_y1 && sala.area_x2 && sala.area_y2"
-        class="absolute pointer-events-none border-2"
-        :style="{
-          left: `${Math.min(sala.area_x1, sala.area_x2) * 100}%`,
-          top: `${Math.min(sala.area_y1, sala.area_y2) * 100}%`,
-          width: `${Math.abs(sala.area_x2 - sala.area_x1) * 100}%`,
-          height: `${Math.abs(sala.area_y2 - sala.area_y1) * 100}%`,
-          backgroundColor: `${getSalaColor(sala.id)}20`,
-          borderColor: `${getSalaColor(sala.id)}80`
-        }"
-      ></div>
-    </template>
-
-    <div
-      v-for="point in displayPoints"
-      :key="point.id"
-      :class="['absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 border-2 border-white rounded-full flex items-center justify-center text-white text-xs font-bold group shadow-lg', { 'cursor-grab active:cursor-grabbing': !isReadOnly, 'cursor-pointer hover:scale-110 transition-transform': isReadOnly }]"
-      :style="{ 
-        left: (point.coordenada_x * 100) + '%', 
-        top: (point.coordenada_y * 100) + '%',
-        transform: `translate(-50%, -50%) translate(${point.visualOffsetX}px, ${point.visualOffsetY}px)`,
-        backgroundColor: getSalaColor(point.sala_id)
-      }"
-      @mousedown.stop="startDrag(point.id)"
-      @click.stop="handlePointClick(point)"
-    >
-      {{ point.nomenclatura.split('-').pop() || '?' }}
-      <button 
-        v-if="!isReadOnly"
-        @click.stop="handleDeleteClick(point.id)"
-        class="absolute -top-2 -right-2 w-5 h-5 bg-red-600 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+        ref="overlayRef"
+        class="absolute inset-0"
+        :class="{ 'cursor-crosshair': isPlacementMode || isAreaDrawingMode }"
+        @mousedown="startAreaDrawing"
+        @click="handleMapClick"
       >
-        X
-      </button>
+          <!-- Áreas de Salas -->
+          <template v-for="sala in salas" :key="`sala-area-${sala.id}`">
+            <div
+              v-if="sala && sala.area_x1 && sala.area_y1 && sala.area_x2 && sala.area_y2"
+              class="absolute"
+              :style="{
+                left: `${Math.min(sala.area_x1, sala.area_x2) * 100}%`,
+                top: `${Math.min(sala.area_y1, sala.area_y2) * 100}%`,
+                width: `${Math.abs(sala.area_x2 - sala.area_x1) * 100}%`,
+                height: `${Math.abs(sala.area_y2 - sala.area_y1) * 100}%`,
+                border: `2px solid ${getSalaColor(sala.id)}`
+              }"
+            ></div>
+          </template>
+
+          <!-- Puntos -->
+          <div
+            v-for="point in points"
+            :key="point.id"
+            class="absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 border-2 border-white rounded-full flex items-center justify-center text-white text-xs font-bold group shadow-lg pointer-events-auto"
+            :class="{ 
+              'cursor-grab active:cursor-grabbing': !isReadOnly, 
+              'cursor-pointer hover:scale-110 transition-transform': isReadOnly 
+            }"
+            :style="{ 
+              left: (point.coordenada_x * 100) + '%', 
+              top: (point.coordenada_y * 100) + '%',
+              backgroundColor: point.color || getSalaColor(point.sala_id)
+            }"
+            @mousedown.stop="startDrag(point)"
+            @click.stop="handlePointClick(point)"
+          >
+            {{ point.nomenclatura.split('-').pop() || '?' }}
+            
+            <!-- === INICIO DEL CAMBIO CORREGIDO === -->
+            <!-- Esta condición ahora maneja ambos casos:
+                 1. Vista de Inspección: El punto tiene 'estado' y debe ser 'nuevo'.
+                 2. Vista de Configuración: El punto NO tiene 'estado', así que se muestra si no es 'isReadOnly'. -->
+            <button 
+              v-if="!isReadOnly && (point.estado === 'nuevo' || point.estado === undefined)"
+              @click.stop="handleDeleteClick(point)"
+              class="absolute -top-2 -right-2 w-5 h-5 bg-red-600 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Borrar punto"
+            >X</button>
+            <!-- === FIN DEL CAMBIO CORREGIDO === -->
+          </div>
+          
+          <!-- Dibujo de área en progreso -->
+          <div 
+            class="absolute bg-blue-500 bg-opacity-20 border-2 border-blue-600 border-dashed"
+            :style="drawingStyle"
+          ></div>
+      </div>
     </div>
   </div>
 </template>

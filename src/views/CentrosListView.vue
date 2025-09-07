@@ -2,7 +2,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { supabase } from '../supabase';
-import { PlusIcon, PencilIcon, MapPinIcon, ArchiveBoxIcon } from '@heroicons/vue/24/solid';
+import { PlusIcon, PencilIcon, MapPinIcon, ArchiveBoxIcon, DocumentDuplicateIcon } from '@heroicons/vue/24/solid';
 import CentroFormModal from '../components/CentroFormModal.vue';
 
 const centros = ref([]);
@@ -106,9 +106,10 @@ onMounted(fetchCentros);
                 <ArchiveBoxIcon class="h-4 w-4" />
                 Historial
               </router-link>
-              <router-link :to="`/centros/${centro.id}/configurar`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-white bg-green-600 rounded-md hover:bg-green-700">
-                <MapPinIcon class="h-4 w-4" />
-                Puntos
+              <!-- === CAMBIO: El botón ahora apunta a la nueva vista de versiones === -->
+              <router-link :to="`/centros/${centro.id}/versiones`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-white bg-green-600 rounded-md hover:bg-green-700">
+                <DocumentDuplicateIcon class="h-4 w-4" />
+                Planos
               </router-link>
             </div>
           </li>

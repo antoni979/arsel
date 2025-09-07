@@ -56,7 +56,7 @@ const handleLogout = async () => {
 
     <!-- Contenido Principal -->
     <div class="flex-1 flex flex-col overflow-hidden">
-      <main class="flex-1 overflow-y-auto">
+      <main class="flex-1 overflow-hidden">
         <router-view />
       </main>
     </div>
