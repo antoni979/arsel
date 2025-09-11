@@ -4,7 +4,7 @@ import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 import InteractiveMap from '../components/InteractiveMap.vue';
-import { ArrowPathIcon, ArrowUpTrayIcon, PlusIcon, TrashIcon, MapIcon, XCircleIcon, PencilIcon, CheckCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
+import { ArrowPathIcon, ArrowUpTrayIcon, PlusIcon, TrashIcon, MapIcon, XCircleIcon, PencilIcon, CheckCircleIcon, InformationCircleIcon, BackspaceIcon } from '@heroicons/vue/24/solid';
 
 const route = useRoute();
 const router = useRouter();
@@ -19,19 +19,23 @@ const activeSalaId = ref(null);
 const newSalaName = ref('');
 const fileInput = ref(null);
 
+// --- INICIO DE CAMBIOS: Nuevos estados de edición ---
 const isDrawingMode = ref(false);
 const isPointEditingMode = ref(false);
+const activeSala = computed(() => salas.value.find(s => s.id === activeSalaId.value));
 
 const instructionText = computed(() => {
     if (isDrawingMode.value) {
-        return "Haz clic y arrastra sobre el plano para definir el área de la sala seleccionada.";
+        const salaName = activeSala.value?.nombre || 'la sala';
+        return `Definiendo área para "${salaName}": Haz clic para añadir puntos. Haz clic en el primer punto para cerrar la forma.`;
     }
     if (isPointEditingMode.value) {
-        const activeSalaName = salas.value.find(s => s.id === activeSalaId.value)?.nombre || 'NINGUNA';
-        return `Modo Edición de Puntos: Haz clic en el plano para añadir puntos en la sala "${activeSalaName.toUpperCase()}".`;
+        const salaName = activeSala.value?.nombre || 'NINGUNA';
+        return `Modo Edición de Puntos: Haz clic en el plano para añadir puntos en la sala "${salaName.toUpperCase()}".`;
     }
     return null;
 });
+// --- FIN DE CAMBIOS ---
 
 onMounted(async () => {
   loading.value = true;
@@ -60,7 +64,7 @@ const togglePointEditingMode = () => {
         return;
     }
     isPointEditingMode.value = !isPointEditingMode.value;
-    isDrawingMode.value = false;
+    isDrawingMode.value = false; // Asegurarse de que el otro modo está desactivado
 };
 
 const cancelAllModes = () => {
@@ -86,21 +90,39 @@ const handleFileUpload = async (file) => {
     }
 };
 
-const toggleDrawingMode = () => {
+// --- INICIO DE CAMBIOS: Lógica de dibujo y guardado ---
+const enterDrawingMode = () => {
   if (!activeSalaId.value) { alert("Selecciona una sala para poder definir su área."); return; }
   isDrawingMode.value = true;
   isPointEditingMode.value = false;
 };
 
-const handleAreaDrawn = async (area) => {
+const handleAreaDrawn = async (points) => {
   isDrawingMode.value = false;
-  const { error } = await supabase.from('salas').update(area).eq('id', activeSalaId.value);
-  if (error) { alert("Error al guardar el área: " + error.message); } 
-  else {
+  const { error } = await supabase.from('salas').update({ area_puntos: points }).eq('id', activeSalaId.value);
+  if (error) { 
+    alert("Error al guardar el área: " + error.message); 
+  } else {
     const salaIndex = salas.value.findIndex(s => s.id === activeSalaId.value);
-    if (salaIndex !== -1) { salas.value[salaIndex] = { ...salas.value[salaIndex], ...area }; }
+    if (salaIndex !== -1) { 
+      salas.value[salaIndex].area_puntos = points;
+    }
   }
 };
+
+const clearArea = async () => {
+    if (!activeSalaId.value || !confirm("¿Estás seguro de que quieres borrar el área dibujada para esta sala?")) return;
+    const { error } = await supabase.from('salas').update({ area_puntos: null }).eq('id', activeSalaId.value);
+    if (error) {
+        alert("Error al limpiar el área: " + error.message);
+    } else {
+        const salaIndex = salas.value.findIndex(s => s.id === activeSalaId.value);
+        if (salaIndex !== -1) {
+            salas.value[salaIndex].area_puntos = null;
+        }
+    }
+};
+// --- FIN DE CAMBIOS ---
 
 const handleNewPoint = async (coords) => {
   if (!activeSalaId.value) { alert("Error: No se ha seleccionado ninguna sala para añadir el punto."); return; };
@@ -203,40 +225,38 @@ const saveSalaColor = async (sala) => {
             <div class="flex justify-between items-center mb-4">
                 <h2 class="text-xl font-bold text-slate-800">Salas</h2>
                 <button 
-                    v-if="!isPointEditingMode"
                     @click="togglePointEditingMode" 
                     :disabled="salas.length === 0"
-                    class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-slate-400 disabled:cursor-not-allowed"
-                >
-                    <PencilIcon class="h-4 w-4" />
-                    Gestionar Puntos
-                </button>
-                <button 
-                    v-else
-                    @click="togglePointEditingMode" 
-                    class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-white bg-green-600 rounded-md hover:bg-green-700"
-                >
-                    <CheckCircleIcon class="h-4 w-4" />
-                    Finalizar Edición
+                    :class="[
+                        'flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-white rounded-md transition-colors',
+                        'disabled:bg-slate-400 disabled:cursor-not-allowed',
+                        isPointEditingMode ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'
+                    ]">
+                    <component :is="isPointEditingMode ? CheckCircleIcon : PencilIcon" class="h-4 w-4" />
+                    {{ isPointEditingMode ? 'Finalizar Edición' : 'Gestionar Puntos' }}
                 </button>
             </div>
             <div class="flex-1 overflow-y-auto -mr-4 pr-4">
               <ul class="space-y-2">
                 <li v-for="sala in salas" :key="sala.id">
-                  <div @click="activeSalaId = sala.id" :class="['w-full p-3 rounded-lg transition-colors flex justify-between items-center group cursor-pointer', activeSalaId === sala.id ? 'bg-blue-100' : 'hover:bg-slate-100']">
+                  <div @click="activeSalaId = sala.id" :class="['w-full p-3 rounded-lg transition-colors flex justify-between items-center group cursor-pointer', activeSalaId === sala.id ? 'bg-blue-100 ring-2 ring-blue-300' : 'hover:bg-slate-100']">
                     <div class="flex items-center gap-3">
                       <input type="color" v-model="sala.color" @input="saveSalaColor(sala)" class="w-6 h-6 p-0 border-none rounded-md cursor-pointer flex-shrink-0">
                       <span class="font-semibold" :class="{'text-blue-800': activeSalaId === sala.id}">{{ sala.nombre }}</span>
                     </div>
-                    <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                       <button @click.stop="toggleDrawingMode" :disabled="isPointEditingMode" class="p-1 text-slate-500 hover:text-blue-600 disabled:text-slate-300 disabled:cursor-not-allowed" title="Definir área de la sala">
-                        <MapIcon class="h-5 w-5" />
-                      </button>
-                      <button @click.stop="deleteSala(sala.id)" :disabled="isPointEditingMode" class="p-1 text-slate-400 hover:text-red-600 disabled:text-slate-300 disabled:cursor-not-allowed">
-                        <TrashIcon class="h-4 w-4" />
-                      </button>
-                    </div>
                   </div>
+                  <!-- Botones de acción para la sala activa -->
+                   <div v-if="activeSalaId === sala.id" class="pl-10 -mt-2 mb-2 flex items-center gap-2">
+                      <button @click="enterDrawingMode" :disabled="isPointEditingMode" class="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 disabled:text-slate-400">
+                         <MapIcon class="h-4 w-4" /> Definir Área
+                      </button>
+                      <button v-if="sala.area_puntos" @click="clearArea" :disabled="isPointEditingMode" class="flex items-center gap-1 text-xs text-red-600 hover:text-red-800 disabled:text-slate-400">
+                         <BackspaceIcon class="h-4 w-4" /> Limpiar
+                      </button>
+                      <button @click="deleteSala(sala.id)" :disabled="isPointEditingMode" class="flex items-center gap-1 text-xs text-slate-500 hover:text-red-600 disabled:text-slate-400">
+                         <TrashIcon class="h-4 w-4" /> Borrar Sala
+                      </button>
+                   </div>
                 </li>
               </ul>
             </div>
@@ -265,6 +285,7 @@ const saveSalaColor = async (sala) => {
               @delete-point="handleDeletePoint" 
               @update-point-position="handleUpdatePosition"
               @area-drawn="handleAreaDrawn"
+              @drawing-cancelled="cancelAllModes"
             />
           </div>
         </div>

@@ -2,9 +2,9 @@
 <script setup>
 import { ref } from 'vue'
 import { supabase } from '../supabase'
-import { useRouter } from 'vue-router' // <-- AÑADIR ESTA LÍNEA
+import { useRouter } from 'vue-router'
 
-const router = useRouter() // <-- AÑADIR ESTA LÍNEA
+const router = useRouter()
 const loading = ref(false)
 const email = ref('')
 const password = ref('')
@@ -17,8 +17,7 @@ const handleLogin = async () => {
       password: password.value,
     })
     if (error) throw error
-    // alert('¡Login correcto!') // <-- BORRAMOS EL ALERT
-    router.push('/dashboard') // <-- AÑADIMOS LA REDIRECCIÓN
+    router.push('/dashboard')
   } catch (error) {
     alert(error.error_description || error.message)
   } finally {
@@ -43,6 +42,7 @@ const handleLogin = async () => {
             type="email" 
             v-model="email" 
             class="w-full px-3 py-2 mt-1 text-gray-900 bg-gray-50 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            autocomplete="email"
             required
           />
         </div>
@@ -53,6 +53,7 @@ const handleLogin = async () => {
             type="password" 
             v-model="password" 
             class="w-full px-3 py-2 mt-1 text-gray-900 bg-gray-50 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            autocomplete="current-password"
             required
           />
         </div>

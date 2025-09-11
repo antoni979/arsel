@@ -1,6 +1,5 @@
 // src/utils/pdf/pdf-module-text.js
 
-// === CAMBIO 1: IMPORTAMOS LAS FUNCIONES Y CONSTANTES NECESARIAS PARA EL LOGO ===
 import { drawHeader, loadImageAsBase64, ARSEL_LOGO_URL } from './pdf-helpers';
 import { MARGIN, DOC_WIDTH, FONT_SIZES } from './pdf-helpers';
 
@@ -14,9 +13,9 @@ export async function buildTextPages(pdf, reportData) {
     if (sala) puntoMaestroASalaMap.set(pm.id, sala);
   });
   const puntoInspeccionadoAMaestroMap = new Map(puntosInspeccionadosData.map(pi => [pi.id, pi.punto_maestro_id]));
-
-  const agruparPuntosPorEstadoYSala = (estado) => {
-    const puntosFiltrados = puntosInspeccionadosData.filter(pi => pi.estado === estado);
+  
+  const agruparPuntosPorPropiedad = (propiedad, valor) => {
+    const puntosFiltrados = puntosInspeccionadosData.filter(pi => pi[propiedad] === valor);
     const grupos = {};
     puntosFiltrados.forEach(pi => {
       const sala = puntoMaestroASalaMap.get(pi.punto_maestro_id);
@@ -29,7 +28,7 @@ export async function buildTextPages(pdf, reportData) {
       `${nombreSala.toUpperCase()}: ${[...grupos[nombreSala]].sort((a, b) => parseInt(a) - parseInt(b)).join(', ')}`
     ).join('\n');
   };
-  
+
   const agruparPuntosConPlacaPorSala = () => {
       const puntosConPlaca = puntosInspeccionadosData.filter(pi => pi.tiene_placa_caracteristicas === true);
       const grupos = {};
@@ -45,8 +44,10 @@ export async function buildTextPages(pdf, reportData) {
       ).join('\n');
   };
 
-  const lineasSuprimidas = agruparPuntosPorEstadoYSala('suprimido');
-  const lineasNuevas = agruparPuntosPorEstadoYSala('nuevo');
+  const lineasSuprimidas = agruparPuntosPorPropiedad('estado', 'suprimido');
+  const lineasNuevas = agruparPuntosPorPropiedad('estado', 'nuevo');
+  const lineasAumentadas = agruparPuntosPorPropiedad('detalle_modificacion', 'aumentado');
+  const lineasDisminuidas = agruparPuntosPorPropiedad('detalle_modificacion', 'disminuido');
   const lineasConPlaca = agruparPuntosConPlacaPorSala();
   
   const getSalaYNumeroDeIncidencia = (incidencia) => {
@@ -79,10 +80,31 @@ export async function buildTextPages(pdf, reportData) {
     }).join('\n');
   };
 
-  const incidenciasVerdeAmbar = incidenciasData.filter(i => i.gravedad === 'verde' || i.gravedad === 'ambar');
+  // --- INICIO DE LA LÓGICA CORREGIDA ---
+  // 1. Obtener las incidencias reales de gravedad verde o ámbar.
+  const incidenciasVerdeAmbarReales = incidenciasData.filter(i => i.gravedad === 'verde' || i.gravedad === 'ambar');
+
+  // 2. Obtener los puntos que han sido marcados como nuevos o suprimidos.
+  const puntosModificados = puntosInspeccionadosData.filter(pi => pi.estado === 'nuevo' || pi.estado === 'suprimido');
+
+  // 3. Crear un conjunto (Set) con los IDs de los puntos que ya están en la lista de incidencias para evitar duplicados.
+  const puntosYaIncluidosIds = new Set(incidenciasVerdeAmbarReales.map(i => i.punto_inspeccionado_id));
+
+  // 4. Crear "incidencias sintéticas" para los puntos nuevos/suprimidos que NO estaban ya en la lista.
+  const incidenciasSinteticas = puntosModificados
+    .filter(pi => !puntosYaIncluidosIds.has(pi.id))
+    .map(pi => ({ punto_inspeccionado_id: pi.id })); // Solo necesitamos el ID para la función de agrupación.
+
+  // 5. Combinar ambas listas para obtener el resultado final.
+  const incidenciasVerdeAmbarCombinadas = [...incidenciasVerdeAmbarReales, ...incidenciasSinteticas];
+  
+  // 6. Generar el texto del informe a partir de la lista combinada.
+  const textoVerdeAmbar = agruparIncidenciasPorSala(incidenciasVerdeAmbarCombinadas);
+  
+  // La lógica para las incidencias rojas no cambia.
   const incidenciasRojo = incidenciasData.filter(i => i.gravedad === 'rojo');
-  const textoVerdeAmbar = agruparIncidenciasPorSala(incidenciasVerdeAmbar);
   const textoRojo = agruparIncidenciasPorSala(incidenciasRojo);
+  // --- FIN DE LA LÓGICA CORREGIDA ---
 
   // --- PÁGINA 1 ---
   await drawHeader(pdf, inspectionData);
@@ -159,6 +181,24 @@ export async function buildTextPages(pdf, reportData) {
     currentY += (lineasConPlaca.split('\n').length * 5) + 10;
   }
 
+  if (lineasAumentadas) {
+    pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
+    pdf.text('Alineaciones con módulos aumentados desde la inspección anterior:', MARGIN, currentY);
+    currentY += 8;
+    pdf.setFont(undefined, 'bold');
+    pdf.text(lineasAumentadas, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
+    currentY += (lineasAumentadas.split('\n').length * 5) + 10;
+  }
+
+  if (lineasDisminuidas) {
+    pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
+    pdf.text('Alineaciones con módulos disminuidos desde la inspección anterior:', MARGIN, currentY);
+    currentY += 8;
+    pdf.setFont(undefined, 'bold');
+    pdf.text(lineasDisminuidas, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
+    currentY += (lineasDisminuidas.split('\n').length * 5) + 10;
+  }
+
   if (lineasSuprimidas) {
     pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
     pdf.text('Alineaciones desmontadas desde la inspección anterior:', MARGIN, currentY);
@@ -187,20 +227,15 @@ export async function buildTextPages(pdf, reportData) {
   pdf.text('Informe realizado por:', MARGIN, currentY);
   currentY += 15;
 
-  // === CAMBIO 2: AÑADIR LOGO Y REESTRUCTURAR LA SECCIÓN DE FIRMA ===
   const arselLogoBase64 = await loadImageAsBase64(ARSEL_LOGO_URL);
   if (arselLogoBase64) {
-      // Dibujamos el logo de Arsel
       pdf.addImage(arselLogoBase64, 'PNG', MARGIN, currentY, 35, 15, undefined, 'FAST');
-      currentY += 18; // Dejamos espacio después del logo
+      currentY += 18;
   }
-
- 
 
   pdf.setFont(undefined, 'bold');
   pdf.text('ARSEL INGENIERIA', MARGIN, currentY);
   currentY += 5;
   pdf.setFont(undefined, 'normal');
   pdf.text(`Valencia, ${fecha}`, MARGIN, currentY);
-  // === FIN DEL CAMBIO 2 ===
 }

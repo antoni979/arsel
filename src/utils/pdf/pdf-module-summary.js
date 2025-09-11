@@ -3,28 +3,37 @@
 import { loadImageAsBase64, drawHeader, MARGIN, FONT_SIZES, DOC_WIDTH_LANDSCAPE } from './pdf-helpers';
 import autoTable from 'jspdf-autotable';
 
-function drawSalaAreas(pdf, salas, planoX, planoY, planoW, planoH) {
-    const hexToRgb = (hex) => {
-        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-        return result ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)] : null;
-    };
-
+// --- INICIO DE CAMBIOS: Nueva función para dibujar polígonos ---
+function drawSalaPolygons(pdf, salas, planoX, planoY, planoW, planoH) {
     for (const sala of salas) {
-        if (sala.area_x1 && sala.area_y1 && sala.area_x2 && sala.area_y2) {
-            const rgb = hexToRgb(sala.color);
+        // La sala debe tener puntos y al menos 3 para formar un polígono
+        if (sala.area_puntos && sala.area_puntos.length > 2) {
+            const rgb = ((hex) => {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)] : null;
+            })(sala.color);
+            
             if (rgb) {
-                const x = planoX + (Math.min(sala.area_x1, sala.area_x2) * planoW);
-                const y = planoY + (Math.min(sala.area_y1, sala.area_y2) * planoH);
-                const w = Math.abs(sala.area_x2 - sala.area_x1) * planoW;
-                const h = Math.abs(sala.area_y2 - sala.area_y1) * planoH;
-
                 pdf.setDrawColor(rgb[0], rgb[1], rgb[2]);
                 pdf.setLineWidth(0.8);
-                pdf.rect(x, y, w, h, 'S');
+
+                // Convertir puntos relativos a coordenadas absolutas del PDF
+                const absolutePoints = sala.area_puntos.map(p => ({
+                    x: planoX + (p.x * planoW),
+                    y: planoY + (p.y * planoH)
+                }));
+
+                // Dibujar líneas entre cada punto
+                for (let i = 0; i < absolutePoints.length; i++) {
+                    const p1 = absolutePoints[i];
+                    const p2 = absolutePoints[(i + 1) % absolutePoints.length]; // El módulo asegura que el último punto se una al primero
+                    pdf.line(p1.x, p1.y, p2.x, p2.y);
+                }
             }
         }
     }
 }
+// --- FIN DE CAMBIOS ---
 
 function drawPointMarker(pdf, x, y, point, counts, planoW, salaColor) {
     const pointNumber = point.nomenclatura.split('-').pop() || '?';
@@ -122,14 +131,13 @@ export async function buildSummaryAnnex(pdf, reportData) {
     const planoStartX = MARGIN + (availableWidth - imgWidth) / 2;
     const planoStartY = pdf.lastAutoTable.finalY + 5;
 
-    // === INICIO DEL CAMBIO: Invertimos el orden de dibujado ===
     // 1. Primero dibujamos la imagen del plano.
     pdf.addImage(planoBase64, 'JPEG', planoStartX, planoStartY, imgWidth, imgHeight);
 
-    // 2. Después, dibujamos los recuadros de las salas ENCIMA de la imagen.
-    drawSalaAreas(pdf, salasData, planoStartX, planoStartY, imgWidth, imgHeight);
-    // === FIN DEL CAMBIO ===
-
+    // 2. Después, dibujamos los polígonos de las salas ENCIMA de la imagen.
+    // --- INICIO DEL CAMBIO: Llamamos a la nueva función de dibujo ---
+    drawSalaPolygons(pdf, salasData, planoStartX, planoStartY, imgWidth, imgHeight);
+    // --- FIN DEL CAMBIO ---
 
     const puntoMaestroMap = new Map(puntosMaestrosData.map(pm => [pm.id, pm]));
     const salaMap = new Map(salasData.map(s => [s.id, s]));

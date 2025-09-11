@@ -4,12 +4,39 @@ import autoTable from 'jspdf-autotable';
 import { checklistItems } from '../checklist';
 import { MARGIN, DOC_WIDTH, FONT_SIZES } from './pdf-helpers';
 
+// Helper para determinar la gravedad máxima de un grupo de incidencias
+function getHighestSeverity(incidencias) {
+    if (incidencias.some(inc => inc.gravedad === 'rojo')) return 'rojo';
+    if (incidencias.some(inc => inc.gravedad === 'ambar')) return 'ambar';
+    if (incidencias.some(inc => inc.gravedad === 'verde')) return 'verde';
+    return null;
+}
+
 export async function buildChecklistAnnex(pdf, reportData) {
     const { inspectionData, salasData, puntosMaestrosData, puntosInspeccionadosData, incidenciasData } = reportData;
-    if (salasData.length === 0) return;
 
+    // --- INICIO DEL CAMBIO: Lógica de filtrado principal ---
+    // 1. Si no hay ninguna incidencia en todo el informe, no generamos este anexo en absoluto.
+    if (!incidenciasData || incidenciasData.length === 0) {
+        return;
+    }
+
+    // 2. Creamos un conjunto (Set) para buscar eficientemente los IDs de los puntos maestros que SÍ tienen incidencias.
+    const puntosInspeccionadosConIncidenciasIds = new Set(incidenciasData.map(inc => inc.punto_inspeccionado_id));
+    const puntosMaestrosConIncidenciasIds = new Set(
+        puntosInspeccionadosData
+            .filter(pi => puntosInspeccionadosConIncidenciasIds.has(pi.id))
+            .map(pi => pi.punto_maestro_id)
+    );
+
+    // 3. Si, por alguna razón, no encontramos puntos maestros correspondientes, salimos.
+    if (puntosMaestrosConIncidenciasIds.size === 0) {
+        return;
+    }
+    // --- FIN DEL CAMBIO ---
+
+    // Solo si hemos pasado los filtros, creamos la página de portada del anexo.
     pdf.addPage();
-    // === CAMBIO: ESTILO DE LA PORTADA DEL ANEXO CHECKLIST ===
     autoTable(pdf, {
         body: [['ANEXO 02:\nCHECKLIST']],
         startY: 145,
@@ -21,15 +48,21 @@ export async function buildChecklistAnnex(pdf, reportData) {
         },
         margin: { left: MARGIN, right: MARGIN }
     });
-    // === FIN DEL CAMBIO ===
 
     for (const sala of salasData) {
+        // --- INICIO DEL CAMBIO: Filtramos los puntos de la sala para incluir solo los que tienen incidencias ---
         const puntosDeLaSala = puntosMaestrosData
-            .filter(pm => pm.sala_id === sala.id)
+            .filter(pm => pm.sala_id === sala.id && puntosMaestrosConIncidenciasIds.has(pm.id))
             .sort((a,b) => a.nomenclatura.localeCompare(b.nomenclatura, undefined, {numeric: true}));
-        if (puntosDeLaSala.length === 0) continue;
+        
+        // Si en esta sala no hay ningún punto con incidencias, la saltamos por completo.
+        if (puntosDeLaSala.length === 0) {
+            continue;
+        }
+        // --- FIN DEL CAMBIO ---
 
         for (const puntoMaestro of puntosDeLaSala) {
+            // Ya no necesitamos comprobar si hay incidencias aquí, porque el bucle solo itera sobre puntos que SÍ las tienen.
             pdf.addPage();
 
             autoTable(pdf, {
@@ -68,18 +101,23 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 { content: 'RIESGO', colSpan: 3, styles: { halign: 'center' } }],
                 ['V', 'A', 'R']
             ];
+            
             const body = checklistItems.map(item => {
-                const incidencia = incidenciasData.find(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && inc.item_checklist === item.id);
+                const itemIncidencias = incidenciasData.filter(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && inc.item_checklist === item.id);
+                const tieneIncidencias = itemIncidencias.length > 0;
+                const maxSeverity = tieneIncidencias ? getHighestSeverity(itemIncidencias) : null;
+                
                 return [
                     `${item.id}. ${item.text}`,
-                    !incidencia ? 'X' : '',
-                    incidencia ? 'X' : '',
+                    !tieneIncidencias ? 'X' : '',
+                    tieneIncidencias ? 'X' : '',
                     '', // N/A
-                    incidencia?.gravedad === 'verde' ? 'X' : '',
-                    incidencia?.gravedad === 'ambar' ? 'X' : '',
-                    incidencia?.gravedad === 'rojo' ? 'X' : '',
+                    maxSeverity === 'verde' ? 'X' : '',
+                    maxSeverity === 'ambar' ? 'X' : '',
+                    maxSeverity === 'rojo' ? 'X' : '',
                 ];
             });
+
             autoTable(pdf, {
                 head, body, 
                 startY: pdf.lastAutoTable.finalY, 
@@ -94,9 +132,17 @@ export async function buildChecklistAnnex(pdf, reportData) {
             });
 
             let finalY = pdf.lastAutoTable.finalY;
+
             const observacionesDelPunto = incidenciasData
                 .filter(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && inc.observaciones && inc.observaciones.trim() !== '')
-                .map(obs => `Parámetro de control ${obs.item_checklist}: / ${obs.observaciones}`)
+                .map((obs) => {
+                    const itemIncidencias = incidenciasData.filter(i => i.punto_inspeccionado_id === puntoInspeccionadoId && i.item_checklist === obs.item_checklist);
+                    const obsIndex = itemIncidencias.findIndex(i => i.id === obs.id);
+                    const numTotal = itemIncidencias.length;
+                    const countStr = numTotal > 1 ? ` (${obsIndex + 1}/${numTotal})` : '';
+
+                    return `Parámetro ${obs.item_checklist}${countStr}: ${obs.observaciones}`;
+                })
                 .join('\n');
             
             autoTable(pdf, {
