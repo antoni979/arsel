@@ -123,7 +123,6 @@ export async function buildTextPages(pdf, reportData) {
   if (textoRojo) { pdf.text(textoRojo, MARGIN, currentY, { lineHeightFactor: 1.5 }); currentY += (textoRojo.split('\n').length * 5) + 5; }
   pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal'); currentY = Math.max(currentY, 130); const textoRiesgoRojo = 'Estas anomalías deben subsanarse inmediatamente para evitar el colapso de las estanterías en el caso de una combinación de cargas desfavorables, procediendo a la descarga de la mercancía de los módulos afectados y señalizando la zona para que no se almacene producto en los mismos hasta que puedan ser sustituidos los elementos dañados. La sustitución se llevará a cabo con nuevo material que se tiene que solicitar si no cuenta con repuesto en el centro.'; const textLines = pdf.splitTextToSize(textoRiesgoRojo, DOC_WIDTH - (MARGIN * 2)); pdf.text(textLines, MARGIN, currentY, { lineHeightFactor: 1.5 }); currentY += textLines.length * 5 + 15;
 
-
   pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
   pdf.text('Alineaciones que disponen de sus fichas de características:', MARGIN, currentY);
   currentY += 8;
@@ -135,7 +134,10 @@ export async function buildTextPages(pdf, reportData) {
     pdf.text('Ninguna', MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
     currentY += 10;
   }
+  currentY += 5;
 
+  pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
+  pdf.text('Alineaciones con módulos AUMENTADOS desde la inspección anterior:', MARGIN, currentY);
   currentY += 8;
   pdf.setFont(undefined, 'bold');
   if (lineasAumentadas) {
@@ -148,7 +150,7 @@ export async function buildTextPages(pdf, reportData) {
   currentY += 5;
 
   pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
-
+  pdf.text('Alineaciones con módulos DISMINUIDOS desde la inspección anterior:', MARGIN, currentY);
   currentY += 8;
   pdf.setFont(undefined, 'bold');
   if (lineasDisminuidas) {
@@ -182,14 +184,14 @@ export async function buildTextPages(pdf, reportData) {
   } else {
     pdf.text('Ninguna', MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
   }
-  // --- FIN DE LA LÓGICA CORREGIDA ---
 
   // --- PÁGINA 3 ---
   pdf.addPage();
   await drawHeader(pdf, inspectionData);
   currentY = 50;
   pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
-
+  pdf.text('Para cerrar el proceso de inspección completo, el centro subsanará las deficiencias de menor grado detectadas en los próximos días, comunicando la resolución de las mismas mediante correo electrónico a ARSEL Ingeniería y al Técnico de Prevención Regional.', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 }); currentY += 40;
+  pdf.text('Informe realizado por:', MARGIN, currentY); currentY += 15;
   const arselLogoBase64 = await loadImageAsBase64(ARSEL_LOGO_URL);
   if (arselLogoBase64) {
       pdf.addImage(arselLogoBase64, 'PNG', MARGIN, currentY, 35, 15, undefined, 'FAST');
