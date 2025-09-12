@@ -2,8 +2,6 @@
 
 import { loadImageAsBase64, drawHeader, MARGIN, FONT_SIZES, DOC_WIDTH_LANDSCAPE } from './pdf-helpers';
 
-// --- INICIO DE CAMBIOS: Últimas funciones de dibujado ---
-
 function drawSalaPolygons(pdf, salas, planoX, planoY, planoW, planoH) {
     for (const sala of salas) {
         if (sala.area_puntos && sala.area_puntos.length > 2) {
@@ -36,22 +34,29 @@ function drawPointNumberOnMap(pdf, point) {
     const rectWidth = textWidth + 1.5;
     const rectHeight = 4;
     
-    const startX = position.x - (BADGE_WIDTH / 2);
-    let currentY = position.y - (badgeHeight / 2);
-
     pdf.setFillColor(255, 255, 255);
     pdf.rect(point.absX - rectWidth/2, point.absY - rectHeight/2, rectWidth, rectHeight, 'F');
     pdf.text(pointNumber, point.absX, point.absY, { align: 'center', baseline: 'middle' });
 }
 
-// Dibuja ÚNICAMENTE el semáforo vertical.
-function drawSemaphoreBadge(pdf, position, point) {
+function drawInfoBadge(pdf, position, point) {
+    const FONT_SIZE_STATE = 5.5;
     const FONT_SIZE_SEMAPHORE = 6;
-    const PADDING_V = 1.5;
+    const PADDING_V = 1.2;
+    const PADDING_H = 2.5;
+    const SEMAPHORE_HEIGHT = 5;
     const BADGE_WIDTH = 12;
-    const ITEM_HEIGHT = 4;
-    const badgeHeight = (ITEM_HEIGHT * 3) + (PADDING_V * 2);
 
+    let stateText = null;
+    if (point.estado === 'nuevo') stateText = 'NUEVA';
+    else if (point.estado === 'suprimido') stateText = 'SUPRIMIDA';
+    else if (point.detalle_modificacion === 'aumentado') stateText = 'AUMENTADA';
+    else if (point.detalle_modificacion === 'disminuido') stateText = 'DISMINUIDA';
+
+    const stateTextHeight = stateText ? FONT_SIZE_STATE + PADDING_V : 0;
+    const semaphoreHeight = 3 * 4; // 3 items de 4 de alto
+    const badgeHeight = semaphoreHeight + stateTextHeight + (PADDING_V * 2);
+    
     const startX = position.x - (BADGE_WIDTH / 2);
     let currentY = position.y - (badgeHeight / 2);
 
@@ -62,8 +67,13 @@ function drawSemaphoreBadge(pdf, position, point) {
 
     currentY += PADDING_V;
 
-    pdf.setFontSize(FONT_SIZE_SEMAPHORE).setFont(undefined, 'normal');
-    const colorBoxSize = 3;
+    if (stateText) {
+        pdf.setFontSize(FONT_SIZE_STATE).setFont(undefined, 'bold');
+        pdf.setTextColor(80, 80, 80);
+        pdf.text(stateText, position.x, currentY + stateTextHeight / 2 - 0.2, { align: 'center', baseline: 'middle' });
+        currentY += stateTextHeight;
+    }
+
     const items = [
         { color: [34, 197, 94], count: point.counts.verde },
         { color: [245, 158, 11], count: point.counts.ambar },
@@ -71,58 +81,29 @@ function drawSemaphoreBadge(pdf, position, point) {
     ];
 
     items.forEach(item => {
-        const itemCenterY = currentY + ITEM_HEIGHT / 2;
+        const itemCenterY = currentY + 4 / 2;
         pdf.setFillColor(item.color[0], item.color[1], item.color[2]);
-        pdf.rect(startX + 2, itemCenterY - colorBoxSize/2, colorBoxSize, colorBoxSize, 'F');
+        pdf.rect(startX + 2, itemCenterY - 3/2, 3, 3, 'F');
         pdf.setTextColor(80, 80, 80);
-        pdf.text(String(item.count), startX + 2 + colorBoxSize + 2.5, itemCenterY + 2.1, { align: 'center' });
-        currentY += ITEM_HEIGHT;
+        pdf.setFontSize(FONT_SIZE_SEMAPHORE);
+        pdf.text(String(item.count), startX + 2 + 3 + 2.5, itemCenterY + 2.1, { align: 'center' });
+        currentY += 4;
     });
     
     return { x: startX, y: position.y - (badgeHeight/2), width: BADGE_WIDTH, height: badgeHeight };
-}
-
-// Dibuja el texto de estado por separado.
-function drawStateText(pdf, position, badgeRect, point) {
-    let stateText = null;
-    if (point.estado === 'nuevo') stateText = 'NUEVA';
-    else if (point.estado === 'suprimido') stateText = 'SUPRIMIDA';
-    else if (point.detalle_modificacion === 'aumentado') stateText = 'AUMENTADA';
-    else if (point.detalle_modificacion === 'disminuido') stateText = 'DISMINUIDA';
-
-    if (stateText) {
-        pdf.setFontSize(5).setFont(undefined, 'bold');
-        pdf.setTextColor(80, 80, 80);
-        // Coloca el texto encima o debajo de la tarjeta del semáforo.
-        const textY = position.y < point.absY ? badgeRect.y - 1.5 : badgeRect.y + badgeRect.height + 2.5;
-        pdf.text(stateText, position.x, textY, { align: 'center', baseline: 'middle' });
-    }
 }
 
 function drawLeaderLine(pdf, from, to, badgeRect) {
     pdf.setDrawColor(100, 100, 100);
     pdf.setLineWidth(0.25);
     pdf.setLineDashPattern([1, 1], 0);
-
     const targetX = Math.max(badgeRect.x, Math.min(from.x, badgeRect.x + badgeRect.width));
     const targetY = Math.max(badgeRect.y, Math.min(from.y, badgeRect.y + badgeRect.height));
-
     pdf.line(from.x, from.y, targetX, targetY);
     pdf.setLineDashPattern([], 0);
 }
 
-function drawLeaderLine(pdf, from, to) {
-    pdf.setDrawColor(100, 100, 100);
-    pdf.setLineWidth(0.25);
-    pdf.setLineDashPattern([1, 1], 0);
-    pdf.line(from.x, from.y, to.x, to.y);
-    pdf.setLineDashPattern([], 0);
-}
-
-// --- FIN DE CAMBIOS ---
-
 export async function buildSummaryAnnex(pdf, reportData) {
-    // Esta función ahora solo construye el contenido, no crea la página
     const { salasData, puntosInspeccionadosData, puntosMaestrosData, planoBase64, incidenceCounts } = reportData;
 
     const PAGE_WIDTH = pdf.internal.pageSize.getWidth();
@@ -170,7 +151,6 @@ export async function buildSummaryAnnex(pdf, reportData) {
                  rect1.y > rect2.y + rect2.height + margin || rect1.y + rect1.height + margin < rect2.y);
     };
 
-    // Ordenar los puntos desde el centro hacia afuera para una mejor distribución
     const mapCenterX = planoStartX + imgWidth / 2;
     const mapCenterY = planoStartY + imgHeight / 2;
     allPoints.sort((a, b) => {
@@ -188,10 +168,8 @@ export async function buildSummaryAnnex(pdf, reportData) {
         if (!needsBadge) continue;
         
         const candidateOffsets = [
-            { x: 0, y: -15 }, { x: 0, y: 15 },      // Arriba, Abajo
-            { x: 15, y: 0 }, { x: -15, y: 0 },      // Lados
-            { x: 12, y: -12 }, { x: -12, y: -12 },  // Diagonales
-            { x: 12, y: 12 }, { x: -12, y: 12 },
+            { x: 0, y: -20 }, { x: 0, y: 20 }, { x: 18, y: 0 }, { x: -18, y: 0 },
+            { x: 15, y: -15 }, { x: -15, y: -15 }, { x: 15, y: 15 }, { x: -15, y: 15 },
         ];
         
         let finalPosition = null;
@@ -199,13 +177,13 @@ export async function buildSummaryAnnex(pdf, reportData) {
         for (const offset of candidateOffsets) {
             const candidatePos = { x: point.absX + offset.x, y: point.absY + offset.y };
             
-            const tempBadgeHeight = (4 * 3) + (1.5 * 2);
+            let tempBadgeHeight = (1.5 * 2) + (4 * 3);
+            if (point.estado !== 'existente' || point.detalle_modificacion !== null) tempBadgeHeight += 5.5 + 1.2;
             const candidateRect = { x: candidatePos.x - 12 / 2, y: candidatePos.y - tempBadgeHeight/2, width: 12, height: tempBadgeHeight };
             
-            // Comprobación de límites de la página
             if (candidateRect.x < MARGIN || candidateRect.x + candidateRect.width > PAGE_WIDTH - MARGIN ||
                 candidateRect.y < HEADER_HEIGHT || candidateRect.y + candidateRect.height > PAGE_HEIGHT - MARGIN_V) {
-                continue; // Esta posición está fuera de los límites, probar la siguiente
+                continue;
             }
 
             if (!obstacles.some(obs => isOverlapping(candidateRect, obs))) {
@@ -215,7 +193,7 @@ export async function buildSummaryAnnex(pdf, reportData) {
             }
         }
         
-        if (!finalPosition) finalPosition = { x: point.absX, y: point.absY - 20 };
+        if (!finalPosition) finalPosition = { x: point.absX, y: point.absY - 25 };
         
         labelsToDraw.push({ point, position: finalPosition });
     }
@@ -223,8 +201,7 @@ export async function buildSummaryAnnex(pdf, reportData) {
     allPoints.forEach(point => drawPointNumberOnMap(pdf, point));
     
     labelsToDraw.forEach(({point, position}) => {
-        const badgeRect = drawSemaphoreBadge(pdf, position, point);
-        drawStateText(pdf, position, badgeRect, point);
+        const badgeRect = drawInfoBadge(pdf, position, point);
         drawLeaderLine(pdf, {x: point.absX, y: point.absY}, position, badgeRect);
     });
 }
