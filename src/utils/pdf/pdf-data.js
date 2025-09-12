@@ -1,6 +1,8 @@
 // src/utils/pdf/pdf-data.js
 
 import { supabase } from '../../supabase';
+// Importamos el helper para cargar imágenes
+import { loadImageAsBase64 } from './pdf-helpers';
 
 /**
  * Obtiene todos los datos necesarios de Supabase para generar un informe.
@@ -11,7 +13,7 @@ export async function fetchReportData(inspeccionId) {
   // 1. Obtener la inspección, el centro y la versión del plano asociada
   const { data: inspectionData, error: inspectionError } = await supabase
     .from('inspecciones')
-    .select('*, centros(*), versiones_plano(*)') // Asegúrate de que versiones_plano(*) está aquí
+    .select('*, centros(*), versiones_plano(*)')
     .eq('id', inspeccionId)
     .single();
   
@@ -25,6 +27,11 @@ export async function fetchReportData(inspeccionId) {
 
   const centroId = inspectionData.centros.id;
   const versionId = inspectionData.versiones_plano?.id;
+
+  // --- INICIO DE CAMBIOS: Cargamos la imagen del plano aquí ---
+  const planoUrl = inspectionData.versiones_plano?.url_imagen_plano;
+  const planoBase64 = planoUrl ? await loadImageAsBase64(planoUrl) : null;
+  // --- FIN DE CAMBIOS ---
 
   // 2. Obtener el resto de datos en paralelo
   const [
@@ -43,6 +50,18 @@ export async function fetchReportData(inspeccionId) {
     console.error({ salasError, puntosMaestrosError, puntosInspeccionadosError, incidenciasError });
     throw new Error('Error al obtener datos relacionados con la inspección.');
   }
+  
+  const incidenceCounts = new Map();
+  (puntosInspeccionadosData || []).forEach(pi => {
+      incidenceCounts.set(pi.id, { verde: 0, ambar: 0, rojo: 0 });
+  });
+  (incidenciasData || []).forEach(inc => {
+      const counts = incidenceCounts.get(inc.punto_inspeccionado_id);
+      if (counts && counts[inc.gravedad] !== undefined) {
+          counts[inc.gravedad]++;
+      }
+  });
+
 
   // 3. Devolver un objeto bien estructurado
   return {
@@ -51,5 +70,7 @@ export async function fetchReportData(inspeccionId) {
     puntosMaestrosData: puntosMaestrosData || [],
     puntosInspeccionadosData: puntosInspeccionadosData || [],
     incidenciasData: incidenciasData || [],
+    planoBase64, // <-- Devolvemos la imagen ya cargada
+    incidenceCounts, // <-- Devolvemos el conteo pre-calculado
   };
 }
