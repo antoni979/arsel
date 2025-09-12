@@ -36,6 +36,9 @@ function drawPointNumberOnMap(pdf, point) {
     const rectWidth = textWidth + 1.5;
     const rectHeight = 4;
     
+    const startX = position.x - (BADGE_WIDTH / 2);
+    let currentY = position.y - (badgeHeight / 2);
+
     pdf.setFillColor(255, 255, 255);
     pdf.rect(point.absX - rectWidth/2, point.absY - rectHeight/2, rectWidth, rectHeight, 'F');
     pdf.text(pointNumber, point.absX, point.absY, { align: 'center', baseline: 'middle' });
@@ -96,6 +99,17 @@ function drawStateText(pdf, position, badgeRect, point) {
     }
 }
 
+function drawLeaderLine(pdf, from, to, badgeRect) {
+    pdf.setDrawColor(100, 100, 100);
+    pdf.setLineWidth(0.25);
+    pdf.setLineDashPattern([1, 1], 0);
+
+    const targetX = Math.max(badgeRect.x, Math.min(from.x, badgeRect.x + badgeRect.width));
+    const targetY = Math.max(badgeRect.y, Math.min(from.y, badgeRect.y + badgeRect.height));
+
+    pdf.line(from.x, from.y, targetX, targetY);
+    pdf.setLineDashPattern([], 0);
+}
 
 function drawLeaderLine(pdf, from, to) {
     pdf.setDrawColor(100, 100, 100);
