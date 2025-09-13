@@ -5,11 +5,10 @@ import vue from '@vitejs/plugin-vue'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
-  // --- INICIO DE LA CORRECCIÓN ---
   server: {
+    host: true, // <-- AÑADE ESTA LÍNEA
     hmr: {
       clientPort: 443,
     }
   }
-  // --- FIN DE LA CORRECCIÓN ---
 })

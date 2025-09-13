@@ -12,9 +12,8 @@ import InspeccionesListView from '../views/InspeccionesListView.vue'
 import InspeccionDetailView from '../views/InspeccionDetailView.vue'
 import CentroHistorialView from '../views/CentroHistorialView.vue';
 import CentroVersionsView from '../views/CentroVersionsView.vue';
-import SubsanacionView from '../views/SubsanacionView.vue'; // <-- AÑADIR ESTA LÍNEA
+import SubsanacionView from '../views/SubsanacionView.vue';
 
-// Definición de las Rutas de la Aplicación
 const routes = [
   { path: '/', name: 'Login', component: Login, meta: { layout: 'Blank' } },
   { path: '/dashboard', name: 'Dashboard', component: DashboardView, meta: { requiresAuth: true } },
@@ -24,7 +23,12 @@ const routes = [
   { path: '/inspecciones', name: 'InspeccionesList', component: InspeccionesListView, meta: { requiresAuth: true } },
   { path: '/inspecciones/:id', name: 'InspeccionDetail', component: InspeccionDetailView, meta: { requiresAuth: true } },
   { path: '/centros/:id/historial', name: 'CentroHistorial', component: CentroHistorialView, meta: { requiresAuth: true } },
-  // --- NUEVA RUTA PARA GESTIONAR LA SUBSANACIÓN ---
+  {
+    path: '/inspecciones/:id/plano-preview',
+    name: 'PlanoPreview',
+    component: () => import('../views/PlanoPreviewView.vue'),
+    meta: { layout: 'Blank' }
+  },
   {
     path: '/inspecciones/:id/subsanar',
     name: 'SubsanacionDetail',
@@ -39,6 +43,9 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to, from, next) => {
+  // --- LOG DE DEBUG ---
+  console.log(`[Router] Navegando de '${from.fullPath}' a '${to.fullPath}'`);
+  
   const { data: { session } } = await supabase.auth.getSession()
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
 
