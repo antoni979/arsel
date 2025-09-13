@@ -7,13 +7,15 @@ import InteractiveMap from '../components/InteractiveMap.vue';
 import ChecklistModal from '../components/ChecklistModal.vue';
 import PointList from '../components/PointList.vue';
 import AddPointForm from '../components/AddPointForm.vue';
-import { CheckCircleIcon, PlusIcon, XCircleIcon, ChevronDownIcon } from '@heroicons/vue/24/solid';
+import { CheckCircleIcon, PlusIcon, XCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
+import { generateTextReport } from '../utils/pdf';
 
 const route = useRoute();
 const router = useRouter();
 const inspeccionId = Number(route.params.id);
 
 const loading = ref(true);
+const isFinalizing = ref(false);
 const inspeccion = ref(null);
 const centro = ref(null);
 const version = ref(null);
@@ -55,7 +57,7 @@ onMounted(async () => {
 const initializeInspectionPoints = async () => {
   const { data: existingPoints } = await supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId);
   puntosInspeccionados.value = existingPoints || [];
-  if (puntosInspeccionados.value.length === 0 && puntosMaestros.value.length > 0) {
+  if (canEditInspection.value && puntosInspeccionados.value.length === 0 && puntosMaestros.value.length > 0) {
     const pointsToCreate = puntosMaestros.value.map(pm => ({
       inspeccion_id: inspeccionId,
       punto_maestro_id: pm.id,
@@ -63,7 +65,7 @@ const initializeInspectionPoints = async () => {
       coordenada_x: pm.coordenada_x,
       coordenada_y: pm.coordenada_y,
       estado: 'existente',
-      tiene_placa_caracteristicas: true // <-- ¡AQUÍ ESTÁ LA CORRECCIÓN CLAVE!
+      tiene_placa_caracteristicas: true
     }));
     if (pointsToCreate.length > 0) {
       const { data: newPoints } = await supabase.from('puntos_inspeccionados').insert(pointsToCreate).select();
@@ -109,11 +111,12 @@ const createNewPointAt = async (coords, salaId) => {
     coordenada_x: nuevoPuntoMaestro.coordenada_x,
     coordenada_y: nuevoPuntoMaestro.coordenada_y,
     estado: 'nuevo',
-    tiene_placa_caracteristicas: true // <-- También aquí por consistencia
+    tiene_placa_caracteristicas: true
   }).select().single();
   if (nuevoPuntoIns) puntosInspeccionados.value.push(nuevoPuntoIns);
 };
 const updatePuntoEstado = async (punto, nuevoEstado) => {
+    if (!canEditInspection.value) return;
     const { error } = await supabase.from('puntos_inspeccionados').update({ estado: nuevoEstado }).eq('id', punto.id);
     if (!error) {
         const puntoIndex = puntosInspeccionados.value.findIndex(p => p.id === punto.id);
@@ -130,6 +133,7 @@ const cancelPlacementMode = () => {
   newPointSalaId.value = null;
 };
 const handleDeleteNewPoint = async (punto) => {
+    if (!canEditInspection.value) return;
     if (confirm(`¿Estás seguro de que quieres borrar permanentemente el punto "${punto.nomenclatura}"? Esta acción no se puede deshacer.`)) {
         const { error: inspError } = await supabase.from('puntos_inspeccionados').delete().eq('id', punto.id);
         if (inspError) { alert("Error al borrar el punto de la inspección: " + inspError.message); return; }
@@ -147,11 +151,72 @@ const openChecklistFor = (punto) => {
 const handleMapClick = (coords) => {
   if (isPlacementMode.value) { createNewPointAt(coords, newPointSalaId.value); }
 };
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      const base64 = dataUrl.split(',')[1];
+      resolve(base64);
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
 const finalizarInspeccion = async () => {
-    if (confirm('¿Estás seguro de que quieres finalizar esta inspección? El estado cambiará a "Pendiente de Envío".')) {
-        const { error } = await supabase.from('inspecciones').update({ estado: 'finalizada' }).eq('id', inspeccionId);
-        if (error) { alert('Error al finalizar la inspección: ' + error.message); }
-        else { router.push(`/centros/${centro.value.id}/historial`); }
+    if (!confirm('¿Estás seguro de que quieres finalizar esta inspección? Se generará y archivará el informe PDF, y la inspección quedará bloqueada.')) {
+        return;
+    }
+    isFinalizing.value = true;
+    try {
+        const report = await generateTextReport(inspeccionId, 'initial', 'blob');
+        if (!report || !report.blob) throw new Error("La generación del PDF falló.");
+
+        const base64File = await blobToBase64(report.blob);
+
+        console.log("Invocando función Edge 'upload-pdf-to-b2'...");
+        const { data, error: invokeError } = await supabase.functions.invoke('upload-pdf-to-b2', {
+          body: { 
+            file: base64File,
+            fileName: report.fileName,
+            contentType: 'application/pdf'
+          }
+        });
+        
+        if (invokeError) {
+            console.error('Error de invocación (problema de red o CORS):', invokeError);
+            throw new Error(`Error al contactar con la función Edge: ${invokeError.message}. Revisa la pestaña de Red en las herramientas del desarrollador.`);
+        }
+
+        if (data.error) {
+            console.error('Error devuelto por la función Edge:', data.error, data.stack);
+            throw new Error(`Error en el servidor al subir el archivo: ${data.error}`);
+        }
+
+        if (!data.publicUrl || !data.publicUrl.includes('backblazeb2.com')) {
+            console.error('Respuesta inesperada de la función Edge:', data);
+            throw new Error('La función Edge no devolvió una URL de Backblaze válida.');
+        }
+
+        const publicUrl = data.publicUrl;
+        console.log("Función Edge completada. URL de Backblaze:", publicUrl);
+
+        const { error: updateError } = await supabase
+            .from('inspecciones')
+            .update({ estado: 'finalizada', url_pdf_informe_inicial: publicUrl })
+            .eq('id', inspeccionId);
+        if (updateError) throw updateError;
+        
+        alert('Inspección finalizada y archivada en Backblaze B2 con éxito.');
+        router.push(`/centros/${centro.value.id}/historial`);
+
+    } catch (error) {
+        console.error("Error completo al finalizar la inspección:", error);
+        alert('Ocurrió un error al finalizar y archivar: ' + error.message);
+    } finally {
+        isFinalizing.value = false;
     }
 };
 </script>
@@ -159,10 +224,7 @@ const finalizarInspeccion = async () => {
 <template>
   <div class="h-full flex flex-col">
     <div v-if="loading" class="flex-1 flex items-center justify-center text-slate-500">Cargando datos de la inspección...</div>
-    
     <div v-else-if="inspeccion && centro && version" class="flex-1 flex flex-col min-h-0">
-      
-      <!-- Encabezado Fijo -->
       <header class="flex-shrink-0 px-8 pt-8 pb-4 bg-slate-100/80 backdrop-blur-sm border-b border-slate-200 z-10">
         <div class="flex flex-col md:flex-row justify-between items-start gap-4">
           <div>
@@ -172,18 +234,21 @@ const finalizarInspeccion = async () => {
               Fecha: <span class="font-medium">{{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString() }}</span> |
               Plano: <strong class="text-blue-600">{{ version.nombre }}</strong>
             </p>
+            <div v-if="!canEditInspection" class="mt-2 flex items-center gap-2 text-sm font-semibold text-orange-700 bg-orange-100 border border-orange-200 rounded-md p-2">
+                <InformationCircleIcon class="h-5 w-5" />
+                <span>Esta inspección está bloqueada (modo solo lectura).</span>
+            </div>
           </div>
-          <button v-if="canEditInspection" @click="finalizarInspeccion" class="flex items-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm">
+          <button v-if="canEditInspection" @click="finalizarInspeccion" :disabled="isFinalizing" class="flex items-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm disabled:bg-slate-400">
             <CheckCircleIcon class="h-5 w-5" />
-            Finalizar Inspección
+            {{ isFinalizing ? 'Finalizando...' : 'Finalizar Inspección' }}
+          </button>
+          <button v-else @click="router.push(`/centros/${centro.id}/historial`)" class="flex items-center gap-2 px-4 py-2 font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
+            Volver al Historial
           </button>
         </div>
       </header>
-      
-      <!-- Contenido Principal: Panel Lateral y Mapa -->
       <div class="flex-1 flex overflow-hidden">
-        
-        <!-- Panel Izquierdo Desplegable y con Scroll -->
         <aside class="w-80 lg:w-96 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col">
           <div class="p-4 flex-shrink-0">
              <div v-if="canEditInspection">
@@ -203,7 +268,6 @@ const finalizarInspeccion = async () => {
                 </button>
              </div>
           </div>
-
           <div class="flex-1 overflow-y-auto px-4 pb-4">
             <PointList 
               :grouped-points="puntosAgrupadosPorSala"
@@ -213,14 +277,12 @@ const finalizarInspeccion = async () => {
             />
           </div>
         </aside>
-        
-        <!-- Mapa (Ocupa el resto del espacio) -->
         <main class="flex-1 bg-slate-100 min-w-0">
           <InteractiveMap 
             :image-url="version.url_imagen_plano" 
             :points="puntosParaMostrar.filter(p => p.estado !== 'suprimido')"
             :salas="salas"
-            :is-read-only="!canEditInspection || isPlacementMode"
+            :is-read-only="!canEditInspection"
             :is-placement-mode="isPlacementMode"
             @point-click="openChecklistFor"
             @add-point="handleMapClick"
@@ -229,9 +291,7 @@ const finalizarInspeccion = async () => {
         </main>
       </div>
     </div>
-    
     <div v-else class="flex-1 flex items-center justify-center text-red-500">No se encontraron datos válidos para esta inspección.</div>
-
     <ChecklistModal 
       :is-open="isModalOpen" 
       :punto="selectedPunto"
