@@ -1,12 +1,10 @@
 // src/utils/pdf/pdf-module-photos.js
 
-import html2canvas from 'html2canvas'; // Asegúrate de tener html2canvas si no se usa
 import { checklistItems } from '../checklist';
 import { drawHeader, loadImageAsBase64, MARGIN, DOC_WIDTH, FONT_SIZES } from './pdf-helpers';
 
-// --- ANEXO DE FOTOS INICIAL (Sin cambios, lo dejamos como está) ---
+// --- ANEXO DE FOTOS INICIAL (OPTIMIZADO) ---
 export async function buildInitialPhotoAnnex(pdf, reportData) {
-  // ... (Esta función se mantiene igual, no es necesario copiarla de nuevo si no ha cambiado)
   const { inspectionData, incidenciasData, puntosMaestrosData, puntosInspeccionadosData, salasData } = reportData;
   
   const incidenciasConFoto = incidenciasData.filter(inc => 
@@ -39,10 +37,10 @@ export async function buildInitialPhotoAnnex(pdf, reportData) {
   await drawHeader(pdf, inspectionData);
   
   pdf.setFontSize(FONT_SIZES.annexTitle);
-  pdf.setFont(undefined, 'bold');
+  pdf.setFont('helvetica', 'bold');
   pdf.text('ANEXO 01:', DOC_WIDTH / 2, 145, { align: 'center' });
   pdf.text('REPORTAJE FOTOGRÁFICO', DOC_WIDTH / 2, 155, { align: 'center' });
-  pdf.setFont(undefined, 'normal');
+  pdf.setFont('helvetica', 'normal');
 
   for (const incidencia of incidenciasConFoto) {
     const puntoInspeccionado = puntosInspeccionadosData.find(pi => pi.id === incidencia.punto_inspeccionado_id);
@@ -53,25 +51,26 @@ export async function buildInitialPhotoAnnex(pdf, reportData) {
     await drawHeader(pdf, inspectionData);
     
     let currentY = 45;
-    pdf.setFontSize(FONT_SIZES.h2);
+    pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'normal');
     pdf.text(`Alineación: ${puntoMaestro.nomenclatura}`, MARGIN, currentY);
     currentY += 8;
 
     const checklistItem = checklistItems.find(item => item.id === incidencia.item_checklist);
     if (checklistItem) {
-      pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'italic');
+      pdf.setFontSize(FONT_SIZES.body).setFont('helvetica', 'italic');
       pdf.setTextColor(100);
       const itemText = `Incidencia: ${checklistItem.id}. ${checklistItem.text}`;
       const splitText = pdf.splitTextToSize(itemText, DOC_WIDTH - (MARGIN * 2));
       pdf.text(splitText, MARGIN, currentY);
       currentY += (splitText.length * 5) + 5;
       pdf.setTextColor(0);
-      pdf.setFont(undefined, 'normal');
+      pdf.setFont('helvetica', 'normal');
     }
 
+    // --- CORRECCIÓN DE OPTIMIZACIÓN: Usa el default optimizado (1024px) ---
     const fotoAntesBase64 = await loadImageAsBase64(incidencia.url_foto_antes);
     if(fotoAntesBase64) {
-      pdf.addImage(fotoAntesBase64, 'JPEG', MARGIN, currentY, 180, 100, undefined, 'FAST');
+      pdf.addImage(fotoAntesBase64, 'JPEG', MARGIN, currentY, 180, 100, undefined, 'MEDIUM');
     }
 
     let obsBlockY = currentY + 100 + 10;
@@ -85,19 +84,18 @@ export async function buildInitialPhotoAnnex(pdf, reportData) {
 
     pdf.setDrawColor(0);
     pdf.rect(MARGIN, obsBlockY, DOC_WIDTH - (MARGIN * 2), boxHeight);
-    pdf.setFont(undefined, 'bold');
+    pdf.setFont('helvetica', 'bold');
     pdf.text('Observaciones:', MARGIN + 2, obsBlockY + 5);
-    pdf.setFont(undefined, 'normal');
+    pdf.setFont('helvetica', 'normal');
     pdf.text(splitObs, MARGIN + 2, obsBlockY + 10);
   }
 }
 
 
-// --- ANEXO DE FOTOS DE SUBSANACIÓN (MODIFICADO Y CORREGIDO) ---
+// --- ANEXO DE FOTOS DE SUBSANACIÓN (OPTIMIZADO) ---
 export async function buildRemediationPhotoAnnex(pdf, reportData) {
   const { inspectionData, incidenciasData, puntosMaestrosData, puntosInspeccionadosData } = reportData;
   
-  // Filtramos solo las incidencias que tienen foto de ANTES y DESPUÉS
   const incidenciasSubsanadas = incidenciasData.filter(inc => inc.url_foto_antes && inc.url_foto_despues);
   if (incidenciasSubsanadas.length === 0) return;
 
@@ -105,11 +103,11 @@ export async function buildRemediationPhotoAnnex(pdf, reportData) {
   await drawHeader(pdf, inspectionData);
 
   pdf.setFontSize(FONT_SIZES.annexTitle);
-  pdf.setFont(undefined, 'bold');
+  pdf.setFont('helvetica', 'bold');
   pdf.text('ANEXO 01:', DOC_WIDTH / 2, 145, { align: 'center' });
   const remediationTitleLines = pdf.splitTextToSize('REPORTAJE FOTOGRÁFICO DE SUBSANACIÓN', 180);
   pdf.text(remediationTitleLines, DOC_WIDTH / 2, 155, { align: 'center' });
-  pdf.setFont(undefined, 'normal');
+  pdf.setFont('helvetica', 'normal');
   
   for (const incidencia of incidenciasSubsanadas) {
     const puntoInspeccionado = puntosInspeccionadosData.find(pi => pi.id === incidencia.punto_inspeccionado_id);
@@ -118,36 +116,29 @@ export async function buildRemediationPhotoAnnex(pdf, reportData) {
     
     pdf.addPage();
     await drawHeader(pdf, inspectionData);
-    pdf.setFontSize(FONT_SIZES.h2).text(`Subsanación de Incidencia: ${puntoMaestro.nomenclatura}`, MARGIN, 45);
+    pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'normal').text(`Subsanación de Incidencia: ${puntoMaestro.nomenclatura}`, MARGIN, 45);
 
-    // === INICIO DE LA CORRECCIÓN: Carga y dibuja las imágenes ===
-    
-    // 1. Cargar ambas imágenes en paralelo
+    // --- CORRECCIÓN DE OPTIMIZACIÓN: Redimensiona a un tamaño más pequeño (600px) ---
     const [fotoAntesBase64, fotoDespuesBase64] = await Promise.all([
-      loadImageAsBase64(incidencia.url_foto_antes),
-      loadImageAsBase64(incidencia.url_foto_despues)
+      loadImageAsBase64(incidencia.url_foto_antes, 600, 600),
+      loadImageAsBase64(incidencia.url_foto_despues, 600, 600)
     ]);
     
-    // Dimensiones y posiciones de los recuadros
     const photoBoxY = 65;
     const photoBoxSize = 85;
-    const photoPadding = 2; // Pequeño margen interno
+    const photoPadding = 2;
 
-    // Dibuja el recuadro y la foto de "ANTES"
     pdf.text('ANTES', MARGIN + (photoBoxSize / 2), 60, { align: 'center' });
     pdf.rect(MARGIN, photoBoxY, photoBoxSize, photoBoxSize);
     if (fotoAntesBase64) {
-      pdf.addImage(fotoAntesBase64, 'JPEG', MARGIN + photoPadding, photoBoxY + photoPadding, photoBoxSize - (photoPadding * 2), photoBoxSize - (photoPadding * 2), undefined, 'FAST');
+      pdf.addImage(fotoAntesBase64, 'JPEG', MARGIN + photoPadding, photoBoxY + photoPadding, photoBoxSize - (photoPadding * 2), photoBoxSize - (photoPadding * 2), undefined, 'MEDIUM');
     }
     
-    // Dibuja el recuadro y la foto de "DESPUÉS"
     pdf.text('DESPUÉS', DOC_WIDTH - MARGIN - (photoBoxSize / 2), 60, { align: 'center' });
     pdf.rect(DOC_WIDTH / 2 + 5, photoBoxY, photoBoxSize, photoBoxSize);
     if (fotoDespuesBase64) {
-      pdf.addImage(fotoDespuesBase64, 'JPEG', (DOC_WIDTH / 2 + 5) + photoPadding, photoBoxY + photoPadding, photoBoxSize - (photoPadding * 2), photoBoxSize - (photoPadding * 2), undefined, 'FAST');
+      pdf.addImage(fotoDespuesBase64, 'JPEG', (DOC_WIDTH / 2 + 5) + photoPadding, photoBoxY + photoPadding, photoBoxSize - (photoPadding * 2), photoBoxSize - (photoPadding * 2), undefined, 'MEDIUM');
     }
-    
-    // === FIN DE LA CORRECCIÓN ===
     
     let obsBlockY = 160;
     pdf.setFontSize(FONT_SIZES.body);
@@ -160,9 +151,9 @@ export async function buildRemediationPhotoAnnex(pdf, reportData) {
 
     pdf.setDrawColor(0);
     pdf.rect(MARGIN, obsBlockY, DOC_WIDTH - (MARGIN * 2), boxHeight);
-    pdf.setFont(undefined, 'bold');
+    pdf.setFont('helvetica', 'bold');
     pdf.text('Observaciones:', MARGIN + 2, obsBlockY + 5);
-    pdf.setFont(undefined, 'normal');
+    pdf.setFont('helvetica', 'normal');
     pdf.text(splitObs, MARGIN + 2, obsBlockY + 10);
   }
 }

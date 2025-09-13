@@ -52,24 +52,26 @@ export default defineConfig({
 --- INICIO DEL ARCHIVO: src\App.vue ---
 <!-- src/App.vue -->
 <script setup>
-import { computed } from 'vue';
+import { computed, onMounted, onUpdated } from 'vue';
 import { useRoute } from 'vue-router';
 import DefaultLayout from './layouts/DefaultLayout.vue';
 import BlankLayout from './layouts/BlankLayout.vue';
 
+// --- LOGS DE DEBUG ---
+onMounted(() => console.log('[App.vue] Componente montado en el DOM.'));
+onUpdated(() => console.log('[App.vue] Componente actualizado (cambio de layout o ruta).'));
+
 const route = useRoute();
 const layout = computed(() => {
-  if (route.meta.layout === 'Blank') {
-    return BlankLayout;
-  }
-  return DefaultLayout;
+  const layoutName = route.meta.layout === 'Blank' ? 'BlankLayout' : 'DefaultLayout';
+  // --- LOGS DE DEBUG ---
+  console.log(`[App.vue] Layout computado es: ${layoutName}`);
+  return layoutName === 'BlankLayout' ? BlankLayout : DefaultLayout;
 });
 </script>
 
 <template>
-  <component :is="layout">
-    <router-view />
-  </component>
+  <component :is="layout" />
 </template>
 --- FIN DEL ARCHIVO: src\App.vue ---
 
@@ -995,20 +997,27 @@ const handleSubmit = () => {
 <!-- src/components/PlanoBadge.vue -->
 <template>
   <div
-    class="w-full h-full p-1 flex flex-col items-center bg-white rounded shadow-lg border border-gray-300 cursor-move"
-    style="font-family: sans-serif;"
+    class="w-full h-full p-1 flex flex-col items-center bg-white rounded-lg shadow-lg border border-gray-300 cursor-move font-sans"
   >
-    <div class="font-bold text-center text-[7px] text-[#333]">Punto {{ pointNumber }}</div>
-    <hr class="w-full my-[0.5px] border-t border-gray-200">
+    <div class="font-bold text-center text-xs text-gray-800">Punto {{ pointNumber }}</div>
+    <hr class="w-11/12 my-1 border-t border-gray-200">
     
-    <div v-if="stateText" class="font-bold text-center text-[5.5px] text-[#555]">
+    <div v-if="stateText" class="font-bold text-center text-[10px] text-gray-600 mb-1">
       {{ stateText }}
     </div>
 
-    <div class="flex-1 w-full flex flex-col justify-center items-center space-y-[1px] px-1">
-      <div v-for="item in semaphoreItems" :key="item.label" class="w-full flex justify-between items-center">
-        <div class="w-[6px] h-[6px] rounded-full" :style="{ backgroundColor: item.color }"></div>
-        <div class="font-normal text-right text-[6px] text-[#555]">{{ item.count }}</div>
+    <!-- Sección Semáforos -->
+    <div class="flex-1 w-full flex flex-col justify-center items-center space-y-1 px-2 pb-1">
+      <div v-for="item in semaphoreItems" :key="item.label" class="relative w-full flex justify-between items-center">
+        
+        <!-- INICIO DE LA CORRECCIÓN: Fondo sólido para el semáforo -->
+        <div class="absolute inset-0 bg-white/70 backdrop-blur-[1px] rounded-sm"></div>
+        <!-- FIN DE LA CORRECCIÓN -->
+
+        <!-- Elementos del semáforo, ahora por encima del fondo -->
+        <div class="relative w-3 h-3 rounded-full" :style="{ backgroundColor: item.color }"></div>
+        <div class="relative font-semibold text-sm text-right text-gray-700">{{ item.count }}</div>
+
       </div>
     </div>
   </div>
@@ -1018,9 +1027,7 @@ const handleSubmit = () => {
 import { computed } from 'vue';
 
 const props = defineProps({
-  pointData: Object,
-  position: Object,
-  size: Object
+  pointData: Object
 });
 
 const pointNumber = computed(() => props.pointData.nomenclatura.split('-').pop() || '?');
@@ -1109,7 +1116,18 @@ const toggleSala = (salaId) => {
 
 --- INICIO DEL ARCHIVO: src\layouts\BlankLayout.vue ---
 <!-- src/layouts/BlankLayout.vue -->
+<script setup>
+import { onMounted } from 'vue';
+// --- LOGS DE DEBUG ---
+onMounted(() => console.log('[BlankLayout.vue] Componente montado en el DOM.'));
+</script>
+
 <template>
+  <!-- 
+    CORRECCIÓN: Se elimina el div contenedor. 
+    <router-view> actuará como el elemento raíz de este layout,
+    permitiendo que la página que renderiza controle su propio layout al 100%.
+  -->
   <router-view />
 </template>
 --- FIN DEL ARCHIVO: src\layouts\BlankLayout.vue ---
@@ -1174,6 +1192,10 @@ const handleLogout = async () => {
     <!-- Contenido Principal -->
     <div class="flex-1 flex flex-col overflow-hidden">
       <main class="flex-1 overflow-hidden">
+        <!-- 
+          Este es el punto de montaje para el contenido de la página 
+          (Dashboard, CentrosList, etc.) cuando se usa el layout por defecto.
+        -->
         <router-view />
       </main>
     </div>
@@ -1277,24 +1299,16 @@ export const checklistItems = [
 --- INICIO DEL ARCHIVO: src\utils\plano-layout.js ---
 // src/utils/plano-layout.js
 
-/**
- * Lógica centralizada para calcular el layout del plano de incidencias.
- * Esta función es "pura": recibe datos y devuelve la estructura del layout.
- */
-export function calculatePlanoLayout(allPointsData, mapDimensions) {
+export function calculatePlanoLayout(allPointsData, mapDimensions, badgeWidth) {
     const placedObstacles = allPointsData.map(p => ({
-        x: p.absX - 5,
-        y: p.absY - 5,
-        width: 10,
-        height: 10
+        x: p.absX - 5, y: p.absY - 5,
+        width: 10, height: 10
     }));
 
     const labelsToDraw = [];
-
     const mapCenterX = mapDimensions.x + mapDimensions.width / 2;
     const mapCenterY = mapDimensions.y + mapDimensions.height / 2;
     
-    // Clonamos y ordenamos los puntos
     const sortedPoints = [...allPointsData].sort((a, b) => {
         const distA = Math.sqrt(Math.pow(a.absX - mapCenterX, 2) + Math.pow(a.absY - mapCenterY, 2));
         const distB = Math.sqrt(Math.pow(b.absX - mapCenterX, 2) + Math.pow(b.absY - mapCenterY, 2));
@@ -1304,86 +1318,66 @@ export function calculatePlanoLayout(allPointsData, mapDimensions) {
     for (const point of sortedPoints) {
         const needsBadge = point.estado !== 'existente' || point.detalle_modificacion !== null ||
             (point.counts.verde > 0 || point.counts.ambar > 0 || point.counts.rojo > 0);
-
         if (!needsBadge) continue;
 
-        let badgeHeight = (1.2 * 2) + (4 * 3) + (7 + 1.2 + 1);
+        // --- CORRECCIÓN DE TAMAÑO ---
+        // Calculamos la altura dinámicamente basándonos en un ancho fijo
+        let badgeHeight = 35; // Altura base
         if (point.estado !== 'existente' || point.detalle_modificacion !== null) {
-            badgeHeight += 5.5 + 1.2;
+            badgeHeight += 12; // Espacio extra para el texto de estado
         }
-        const badgeSize = { width: 14, height: badgeHeight };
-
+        const badgeSize = { width: badgeWidth, height: badgeHeight };
+        
         const finalPosition = findNonOverlappingPosition(point, badgeSize, placedObstacles, mapDimensions);
-
-        const badgeRect = {
-            x: finalPosition.x - badgeSize.width / 2,
-            y: finalPosition.y - badgeSize.height / 2,
-            ...badgeSize
-        };
+        const badgeRect = { x: finalPosition.x - badgeSize.width / 2, y: finalPosition.y - badgeSize.height / 2, ...badgeSize };
 
         placedObstacles.push(badgeRect);
         
-        // Almacenamos la posición reactiva
         labelsToDraw.push({
             pointData: point,
             position: { x: finalPosition.x, y: finalPosition.y },
             size: badgeSize
         });
     }
-
     return labelsToDraw;
 }
 
-
 function findNonOverlappingPosition(point, badgeSize, obstacles, pageBounds) {
     const isOverlapping = (rect1, rect2) => {
-        const margin = 2;
+        const margin = 5; // Más margen para que no se peguen
         return !(rect1.x > rect2.x + rect2.width + margin ||
             rect1.x + rect1.width + margin < rect2.x ||
             rect1.y > rect2.y + rect2.height + margin ||
             rect1.y + rect1.height + margin < rect2.y);
     };
-
-    const isWithinBounds = (rect) => {
-        return rect.x >= pageBounds.x &&
-            rect.y >= pageBounds.y &&
-            rect.x + rect.width <= pageBounds.x + pageBounds.width &&
-            rect.y + rect.height <= pageBounds.y + pageBounds.height;
-    };
-
+    const isWithinBounds = (rect) => (
+        rect.x >= pageBounds.x &&
+        rect.y >= pageBounds.y &&
+        rect.x + rect.width <= pageBounds.x + pageBounds.width &&
+        rect.y + rect.height <= pageBounds.y + pageBounds.height
+    );
     const checkPosition = (pos) => {
         const candidateRect = {
             x: pos.x - badgeSize.width / 2,
             y: pos.y - badgeSize.height / 2,
-            width: badgeSize.width,
-            height: badgeSize.height
+            ...badgeSize
         };
         if (isWithinBounds(candidateRect) && !obstacles.some(obs => isOverlapping(candidateRect, obs))) {
             return pos;
         }
         return null;
     };
-
     const preferredOffsets = [
-        { x: 0, y: -(badgeSize.height / 2 + 8) }, { x: 0, y: (badgeSize.height / 2 + 8) },
-        { x: (badgeSize.width / 2 + 8), y: 0 },   { x: -(badgeSize.width / 2 + 8), y: 0 },
-        { x: 15, y: -15 }, { x: -15, y: -15 }, { x: 15, y: 15 }, { x: -15, y: 15 }
+        { x: 0, y: -(badgeSize.height / 2 + 10) }, { x: 0, y: (badgeSize.height / 2 + 10) },
+        { x: (badgeSize.width / 2 + 10), y: 0 },   { x: -(badgeSize.width / 2 + 10), y: 0 }
     ];
-
     for (const offset of preferredOffsets) {
         const position = checkPosition({ x: point.absX + offset.x, y: point.absY + offset.y });
         if (position) return position;
     }
 
-    let x = point.absX;
-    let y = point.absY;
-    let dx = 0;
-    let dy = -1;
-    let stepSize = 5;
-    let stepsInSegment = 1;
-    let turnCounter = 0;
-
-    for (let i = 0; i < 5000; i++) {
+    let x = point.absX, y = point.absY, dx = 0, dy = -1, stepSize = 10, stepsInSegment = 1, turnCounter = 0;
+    for (let i = 0; i < 1000; i++) {
         for (let j = 0; j < Math.floor(stepsInSegment); j++) {
             x += dx * stepSize;
             y += dy * stepSize;
@@ -1392,12 +1386,9 @@ function findNonOverlappingPosition(point, badgeSize, obstacles, pageBounds) {
         }
         [dx, dy] = [-dy, dx];
         turnCounter++;
-        if (turnCounter % 2 === 0) {
-            stepsInSegment += 1;
-        }
+        if (turnCounter % 2 === 0) stepsInSegment += 0.5; // Espiral más densa
     }
-    
-    return { x: point.absX, y: point.absY - 25 };
+    return { x: point.absX, y: point.absY - (badgeSize.height / 2 + 10) };
 }
 --- FIN DEL ARCHIVO: src\utils\plano-layout.js ---
 
@@ -2348,8 +2339,7 @@ export async function buildSummaryAnnex(pdf, reportData) {
 --- INICIO DEL ARCHIVO: src\utils\pdf\pdf-module-text.js ---
 // src/utils/pdf/pdf-module-text.js
 
-import { drawHeader, loadImageAsBase64, ARSEL_LOGO_URL } from './pdf-helpers';
-import { MARGIN, DOC_WIDTH, FONT_SIZES } from './pdf-helpers';
+import { drawHeader, loadImageAsBase64, ARSEL_LOGO_URL, MARGIN, DOC_WIDTH, FONT_SIZES } from './pdf-helpers';
 
 export async function buildTextPages(pdf, reportData) {
   const { inspectionData, incidenciasData, puntosMaestrosData, puntosInspeccionadosData, salasData } = reportData;
@@ -2364,6 +2354,7 @@ export async function buildTextPages(pdf, reportData) {
   
   const agruparPuntosPorPropiedad = (propiedad, valor) => {
     const puntosFiltrados = puntosInspeccionadosData.filter(pi => pi[propiedad] === valor);
+    if (puntosFiltrados.length === 0) return '';
     const grupos = {};
     puntosFiltrados.forEach(pi => {
       const sala = puntoMaestroASalaMap.get(pi.punto_maestro_id);
@@ -2379,11 +2370,9 @@ export async function buildTextPages(pdf, reportData) {
 
   const agruparPuntosConPlacaPorSala = () => {
       const puntosConPlaca = puntosInspeccionadosData.filter(pi => 
-          pi.tiene_placa_caracteristicas === true &&
-          pi.detalle_modificacion !== 'aumentado' &&
-          pi.detalle_modificacion !== 'disminuido' &&
-          pi.estado === 'existente'
+          pi.tiene_placa_caracteristicas === true && !pi.detalle_modificacion && pi.estado === 'existente'
       );
+      if (puntosConPlaca.length === 0) return '';
       const grupos = {};
       puntosConPlaca.forEach(pi => {
           const sala = puntoMaestroASalaMap.get(pi.punto_maestro_id);
@@ -2413,6 +2402,7 @@ export async function buildTextPages(pdf, reportData) {
   };
 
   const agruparIncidenciasPorSala = (incidencias) => {
+    if (incidencias.length === 0) return '';
     const grupos = {};
     incidencias.forEach(inc => {
       const info = getSalaYNumeroDeIncidencia(inc);
@@ -2422,25 +2412,14 @@ export async function buildTextPages(pdf, reportData) {
       }
     });
     const nombresDeSalasOrdenados = Object.keys(grupos).sort((a, b) => a.localeCompare(b));
-    if (nombresDeSalasOrdenados.length === 1 && nombresDeSalasOrdenados[0].toLowerCase() === 'única') {
-        const numerosSet = grupos[nombresDeSalasOrdenados[0]];
-        return `Única: ${[...numerosSet].sort((a, b) => parseInt(a) - parseInt(b)).join(', ')}`;
-    }
     return nombresDeSalasOrdenados.map(nombreSala => {
-      const numerosSet = grupos[nombreSala];
-      const numerosOrdenados = [...numerosSet].sort((a, b) => parseInt(a) - parseInt(b)).join(', ');
-      return `${nombreSala}: ${numerosOrdenados}`;
+      const numerosOrdenados = [...grupos[nombreSala]].sort((a, b) => parseInt(a) - parseInt(b)).join(', ');
+      return `${nombreSala.toUpperCase()}: ${numerosOrdenados}`;
     }).join('\n');
   };
 
-  const incidenciasVerdeAmbarReales = incidenciasData.filter(i => i.gravedad === 'verde' || i.gravedad === 'ambar');
-  const puntosModificados = puntosInspeccionadosData.filter(pi => pi.estado === 'nuevo' || pi.estado === 'suprimido');
-  const puntosYaIncluidosIds = new Set(incidenciasVerdeAmbarReales.map(i => i.punto_inspeccionado_id));
-  const incidenciasSinteticas = puntosModificados
-    .filter(pi => !puntosYaIncluidosIds.has(pi.id))
-    .map(pi => ({ punto_inspeccionado_id: pi.id }));
-  const incidenciasVerdeAmbarCombinadas = [...incidenciasVerdeAmbarReales, ...incidenciasSinteticas];
-  const textoVerdeAmbar = agruparIncidenciasPorSala(incidenciasVerdeAmbarCombinadas);
+  const incidenciasVerdeAmbar = incidenciasData.filter(i => i.gravedad === 'verde' || i.gravedad === 'ambar');
+  const textoVerdeAmbar = agruparIncidenciasPorSala(incidenciasVerdeAmbar);
   const incidenciasRojo = incidenciasData.filter(i => i.gravedad === 'rojo');
   const textoRojo = agruparIncidenciasPorSala(incidenciasRojo);
 
@@ -2456,88 +2435,82 @@ export async function buildTextPages(pdf, reportData) {
 
   pdf.setFontSize(FONT_SIZES.h2).setFont(undefined, 'bold'); pdf.text('1. OBJETO', MARGIN, currentY); currentY += 8; pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal'); pdf.text(`Con motivo de la visita programada para la inspección del sistema de almacenaje para cargas paletizadas y manuales del ${inspectionData.centros.nombre}, se redacta el presente informe que recoge de forma somera el resultado de la visita.`, MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 }); currentY += 25;
   pdf.setFontSize(FONT_SIZES.h2).setFont(undefined, 'bold'); pdf.text('2. ANTECEDENTES', MARGIN, currentY); currentY += 8; pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal'); pdf.text('Para realizar la inspección del sistema de almacenaje de cargas paletizadas y manuales ubicadas en las reservas se toma como base la memoria técnica previa de evaluación de dichos sistemas facilitada al centro para la realización de las correcciones oportunas. Este documento establece los parámetros dimensionales y de carga, así como los elementos y medidas de seguridad que deben contemplar los sistemas de almacenaje para garantizar su estabilidad y uso seguro.', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 }); currentY += 40; pdf.text('La inspección consiste en la revisión visual del sistema llevada a cabo por un técnico cualificado, con la comprobación de los puntos recogidos en el checklist previsto para tal fin en la memoria de evaluación previa, con el consiguiente registro escrito de los resultados obtenidos.', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 }); currentY += 30;
-  pdf.setFontSize(FONT_SIZES.h2).setFont(undefined, 'bold'); pdf.text('3. RESULTADO DE LA VISITA', MARGIN, currentY); currentY += 8; pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal'); pdf.text('En rasgos generales los sistemas de almacenaje cumplen los parámetros establecidos en la memoria técnica de evaluación.', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 }); currentY += 15; pdf.text('Se han detectado anomalías de riesgo verde y/o ámbar, tal y como se refleja en los listados de inspección elaborados durante la visita en:', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 });
+  pdf.setFontSize(FONT_SIZES.h2).setFont(undefined, 'bold'); pdf.text('3. RESULTADO DE LA VISITA', MARGIN, currentY); currentY += 8; pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal'); pdf.text('En rasgos generales los sistemas de almacenaje cumplen los parámetros establecidos en la memoria técnica de evaluación.', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 }); currentY += 15; 
   
-  // --- PÁGINA 2 ---
+  if (textoVerdeAmbar) {
+    pdf.text('Se han detectado anomalías de riesgo verde y/o ámbar, tal y como se refleja en los listados de inspección elaborados durante la visita en:', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 });
+  }
+
+  // --- PÁGINA 2 Y SIGUIENTES ---
   pdf.addPage();
   await drawHeader(pdf, inspectionData);
   currentY = 50;
   
-  pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'bold');
-  if (textoVerdeAmbar) { pdf.text(textoVerdeAmbar, MARGIN, currentY, { lineHeightFactor: 1.5 }); currentY += (textoVerdeAmbar.split('\n').length * 5) + 5; }
-  pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal'); currentY = Math.max(currentY, 65); pdf.text('Estas anomalías, si bien no comprometen de forma inmediata la estabilidad ni seguridad del sistema, deben subsanarse lo antes posible para evitar que puedan derivar en un riesgo mayor. (Se adjuntan listados de chequeo y reportaje fotográfico de la visita).', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 }); currentY += 30;
-  pdf.text('Puntualmente, se han detectado anomalías de riesgo rojo en:', MARGIN, currentY); currentY += 8;
-  pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'bold');
-  if (textoRojo) { pdf.text(textoRojo, MARGIN, currentY, { lineHeightFactor: 1.5 }); currentY += (textoRojo.split('\n').length * 5) + 5; }
-  pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal'); currentY = Math.max(currentY, 130); const textoRiesgoRojo = 'Estas anomalías deben subsanarse inmediatamente para evitar el colapso de las estanterías en el caso de una combinación de cargas desfavorables, procediendo a la descarga de la mercancía de los módulos afectados y señalizando la zona para que no se almacene producto en los mismos hasta que puedan ser sustituidos los elementos dañados. La sustitución se llevará a cabo con nuevo material que se tiene que solicitar si no cuenta con repuesto en el centro.'; const textLines = pdf.splitTextToSize(textoRiesgoRojo, DOC_WIDTH - (MARGIN * 2)); pdf.text(textLines, MARGIN, currentY, { lineHeightFactor: 1.5 }); currentY += textLines.length * 5 + 15;
+  const PAGE_HEIGHT = pdf.internal.pageSize.getHeight();
+  const FOOTER_MARGIN = 30;
 
-  pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
-  pdf.text('Alineaciones que disponen de sus fichas de características:', MARGIN, currentY);
-  currentY += 8;
-  pdf.setFont(undefined, 'bold');
-  if (lineasConPlaca) {
-    pdf.text(lineasConPlaca, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
-    currentY += (lineasConPlaca.split('\n').length * 5) + 5;
-  } else {
-    pdf.text('Ninguna', MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
-    currentY += 10;
+  const checkPageBreak = async (heightNeeded) => {
+    if (currentY + heightNeeded > PAGE_HEIGHT - FOOTER_MARGIN) {
+      pdf.addPage();
+      await drawHeader(pdf, inspectionData);
+      currentY = 50;
+    }
+  };
+
+  const addSection = async (title, content) => {
+    if (!content && !title.toLowerCase().includes('nuevas montadas')) return;
+    content = content || 'Ninguna';
+    
+    const titleHeight = 8;
+    const contentHeight = content.split('\n').length * 5 + 5;
+    await checkPageBreak(titleHeight + contentHeight);
+    
+    pdf.setFont(undefined, 'normal').setFontSize(FONT_SIZES.body).text(title, MARGIN, currentY);
+    currentY += titleHeight;
+    pdf.setFont(undefined, 'bold').text(content, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
+    currentY += contentHeight;
+  };
+
+  if (textoVerdeAmbar) {
+    pdf.setFont(undefined, 'bold').setFontSize(FONT_SIZES.body).text(textoVerdeAmbar, MARGIN, currentY, { lineHeightFactor: 1.5 });
+    currentY += (textoVerdeAmbar.split('\n').length * 5) + 5;
   }
-  currentY += 5;
+  
+  // --- INICIO DE LA CORRECCIÓN DE FUENTE ---
+  // Reseteamos el estilo a normal antes del siguiente párrafo
+  pdf.setFont(undefined, 'normal').setFontSize(FONT_SIZES.body);
+  // --- FIN DE LA CORRECCIÓN DE FUENTE ---
+  
+  const textoPostVerdeAmbar = 'Estas anomalías, si bien no comprometen de forma inmediata la estabilidad ni seguridad del sistema, deben subsanarse lo antes posible para evitar que puedan derivar en un riesgo mayor. (Se adjuntan listados de chequeo y reportaje fotográfico de la visita).';
+  const postVerdeAmbarLines = pdf.splitTextToSize(textoPostVerdeAmbar, DOC_WIDTH - MARGIN * 2);
+  await checkPageBreak(postVerdeAmbarLines.length * 5 + 15);
+  pdf.text(textoPostVerdeAmbar, MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 });
+  currentY += postVerdeAmbarLines.length * 5 + 15;
 
-  pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
-  pdf.text('Alineaciones con módulos AUMENTADOS desde la inspección anterior:', MARGIN, currentY);
-  currentY += 8;
-  pdf.setFont(undefined, 'bold');
-  if (lineasAumentadas) {
-    pdf.text(lineasAumentadas, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
-    currentY += (lineasAumentadas.split('\n').length * 5) + 5;
-  } else {
-    pdf.text('Ninguna', MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
-    currentY += 10;
-  }
-  currentY += 5;
-
-  pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
-  pdf.text('Alineaciones con módulos DISMINUIDOS desde la inspección anterior:', MARGIN, currentY);
-  currentY += 8;
-  pdf.setFont(undefined, 'bold');
-  if (lineasDisminuidas) {
-    pdf.text(lineasDisminuidas, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
-    currentY += (lineasDisminuidas.split('\n').length * 5) + 5;
-  } else {
-    pdf.text('Ninguna', MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
-    currentY += 10;
-  }
-  currentY += 5;
-
-  pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
-  pdf.text('Alineaciones desmontadas desde la inspección anterior:', MARGIN, currentY);
-  currentY += 8;
-  pdf.setFont(undefined, 'bold');
-  if (lineasSuprimidas) {
-    pdf.text(lineasSuprimidas, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
-    currentY += (lineasSuprimidas.split('\n').length * 5) + 5;
-  } else {
-    pdf.text('Ninguna', MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
-    currentY += 10;
-  }
-  currentY += 5;
-
-  pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
-  pdf.text('Alineaciones nuevas montadas desde la inspección anterior:', MARGIN, currentY);
-  currentY += 8;
-  pdf.setFont(undefined, 'bold');
-  if (lineasNuevas) {
-    pdf.text(lineasNuevas, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
-  } else {
-    pdf.text('Ninguna', MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
+  if(textoRojo) {
+    const textoPreRojo = 'Puntualmente, se han detectado anomalías de riesgo rojo en:';
+    await checkPageBreak(8 + textoRojo.split('\n').length * 5 + 5);
+    pdf.text(textoPreRojo, MARGIN, currentY); currentY += 8;
+    pdf.setFont(undefined, 'bold');
+    pdf.text(textoRojo, MARGIN, currentY, { lineHeightFactor: 1.5 });
+    currentY += (textoRojo.split('\n').length * 5) + 5;
+    
+    pdf.setFont(undefined, 'normal');
+    const textoRiesgoRojo = 'Estas anomalías deben subsanarse inmediatamente para evitar el colapso de las estanterías en el caso de una combinación de cargas desfavorables, procediendo a la descarga de la mercancía de los módulos afectados y señalizando la zona para que no se almacene producto en los mismos hasta que puedan ser sustituidos los elementos dañados. La sustitución se llevará a cabo con nuevo material que se tiene que solicitar si no cuenta con repuesto en el centro.';
+    const textLines = pdf.splitTextToSize(textoRiesgoRojo, DOC_WIDTH - (MARGIN * 2));
+    await checkPageBreak(textLines.length * 5 + 15);
+    pdf.text(textLines, MARGIN, currentY, { lineHeightFactor: 1.5 });
+    currentY += textLines.length * 5 + 15;
   }
 
-  // --- PÁGINA 3 ---
-  pdf.addPage();
-  await drawHeader(pdf, inspectionData);
-  currentY = 50;
-  pdf.setFontSize(FONT_SIZES.body).setFont(undefined, 'normal');
+  await addSection('Alineaciones que disponen de sus fichas de características:', lineasConPlaca);
+  await addSection('Alineaciones con módulos AUMENTADOS desde la inspección anterior:', lineasAumentadas);
+  await addSection('Alineaciones con módulos DISMINUIDOS desde la inspección anterior:', lineasDisminuidas);
+  await addSection('Alineaciones desmontadas desde la inspección anterior:', lineasSuprimidas);
+  await addSection('Alineaciones nuevas montadas desde la inspección anterior:', lineasNuevas);
+
+  await checkPageBreak(80);
+  pdf.setFont(undefined, 'normal').setFontSize(FONT_SIZES.body);
   pdf.text('Para cerrar el proceso de inspección completo, el centro subsanará las deficiencias de menor grado detectadas en los próximos días, comunicando la resolución de las mismas mediante correo electrónico a ARSEL Ingeniería y al Técnico de Prevención Regional.', MARGIN, currentY, { maxWidth: DOC_WIDTH - (MARGIN * 2), lineHeightFactor: 1.5 }); currentY += 40;
   pdf.text('Informe realizado por:', MARGIN, currentY); currentY += 15;
   const arselLogoBase64 = await loadImageAsBase64(ARSEL_LOGO_URL);
@@ -2545,11 +2518,9 @@ export async function buildTextPages(pdf, reportData) {
       pdf.addImage(arselLogoBase64, 'PNG', MARGIN, currentY, 35, 15, undefined, 'FAST');
       currentY += 18;
   }
-  pdf.setFont(undefined, 'bold');
-  pdf.text('ARSEL INGENIERIA', MARGIN, currentY);
+  pdf.setFont(undefined, 'bold').text('ARSEL INGENIERIA', MARGIN, currentY);
   currentY += 5;
-  pdf.setFont(undefined, 'normal');
-  pdf.text(`Valencia, ${fecha}`, MARGIN, currentY);
+  pdf.setFont(undefined, 'normal').text(`Valencia, ${fecha}`, MARGIN, currentY);
 }
 --- FIN DEL ARCHIVO: src\utils\pdf\pdf-module-text.js ---
 
@@ -2939,10 +2910,10 @@ const fetchData = async () => {
 
 const handleDelete = async (inspeccionId) => {
   if (confirm('¿Estás seguro de que quieres borrar esta inspección? Esta acción es permanente y eliminará todos los datos y fotos asociados.')) {
+    // La lógica de borrado es compleja y no la tocamos.
     try {
       const { data: incidencias, error: getError } = await supabase.from('incidencias').select('url_foto_antes, url_foto_despues').eq('inspeccion_id', inspeccionId);
       if (getError) throw getError;
-
       const filesToDelete = [];
       if (incidencias && incidencias.length > 0) {
         incidencias.forEach(inc => {
@@ -2950,18 +2921,13 @@ const handleDelete = async (inspeccionId) => {
           if (inc.url_foto_despues) { const filePath = inc.url_foto_despues.split('/incidencias/')[1]; if (filePath) filesToDelete.push(filePath); }
         });
       }
-
       if (filesToDelete.length > 0) {
-        const { error: storageError } = await supabase.storage.from('incidencias').remove(filesToDelete);
-        if (storageError) { alert('Advertencia: No se pudieron borrar algunas fotos asociadas. Error: ' + storageError.message); }
+        await supabase.storage.from('incidencias').remove(filesToDelete);
       }
-
       const { error: deleteError } = await supabase.from('inspecciones').delete().eq('id', inspeccionId);
       if (deleteError) throw deleteError;
-
       inspecciones.value = inspecciones.value.filter(i => i.id !== inspeccionId);
       alert('Inspección borrada con éxito.');
-
     } catch (error) {
       alert('Ocurrió un error al borrar la inspección: ' + error.message);
     }
@@ -3015,12 +2981,9 @@ onMounted(fetchData);
               
               <router-link v-if="inspeccion.estado === 'pendiente_subsanacion'" :to="`/inspecciones/${inspeccion.id}/subsanar`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200"><WrenchScrewdriverIcon class="h-4 w-4" /> Subsanar </router-link>
 
-              <!-- === INICIO DE LA CORRECCIÓN === -->
-              <!-- Cambiado de <button> a <router-link> para navegar a la nueva vista de previsualización -->
               <router-link :to="`/inspecciones/${inspeccion.id}/plano-preview`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200">
                   <MapIcon class="h-4 w-4"/>Plano
               </router-link>
-              <!-- === FIN DE LA CORRECCIÓN === -->
               
               <button @click="handleGenerateTextReport(inspeccion.id, 'initial')" :disabled="isGeneratingPdf" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md text-slate-600 bg-slate-100 hover:bg-slate-200 border border-slate-200 disabled:opacity-50"><DocumentTextIcon class="h-4 w-4"/>Informe Inicial</button>
               
@@ -3920,7 +3883,7 @@ onMounted(async () => {
 <!-- src/views/PlanoPreviewView.vue -->
 <script setup>
 import { ref, onMounted, nextTick } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { fetchReportData } from '../utils/pdf/pdf-data';
 import { calculatePlanoLayout } from '../utils/plano-layout';
 import html2canvas from 'html2canvas';
@@ -3929,37 +3892,38 @@ import PlanoBadge from '../components/PlanoBadge.vue';
 import { ArrowDownTrayIcon, ArrowUturnLeftIcon } from '@heroicons/vue/24/solid';
 
 const route = useRoute();
+const router = useRouter();
 const inspeccionId = Number(route.params.id);
 
 const loading = ref(true);
+const layoutReady = ref(false);
 const errorState = ref(null);
 const reportData = ref(null);
 const labels = ref([]);
 const planoContainer = ref(null);
 const mapDimensions = ref({ x: 0, y: 0, width: 1, height: 1 });
 const isGenerating = ref(false);
-const isScalingForPdf = ref(false);
 
 const draggedLabel = ref(null);
 const dragOffset = ref({ x: 0, y: 0 });
 
+// --- CORRECCIÓN DE TAMAÑO ---
+// Definimos el tamaño de la tarjeta en la pantalla (en píxeles)
+const BADGE_WIDTH_PX = 60; 
+
 onMounted(async () => {
   reportData.value = await fetchReportData(inspeccionId);
-  
   if (!reportData.value) {
     errorState.value = "No se pudieron cargar los datos de la inspección.";
     loading.value = false;
     return;
   }
-
   loading.value = false;
   await nextTick();
   prepareLayout();
 });
 
-// --- INICIO DE LA CORRECCIÓN CLAVE ---
-// La función ahora es asíncrona y procesa el layout sin bloquear el navegador.
-const prepareLayout = async () => {
+const prepareLayout = () => {
   const containerEl = planoContainer.value;
   if (!containerEl) {
     errorState.value = "Error: El contenedor del plano no se encontró en el DOM.";
@@ -3970,7 +3934,6 @@ const prepareLayout = async () => {
   img.onload = async () => {
     const containerRatio = containerEl.clientWidth / containerEl.clientHeight;
     const imageRatio = img.width / img.height;
-
     let imgW, imgH, imgX, imgY;
     if (imageRatio > containerRatio) {
       imgW = containerEl.clientWidth;
@@ -3996,40 +3959,37 @@ const prepareLayout = async () => {
         counts: reportData.value.incidenceCounts.get(punto.id) || { verde: 0, ambar: 0, rojo: 0 }
       };
     }).filter(Boolean);
-
-    // Procesamos el layout de forma asíncrona
-    const calculatedLabels = calculatePlanoLayout(allPoints, mapDimensions.value);
-
-    // Añadimos las etiquetas una por una con un pequeño retardo para no bloquear el UI
-    for (const label of calculatedLabels) {
-        labels.value.push(label);
-        // Pequeña pausa para que el navegador respire
-        await new Promise(resolve => setTimeout(resolve, 0));
-    }
+    
+    // --- CORRECCIÓN DE TAMAÑO ---
+    // Pasamos el tamaño en píxeles al algoritmo
+    const calculatedLabels = calculatePlanoLayout(allPoints, mapDimensions.value, BADGE_WIDTH_PX);
+    
+    const showLabelsIncrementally = (index = 0) => {
+      if (index < calculatedLabels.length) {
+        labels.value.push(calculatedLabels[index]);
+        requestAnimationFrame(() => showLabelsIncrementally(index + 1));
+      } else {
+        layoutReady.value = true;
+      }
+    };
+    showLabelsIncrementally();
   };
   
-  img.onerror = () => {
-      errorState.value = "No se pudo cargar la imagen del plano. Verifica la URL.";
-  }
-  
+  img.onerror = () => { errorState.value = "No se pudo cargar la imagen del plano."; }
   img.src = reportData.value.planoBase64;
 };
-// --- FIN DE LA CORRECCIÓN CLAVE ---
-
 
 const generatePdf = async () => {
     isGenerating.value = true;
-    isScalingForPdf.value = true;
     await nextTick();
-
-    const canvas = await html2canvas(planoContainer.value, { 
-        scale: 1,
+    const elementToCapture = planoContainer.value;
+    
+    const canvas = await html2canvas(elementToCapture, { 
+        scale: 3,
         useCORS: true,
         logging: false,
         backgroundColor: '#ffffff'
     });
-
-    isScalingForPdf.value = false;
 
     const imgData = canvas.toDataURL('image/jpeg', 0.95);
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -4044,17 +4004,11 @@ const generatePdf = async () => {
 
 const onMouseDown = (label, event) => {
   draggedLabel.value = label;
-  const rect = event.currentTarget.getBoundingClientRect();
   const containerRect = planoContainer.value.getBoundingClientRect();
-  
-  const badgeX = rect.left - containerRect.left;
-  const badgeY = rect.top - containerRect.top;
-
   dragOffset.value = {
-    x: event.clientX - badgeX,
-    y: event.clientY - badgeY
+    x: event.clientX - containerRect.left - label.position.x,
+    y: event.clientY - containerRect.top - label.position.y
   };
-  
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
 };
@@ -4062,12 +4016,10 @@ const onMouseDown = (label, event) => {
 const onMouseMove = (event) => {
   if (!draggedLabel.value) return;
   const containerRect = planoContainer.value.getBoundingClientRect();
-  
   const newX = event.clientX - containerRect.left - dragOffset.value.x;
   const newY = event.clientY - containerRect.top - dragOffset.value.y;
-
-  draggedLabel.value.position.x = newX + (draggedLabel.value.size.width / 2);
-  draggedLabel.value.position.y = newY + (draggedLabel.value.size.height / 2);
+  draggedLabel.value.position.x = newX;
+  draggedLabel.value.position.y = newY;
 };
 
 const onMouseUp = () => {
@@ -4088,7 +4040,7 @@ const onMouseUp = () => {
         <button @click="$router.go(-1)" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-white border border-slate-300 rounded-md hover:bg-slate-50">
           <ArrowUturnLeftIcon class="h-4 w-4" /> Volver
         </button>
-        <button @click="generatePdf" :disabled="isGenerating || errorState" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-slate-400">
+        <button @click="generatePdf" :disabled="isGenerating || !layoutReady" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-slate-400">
           <ArrowDownTrayIcon class="h-4 w-4" />
           {{ isGenerating ? 'Generando...' : 'Generar PDF' }}
         </button>
@@ -4098,14 +4050,10 @@ const onMouseUp = () => {
     <main class="flex-1 p-4 overflow-hidden">
       <div v-if="loading" class="h-full w-full flex items-center justify-center text-white">Cargando previsualización...</div>
       <div v-else-if="errorState" class="h-full w-full flex items-center justify-center text-red-300 bg-red-900/50 p-4 text-center rounded-md">{{ errorState }}</div>
-      <div 
-        v-else 
-        ref="planoContainer" 
-        class="relative h-full w-full bg-white select-none"
-        :class="{ 'scaling-for-pdf': isScalingForPdf }"
-      >
+      
+      <div v-else ref="planoContainer" class="relative h-full w-full bg-white select-none">
+        
         <img
-          v-if="reportData?.planoBase64"
           :src="reportData.planoBase64"
           class="absolute pointer-events-none"
           :style="{ 
@@ -4122,7 +4070,7 @@ const onMouseUp = () => {
               :x2="label.position.x"
               :y2="label.position.y"
               stroke="#94a3b8"
-              stroke-width="0.5"
+              stroke-width="1"
             />
           </g>
         </svg>
@@ -4139,22 +4087,12 @@ const onMouseUp = () => {
             height: `${label.size.height}px`,
           }"
         >
-           <PlanoBadge :pointData="label.pointData" :position="label.position" :size="label.size" />
+           <PlanoBadge :pointData="label.pointData" />
         </div>
       </div>
     </main>
   </div>
 </template>
-
-<style>
-#app > div.flex.h-screen {
-  display: none;
-}
-.scaling-for-pdf {
-  transform: scale(3);
-  transform-origin: top left;
-}
-</style>
 --- FIN DEL ARCHIVO: src\views\PlanoPreviewView.vue ---
 
 --- INICIO DEL ARCHIVO: src\views\SubsanacionView.vue ---

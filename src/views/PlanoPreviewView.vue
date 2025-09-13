@@ -25,12 +25,13 @@ const isGenerating = ref(false);
 const draggedLabel = ref(null);
 const dragOffset = ref({ x: 0, y: 0 });
 
-// --- CORRECCIÓN DE TAMAÑO ---
-// Definimos el tamaño de la tarjeta en la pantalla (en píxeles)
 const BADGE_WIDTH_PX = 60; 
 
 onMounted(async () => {
-  reportData.value = await fetchReportData(inspeccionId);
+  // --- INICIO DE LA CORRECCIÓN: Solicitamos la imagen del plano SIN optimizar ---
+  reportData.value = await fetchReportData(inspeccionId, { optimizePlan: false });
+  // --- FIN DE LA CORRECCIÓN ---
+
   if (!reportData.value) {
     errorState.value = "No se pudieron cargar los datos de la inspección.";
     loading.value = false;
@@ -78,8 +79,6 @@ const prepareLayout = () => {
       };
     }).filter(Boolean);
     
-    // --- CORRECCIÓN DE TAMAÑO ---
-    // Pasamos el tamaño en píxeles al algoritmo
     const calculatedLabels = calculatePlanoLayout(allPoints, mapDimensions.value, BADGE_WIDTH_PX);
     
     const showLabelsIncrementally = (index = 0) => {
