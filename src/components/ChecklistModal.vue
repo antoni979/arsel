@@ -277,7 +277,7 @@ const handleClose = () => {
             </div>
             
             <div v-if="getIncidenciasForItem(item.id).value.length > 0" class="border-t bg-slate-50 p-4 space-y-4">
-              <div v-if="item.id === 2 || item.id === 3" class="text-center text-sm text-slate-600 bg-slate-200 p-2 rounded-md">
+              <div v-if="item.id === 2" class="text-center text-sm text-slate-600 bg-slate-200 p-2 rounded-md">
                  Este parámetro se gestiona automáticamente desde las preguntas superiores.
               </div>
               <div v-for="(incidencia, index) in getIncidenciasForItem(item.id).value" :key="incidencia.id" class="bg-white border rounded-lg p-4 shadow-sm relative">
@@ -289,11 +289,15 @@ const handleClose = () => {
                   <div class="space-y-4">
                     <div>
                       <label class="block text-xs font-medium text-slate-600">Gravedad</label>
-                      <select v-model="incidencia.gravedad" @change="saveIncidencia(incidencia)" :disabled="item.id === 2 || item.id === 3" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm text-sm disabled:bg-slate-200"><option v-for="opt in gravedadOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option></select>
+                      <!-- ===== INICIO DE LA CORRECCIÓN: Se quita la condición item.id === 3 ===== -->
+                      <select v-model="incidencia.gravedad" @change="saveIncidencia(incidencia)" :disabled="item.id === 2" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm text-sm disabled:bg-slate-200"><option v-for="opt in gravedadOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option></select>
+                      <!-- ===== FIN DE LA CORRECCIÓN ===== -->
                     </div>
                     <div>
                       <label class="block text-xs font-medium text-slate-600">Observaciones</label>
-                      <textarea v-model="incidencia.observaciones" @blur="saveIncidencia(incidencia)" rows="3" :disabled="item.id === 2 || item.id === 3" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm text-sm disabled:bg-slate-200"></textarea>
+                      <!-- ===== INICIO DE LA CORRECCIÓN: Se quita la condición item.id === 3 ===== -->
+                      <textarea v-model="incidencia.observaciones" @blur="saveIncidencia(incidencia)" rows="3" :disabled="item.id === 2" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm text-sm disabled:bg-slate-200"></textarea>
+                      <!-- ===== FIN DE LA CORRECCIÓN ===== -->
                     </div>
                   </div>
                   <div>

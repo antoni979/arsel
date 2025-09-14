@@ -19,7 +19,6 @@ const activeSalaId = ref(null);
 const newSalaName = ref('');
 const fileInput = ref(null);
 
-// --- INICIO DE CAMBIOS: Nuevos estados de edición ---
 const isDrawingMode = ref(false);
 const isPointEditingMode = ref(false);
 const activeSala = computed(() => salas.value.find(s => s.id === activeSalaId.value));
@@ -35,7 +34,6 @@ const instructionText = computed(() => {
     }
     return null;
 });
-// --- FIN DE CAMBIOS ---
 
 onMounted(async () => {
   loading.value = true;
@@ -64,7 +62,7 @@ const togglePointEditingMode = () => {
         return;
     }
     isPointEditingMode.value = !isPointEditingMode.value;
-    isDrawingMode.value = false; // Asegurarse de que el otro modo está desactivado
+    isDrawingMode.value = false;
 };
 
 const cancelAllModes = () => {
@@ -90,7 +88,6 @@ const handleFileUpload = async (file) => {
     }
 };
 
-// --- INICIO DE CAMBIOS: Lógica de dibujo y guardado ---
 const enterDrawingMode = () => {
   if (!activeSalaId.value) { alert("Selecciona una sala para poder definir su área."); return; }
   isDrawingMode.value = true;
@@ -122,7 +119,6 @@ const clearArea = async () => {
         }
     }
 };
-// --- FIN DE CAMBIOS ---
 
 const handleNewPoint = async (coords) => {
   if (!activeSalaId.value) { alert("Error: No se ha seleccionado ninguna sala para añadir el punto."); return; };
@@ -245,18 +241,20 @@ const saveSalaColor = async (sala) => {
                       <span class="font-semibold" :class="{'text-blue-800': activeSalaId === sala.id}">{{ sala.nombre }}</span>
                     </div>
                   </div>
-                  <!-- Botones de acción para la sala activa -->
-                   <div v-if="activeSalaId === sala.id" class="pl-10 -mt-2 mb-2 flex items-center gap-2">
-                      <button @click="enterDrawingMode" :disabled="isPointEditingMode" class="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 disabled:text-slate-400">
-                         <MapIcon class="h-4 w-4" /> Definir Área
+                  
+                  <!-- ===== INICIO DE LA CORRECCIÓN: Layout de botones arreglado ===== -->
+                  <div v-if="activeSalaId === sala.id" class="pl-10 pt-1 pb-2 flex items-center space-x-4">
+                      <button @click="enterDrawingMode" :disabled="isPointEditingMode" class="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 disabled:text-slate-400 disabled:cursor-not-allowed">
+                         <MapIcon class="h-4 w-4" /> <span>Definir Área</span>
                       </button>
-                      <button v-if="sala.area_puntos" @click="clearArea" :disabled="isPointEditingMode" class="flex items-center gap-1 text-xs text-red-600 hover:text-red-800 disabled:text-slate-400">
-                         <BackspaceIcon class="h-4 w-4" /> Limpiar
+                      <button v-if="sala.area_puntos" @click="clearArea" :disabled="isPointEditingMode" class="flex items-center gap-1.5 text-xs text-red-600 hover:text-red-800 disabled:text-slate-400 disabled:cursor-not-allowed">
+                         <XCircleIcon class="h-4 w-4" /> <span>Limpiar</span>
                       </button>
-                      <button @click="deleteSala(sala.id)" :disabled="isPointEditingMode" class="flex items-center gap-1 text-xs text-slate-500 hover:text-red-600 disabled:text-slate-400">
-                         <TrashIcon class="h-4 w-4" /> Borrar Sala
+                      <button @click="deleteSala(sala.id)" :disabled="isPointEditingMode" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-red-600 disabled:text-slate-400 disabled:cursor-not-allowed">
+                         <TrashIcon class="h-4 w-4" /> <span>Borrar</span>
                       </button>
                    </div>
+                   <!-- ===== FIN DE LA CORRECCIÓN ===== -->
                 </li>
               </ul>
             </div>

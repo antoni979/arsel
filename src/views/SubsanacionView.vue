@@ -1,12 +1,13 @@
 <!-- src/views/SubsanacionView.vue -->
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, inject } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 import { checklistItems } from '../utils/checklist';
 import { generateTextReport } from '../utils/pdf';
 import { ArrowUpTrayIcon, CheckCircleIcon } from '@heroicons/vue/24/solid';
 
+const showNotification = inject('showNotification');
 const route = useRoute();
 const router = useRouter();
 const inspeccionId = Number(route.params.id);
@@ -30,7 +31,6 @@ const getItemText = (itemId) => {
   const item = checklistItems.find(i => i.id === itemId);
   return item ? `${item.id}. ${item.text}` : 'Item desconocido';
 };
-
 const handleFileChange = async (event, incidencia) => {
   const file = event.target.files[0];
   if (!file) return;
@@ -38,26 +38,24 @@ const handleFileChange = async (event, incidencia) => {
   const fileName = `subsanacion_${inspeccionId}/incidencia_${incidencia.id}/${Date.now()}_${file.name}`;
   const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, file, { upsert: true });
   if (uploadError) {
-    alert("Error al subir la foto: " + uploadError.message);
+    showNotification("Error al subir la foto: " + uploadError.message, 'error');
     isUploading.value = null;
     return;
   }
   const { data: { publicUrl } } = supabase.storage.from('incidencias').getPublicUrl(fileName);
   const { error: updateError } = await supabase.from('incidencias').update({ url_foto_despues: publicUrl }).eq('id', incidencia.id);
   if (updateError) {
-    alert("Error al guardar la URL: " + updateError.message);
+    showNotification("Error al guardar la URL: " + updateError.message, 'error');
   } else {
     incidencia.url_foto_despues = publicUrl;
   }
   isUploading.value = null;
 };
-
 const todasSubsanadas = computed(() => {
   if (incidencias.value.length === 0) return true;
   return incidencias.value.every(inc => !!inc.url_foto_despues);
 });
 
-// Duplicamos la función de conversión aquí también
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -82,30 +80,35 @@ const finalizarSubsanacion = async () => {
 
     const base64File = await blobToBase64(report.blob);
 
-    console.log("Invocando función Edge 'upload-pdf-to-b2' para subsanación...");
+    const centroId = inspeccion.value.centros.id;
+    const fileNameWithId = `${inspeccionId}-${report.fileName}`;
+    const finalFileName = `centro_${centroId}/${fileNameWithId}`;
+
+    console.log("Invocando función Edge 'upload-pdf-to-b2' para subsanación con la ruta:", finalFileName);
     const { data, error: invokeError } = await supabase.functions.invoke('upload-pdf-to-b2', {
       body: { 
         file: base64File,
-        fileName: report.fileName,
+        // --- INICIO DE LA CORRECCIÓN ---
+        fileName: finalFileName,
+        // --- FIN DE LA CORRECCIÓN ---
         contentType: 'application/pdf'
       }
     });
 
-    if (invokeError) throw invokeError;
+    if (invokeError) throw new Error(`Error al contactar con la función Edge: ${invokeError.message}.`);
     if (data.error) throw new Error(data.error);
-    if (!data.publicUrl || !data.publicUrl.includes('backblazeb2.com')) throw new Error('La función Edge no devolvió una URL de Backblaze válida.');
+    if (!data.publicUrl) throw new Error('La función Edge no devolvió una URL válida.');
     
     const publicUrl = data.publicUrl;
-    console.log("Función Edge completada. URL de Backblaze:", publicUrl);
-
+    
     const { error: updateError } = await supabase.from('inspecciones').update({ estado: 'cerrada', url_pdf_informe_final: publicUrl }).eq('id', inspeccionId);
     if (updateError) throw updateError;
     
-    alert('Inspección cerrada y archivada con éxito.');
+    showNotification('Inspección cerrada y archivada con éxito.');
     router.push(`/centros/${inspeccion.value.centros.id}/historial`);
   } catch (error) {
     console.error("Error al finalizar subsanación:", error);
-    alert('Ocurrió un error al finalizar la subsanación: ' + error.message);
+    showNotification('Ocurrió un error al finalizar la subsanación: ' + error.message, 'error');
   } finally {
     isFinalizing.value = false;
   }

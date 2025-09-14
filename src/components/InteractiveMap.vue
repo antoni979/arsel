@@ -15,21 +15,17 @@ const emit = defineEmits(['add-point', 'delete-point', 'update-point-position', 
 
 const overlayRef = ref(null);
 const draggedPointId = ref(null);
+const drawingPoints = ref([]);
+const mousePosition = ref({ x: 0, y: 0 });
 
-// --- INICIO DE CAMBIOS: Lógica de Dibujo Poligonal ---
-const drawingPoints = ref([]); // Puntos del polígono que se está dibujando
-const mousePosition = ref({ x: 0, y: 0 }); // Posición del ratón para feedback visual
-
-// Resetea el dibujo si el modo cambia desde el padre
 watch(() => props.isAreaDrawingMode, (newVal) => {
   if (!newVal) {
     drawingPoints.value = [];
   }
 });
 
-// Convierte un array de objetos [{x, y}] a un string "x1,y1 x2,y2..." para SVG
 const toSvgPoints = (pointsArray, overlayWidth, overlayHeight) => {
-  if (!pointsArray || pointsArray.length === 0) return "";
+  if (!pointsArray || pointsArray.length === 0 || !overlayWidth || !overlayHeight) return "";
   return pointsArray.map(p => `${p.x * overlayWidth},${p.y * overlayHeight}`).join(' ');
 };
 
@@ -40,12 +36,10 @@ const handleMapClick = (event) => {
   const y = (event.clientY - overlayRect.top) / overlayRect.height;
   
   if (props.isAreaDrawingMode) {
-    // Si estamos dibujando un área...
     if (drawingPoints.value.length > 2) {
-      // Comprobar si se hace clic cerca del primer punto para cerrar el polígono
       const firstPoint = drawingPoints.value[0];
       const distance = Math.sqrt(Math.pow((x - firstPoint.x), 2) + Math.pow((y - firstPoint.y), 2));
-      if (distance < 0.02) { // Umbral de "cercanía" (2% del ancho del mapa)
+      if (distance < 0.02) {
         emit('area-drawn', drawingPoints.value);
         drawingPoints.value = [];
         return;
@@ -53,7 +47,6 @@ const handleMapClick = (event) => {
     }
     drawingPoints.value.push({ x, y });
   } else if (props.isPlacementMode) {
-    // Si estamos colocando un punto...
     emit('add-point', { x, y });
   }
 };
@@ -65,7 +58,6 @@ const handleMouseMove = (event) => {
     mousePosition.value.y = event.clientY - overlayRect.top;
 };
 
-// Atajo de teclado: Esc para cancelar el dibujo
 const handleKeydown = (e) => {
     if (e.key === 'Escape' && props.isAreaDrawingMode) {
         drawingPoints.value = [];
@@ -75,8 +67,6 @@ const handleKeydown = (e) => {
 
 onMounted(() => window.addEventListener('keydown', handleKeydown));
 onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
-
-// --- FIN DE CAMBIOS ---
 
 const getSalaColor = (salaId) => {
   const sala = props.salas.find(s => s.id === salaId);
@@ -132,25 +122,22 @@ const handlePointClick = (point) => {
         @click="handleMapClick"
         @mousemove="handleMouseMove"
       >
-        <!-- SVG para dibujar áreas poligonales -->
         <svg class="absolute top-0 left-0 w-full h-full pointer-events-none">
-          <!-- Áreas de Salas guardadas -->
           <template v-for="sala in salas" :key="`sala-area-${sala.id}`">
+            <!-- ===== INICIO DE LA CORRECCIÓN: Se cambia 'vif' por 'v-if' ===== -->
             <polygon
               v-if="sala.area_puntos && overlayRef"
               :points="toSvgPoints(sala.area_puntos, overlayRef.clientWidth, overlayRef.clientHeight)"
-              :style="{ fill: 'transparent', stroke: getSalaColor(sala.id), strokeWidth: '2px' }"
+              :style="{ fill: `${getSalaColor(sala.id)}33`, stroke: getSalaColor(sala.id), strokeWidth: '2px' }"
             />
+            <!-- ===== FIN DE LA CORRECCIÓN ===== -->
           </template>
 
-          <!-- Dibujo en progreso -->
           <g v-if="isAreaDrawingMode && overlayRef">
-            <!-- Líneas entre los puntos ya hechos -->
             <polyline 
               :points="toSvgPoints(drawingPoints, overlayRef.clientWidth, overlayRef.clientHeight)"
               style="fill: none; stroke: #3b82f6; stroke-width: 2px; stroke-dasharray: 4;"
             />
-            <!-- Línea desde el último punto al cursor -->
             <line 
               v-if="drawingPoints.length > 0"
               :x1="drawingPoints[drawingPoints.length - 1].x * overlayRef.clientWidth"
@@ -159,7 +146,6 @@ const handlePointClick = (point) => {
               :y2="mousePosition.y"
               style="stroke: #3b82f6; stroke-width: 2px; stroke-dasharray: 4;"
             />
-             <!-- Puntos (vértices) del dibujo -->
             <circle
               v-for="(point, index) in drawingPoints"
               :key="`drawing-point-${index}`"
@@ -172,7 +158,6 @@ const handlePointClick = (point) => {
           </g>
         </svg>
 
-        <!-- Puntos de Inspección (se mantienen igual) -->
         <div
           v-for="point in points"
           :key="point.id"
