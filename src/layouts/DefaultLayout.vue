@@ -56,11 +56,9 @@ const handleLogout = async () => {
 
     <!-- Contenido Principal -->
     <div class="flex-1 flex flex-col overflow-hidden">
-      <main class="flex-1 overflow-hidden">
-        <!-- 
-          Este es el punto de montaje para el contenido de la página 
-          (Dashboard, CentrosList, etc.) cuando se usa el layout por defecto.
-        -->
+      <!-- ===== INICIO DE LA CORRECCIÓN: Se añade overflow-y-auto ===== -->
+      <main class="flex-1 overflow-y-auto">
+      <!-- ===== FIN DE LA CORRECCIÓN ===== -->
         <router-view />
       </main>
     </div>

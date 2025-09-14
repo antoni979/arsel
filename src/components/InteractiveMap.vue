@@ -108,7 +108,7 @@ const handlePointClick = (point) => {
 
 <template>
   <div 
-    class="relative w-full h-full flex justify-center items-center bg-slate-100"
+    class="relative"
     @mousemove="onDrag"
     @mouseup="stopDrag"
     @mouseleave="stopDrag"
@@ -124,13 +124,11 @@ const handlePointClick = (point) => {
       >
         <svg class="absolute top-0 left-0 w-full h-full pointer-events-none">
           <template v-for="sala in salas" :key="`sala-area-${sala.id}`">
-            <!-- ===== INICIO DE LA CORRECCIÓN: Se cambia 'vif' por 'v-if' ===== -->
             <polygon
               v-if="sala.area_puntos && overlayRef"
               :points="toSvgPoints(sala.area_puntos, overlayRef.clientWidth, overlayRef.clientHeight)"
               :style="{ fill: `${getSalaColor(sala.id)}33`, stroke: getSalaColor(sala.id), strokeWidth: '2px' }"
             />
-            <!-- ===== FIN DE LA CORRECCIÓN ===== -->
           </template>
 
           <g v-if="isAreaDrawingMode && overlayRef">
