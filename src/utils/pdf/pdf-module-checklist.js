@@ -39,7 +39,8 @@ export async function buildChecklistAnnex(pdf, reportData) {
             fontSize: FONT_SIZES.annexTitle, 
             fontStyle: 'bold', 
             halign: 'center',
-            font: 'helvetica' // <-- FUENTE OPTIMIZADA
+            font: 'helvetica',
+            textColor: 0 // <-- AÑADIDO: Color de texto negro
         },
         margin: { left: MARGIN, right: MARGIN }
     });
@@ -60,7 +61,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 body: [['FORMATO DE INSPECCIÓN DEL SISTEMA DE ALMACENAJE']],
                 startY: 25,
                 theme: 'plain',
-                styles: { fontSize: FONT_SIZES.h2, fontStyle: 'bold', halign: 'center', font: 'helvetica' }, // <-- FUENTE OPTIMIZADA
+                styles: { fontSize: FONT_SIZES.h2, fontStyle: 'bold', halign: 'center', font: 'helvetica', textColor: 0 }, // <-- AÑADIDO
                 margin: { left: MARGIN, right: MARGIN }
             });
 
@@ -72,7 +73,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 ]],
                 startY: pdf.lastAutoTable.finalY + 1,
                 theme: 'grid',
-                styles: { fontSize: FONT_SIZES.body, fontStyle: 'normal', lineColor: 0, lineWidth: 0.1, font: 'helvetica' }, // <-- FUENTE OPTIMIZADA
+                styles: { fontSize: FONT_SIZES.body, fontStyle: 'normal', lineColor: 0, lineWidth: 0.1, font: 'helvetica', textColor: 0 }, // <-- AÑADIDO
                 headStyles: { fillColor: [255, 192, 0] },
                 columnStyles: {
                     0: { cellWidth: 100 },
@@ -114,8 +115,10 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 startY: pdf.lastAutoTable.finalY, 
                 margin: { left: MARGIN, right: MARGIN }, 
                 theme: 'grid',
-                headStyles: { fillColor: [255, 192, 0], textColor: 0, fontStyle: 'bold', halign: 'center', fontSize: 7, lineColor: 0, lineWidth: 0.1, font: 'helvetica' }, // <-- FUENTE OPTIMIZADA
-                styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak', lineColor: 0, lineWidth: 0.1, font: 'helvetica' }, // <-- FUENTE OPTIMIZADA
+                headStyles: { fillColor: [255, 192, 0], textColor: 0, fontStyle: 'bold', halign: 'center', fontSize: 7, lineColor: 0, lineWidth: 0.1, font: 'helvetica' },
+                // --- INICIO DE LA CORRECCIÓN ---
+                styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak', lineColor: 0, lineWidth: 0.1, font: 'helvetica', textColor: 0 },
+                // --- FIN DE LA CORRECCIÓN ---
                 columnStyles: {
                     0: { cellWidth: 129 }, 1: { cellWidth: 7, halign: 'center' }, 2: { cellWidth: 7, halign: 'center' }, 3: { cellWidth: 7, halign: 'center' },
                     4: { cellWidth: 10, halign: 'center' }, 5: { cellWidth: 10, halign: 'center' }, 6: { cellWidth: 10, halign: 'center' },
@@ -140,7 +143,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 body: [[{ content: `Observaciones:\n${observacionesDelPunto}`, styles: { fontStyle: 'bold', valign: 'top' } }]],
                 startY: finalY,
                 theme: 'grid',
-                styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 20, font: 'helvetica' }, // <-- FUENTE OPTIMIZADA
+                styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 20, font: 'helvetica', textColor: 0 }, // <-- AÑADIDO
                 margin: { left: MARGIN, right: MARGIN }
             });
 
@@ -152,7 +155,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 ]],
                 startY: pdf.lastAutoTable.finalY,
                 theme: 'grid',
-                styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 15, valign: 'top', font: 'helvetica' }, // <-- FUENTE OPTIMIZADA
+                styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 15, valign: 'top', font: 'helvetica', textColor: 0 }, // <-- AÑADIDO
                 columnStyles: { 1: { halign: 'left' } },
                 margin: { left: MARGIN, right: MARGIN }
             });
@@ -161,7 +164,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 body: [['S: Satisfactorio, I: Insatisfactorio, N: No aplica; V: Verde, A: Ámbar, R: Rojo']],
                 startY: pdf.lastAutoTable.finalY,
                 theme: 'plain',
-                styles: { fontSize: 7, halign: 'left', font: 'helvetica' }, // <-- FUENTE OPTIMIZADA
+                styles: { fontSize: 7, halign: 'left', font: 'helvetica', textColor: 0 }, // <-- AÑADIDO
                 margin: { left: MARGIN, right: MARGIN }
             });
         }

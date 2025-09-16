@@ -10,20 +10,20 @@
       {{ stateText }}
     </div>
 
-    <!-- Sección Semáforos -->
-    <div class="flex-1 w-full flex flex-col justify-center items-center space-y-1 px-2 pb-1">
-      <div v-for="item in semaphoreItems" :key="item.label" class="relative w-full flex justify-between items-center">
-        
-        <!-- INICIO DE LA CORRECCIÓN: Fondo sólido para el semáforo -->
-        <div class="absolute inset-0 bg-white/70 backdrop-blur-[1px] rounded-sm"></div>
-        <!-- FIN DE LA CORRECCIÓN -->
-
-        <!-- Elementos del semáforo, ahora por encima del fondo -->
-        <div class="relative w-3 h-3 rounded-full" :style="{ backgroundColor: item.color }"></div>
-        <div class="relative font-semibold text-sm text-right text-gray-700">{{ item.count }}</div>
-
+    <!-- ===== INICIO DE LA CORRECCIÓN: Sección Semáforos compacta ===== -->
+    <div class="flex-1 w-full flex justify-center items-center space-x-2 px-1 pb-1">
+      <div 
+        v-for="item in semaphoreItems" 
+        :key="item.label" 
+        class="w-5 h-5 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-inner"
+        :style="{ backgroundColor: item.color }"
+        :title="`${item.count} incidencias de tipo ${item.label}`"
+      >
+        {{ item.count }}
       </div>
     </div>
+    <!-- ===== FIN DE LA CORRECCIÓN ===== -->
+
   </div>
 </template>
 

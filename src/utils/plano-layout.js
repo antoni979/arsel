@@ -21,13 +21,13 @@ export function calculatePlanoLayout(allPointsData, mapDimensions, badgeWidth) {
             (point.counts.verde > 0 || point.counts.ambar > 0 || point.counts.rojo > 0);
         if (!needsBadge) continue;
 
-        // --- CORRECCIÓN DE TAMAÑO ---
-        // Calculamos la altura dinámicamente basándonos en un ancho fijo
-        let badgeHeight = 35; // Altura base
+        // ===== INICIO DE LA CORRECCIÓN: Ajustamos la altura para el nuevo diseño compacto =====
+        let badgeHeight = 30; // Altura base más pequeña
         if (point.estado !== 'existente' || point.detalle_modificacion !== null) {
-            badgeHeight += 12; // Espacio extra para el texto de estado
+            badgeHeight += 10; // Espacio extra para el texto de estado
         }
         const badgeSize = { width: badgeWidth, height: badgeHeight };
+        // ===== FIN DE LA CORRECCIÓN =====
         
         const finalPosition = findNonOverlappingPosition(point, badgeSize, placedObstacles, mapDimensions);
         const badgeRect = { x: finalPosition.x - badgeSize.width / 2, y: finalPosition.y - badgeSize.height / 2, ...badgeSize };

@@ -56,9 +56,8 @@ const handleLogout = async () => {
 
     <!-- Contenido Principal -->
     <div class="flex-1 flex flex-col overflow-hidden">
-      <!-- ===== INICIO DE LA CORRECCIÓN: Se añade overflow-y-auto ===== -->
+      <!-- CORRECCIÓN: Se añade la clase overflow-y-auto al elemento <main> -->
       <main class="flex-1 overflow-y-auto">
-      <!-- ===== FIN DE LA CORRECCIÓN ===== -->
         <router-view />
       </main>
     </div>

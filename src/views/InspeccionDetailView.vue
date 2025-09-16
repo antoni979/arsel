@@ -165,7 +165,6 @@ const handleMapClick = (coords) => {
   if (isPlacementMode.value) { createNewPointAt(coords, newPointSalaId.value); }
 };
 
-// --- FUNCIÓN RESTAURADA: blobToBase64 ---
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -179,7 +178,6 @@ function blobToBase64(blob) {
   });
 }
 
-// --- FUNCIÓN RESTAURADA: finalizarInspeccion ---
 const finalizarInspeccion = async () => {
     if (!confirm('¿Estás seguro de que quieres finalizar esta inspección? Se generará y archivará el informe PDF, y la inspección quedará bloqueada.')) {
         return;
@@ -253,7 +251,8 @@ const finalizarInspeccion = async () => {
         </div>
       </header>
       
-      <div class="flex-1 flex overflow-hidden">
+      <!-- Se elimina 'overflow-hidden' del contenedor para permitir que el <main> de abajo controle el scroll -->
+      <div class="flex-1 flex min-h-0">
         
         <aside class="w-80 lg:w-96 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col">
           <div class="p-4 flex-shrink-0">
@@ -286,7 +285,10 @@ const finalizarInspeccion = async () => {
           </div>
         </aside>
         
-        <main class="flex-1 bg-slate-100 min-w-0">
+        <!-- ===== INICIO DE LA CORRECCIÓN ===== -->
+        <!-- Se añade overflow-auto a este <main> para que gestione su propio scroll -->
+        <main class="flex-1 bg-slate-100 min-w-0 overflow-auto">
+        <!-- ===== FIN DE LA CORRECCIÓN ===== -->
           <InteractiveMap 
             :image-url="version.url_imagen_plano" 
             :points="puntosParaMostrar.filter(p => p.estado !== 'suprimido')"
