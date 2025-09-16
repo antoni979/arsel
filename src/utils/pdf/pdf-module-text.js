@@ -169,7 +169,7 @@ export async function buildTextPages(pdf, reportData) {
     currentY += textLines.length * 5 + 15;
   }
 
-  await addSection('Alineaciones sin placa de características o con placa no válida (por aumento de módulos/niveles):', lineasConPlacaInvalida);
+  await addSection('Alineaciones sin placa de características o con placa no válida (por aumento de módulos):', lineasConPlacaInvalida);
   await addSection('Alineaciones con módulos DISMINUIDOS desde la inspección anterior:', lineasDisminuidas);
   await addSection('Alineaciones desmontadas desde la inspección anterior:', lineasSuprimidas);
   await addSection('Alineaciones nuevas montadas desde la inspección anterior:', lineasNuevas);

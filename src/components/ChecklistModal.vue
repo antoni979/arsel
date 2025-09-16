@@ -118,7 +118,7 @@ const handlePlacaStatusChange = async (status) => {
     if (incidenciasPlaca.length === 0) {
       await addIncidencia(2, {
           gravedad: 'verde',
-          observaciones: 'No dispone de placa de características.',
+          observaciones: 'Falta ficha de características.',
       });
     }
   }
