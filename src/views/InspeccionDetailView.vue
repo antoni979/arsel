@@ -1,5 +1,6 @@
 <!-- src/views/InspeccionDetailView.vue -->
 <script setup>
+// ... (la sección <script> no necesita cambios, puedes dejarla como está)
 import { ref, onMounted, computed, inject } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
@@ -227,34 +228,35 @@ const finalizarInspeccion = async () => {
     
     <div v-else-if="inspeccion && centro && version" class="flex-1 flex flex-col min-h-0">
       
-      <header class="flex-shrink-0 px-8 pt-8 pb-4 bg-slate-100/80 backdrop-blur-sm border-b border-slate-200 z-10">
+      <!-- ===== INICIO DE CAMBIOS: Cabecera adaptable ===== -->
+      <header class="flex-shrink-0 px-4 md:px-8 pt-6 pb-4 bg-slate-100/80 backdrop-blur-sm border-b border-slate-200 z-10">
         <div class="flex flex-col md:flex-row justify-between items-start gap-4">
-          <div>
-            <h1 class="text-3xl font-bold text-slate-800 mb-1">Inspección: {{ centro.nombre }}</h1>
+          <div class="flex-1">
+            <h1 class="text-2xl md:text-3xl font-bold text-slate-800 mb-1">Inspección: {{ centro.nombre }}</h1>
             <p class="text-slate-500 text-sm">
               Técnico: <span class="font-medium">{{ inspeccion.tecnico_nombre }}</span> | 
               Fecha: <span class="font-medium">{{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString() }}</span> |
               Plano: <strong class="text-blue-600">{{ version.nombre }}</strong>
             </p>
-            <div v-if="!canEditInspection" class="mt-2 flex items-center gap-2 text-sm font-semibold text-orange-700 bg-orange-100 border border-orange-200 rounded-md p-2">
-                <InformationCircleIcon class="h-5 w-5" />
+            <div v-if="!canEditInspection" class="mt-2 flex items-center gap-2 text-sm font-semibold text-orange-700 bg-orange-100 border border-orange-200 rounded-md p-2 max-w-md">
+                <InformationCircleIcon class="h-5 w-5 flex-shrink-0" />
                 <span>Esta inspección está bloqueada (modo solo lectura).</span>
             </div>
           </div>
-          <button v-if="canEditInspection" @click="finalizarInspeccion" :disabled="isFinalizing" class="flex items-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm disabled:bg-slate-400">
+          <button v-if="canEditInspection" @click="finalizarInspeccion" :disabled="isFinalizing" class="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm disabled:bg-slate-400">
             <CheckCircleIcon class="h-5 w-5" />
             {{ isFinalizing ? 'Finalizando...' : 'Finalizar Inspección' }}
           </button>
-          <button v-else @click="router.push(`/centros/${centro.id}/historial`)" class="flex items-center gap-2 px-4 py-2 font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
+          <button v-else @click="router.push(`/centros/${centro.id}/historial`)" class="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
             Volver al Historial
           </button>
         </div>
       </header>
       
-      <!-- Se elimina 'overflow-hidden' del contenedor para permitir que el <main> de abajo controle el scroll -->
-      <div class="flex-1 flex min-h-0">
+      <!-- ===== INICIO DE CAMBIOS: Layout principal adaptable (flex-col para móvil) ===== -->
+      <div class="flex-1 flex flex-col lg:flex-row overflow-hidden">
         
-        <aside class="w-80 lg:w-96 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col">
+        <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col h-1/2 lg:h-full">
           <div class="p-4 flex-shrink-0">
              <div v-if="canEditInspection">
                 <AddPointForm 
@@ -285,10 +287,7 @@ const finalizarInspeccion = async () => {
           </div>
         </aside>
         
-        <!-- ===== INICIO DE LA CORRECCIÓN ===== -->
-        <!-- Se añade overflow-auto a este <main> para que gestione su propio scroll -->
-        <main class="flex-1 bg-slate-100 min-w-0 overflow-auto">
-        <!-- ===== FIN DE LA CORRECCIÓN ===== -->
+        <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full overflow-auto">
           <InteractiveMap 
             :image-url="version.url_imagen_plano" 
             :points="puntosParaMostrar.filter(p => p.estado !== 'suprimido')"
@@ -301,6 +300,7 @@ const finalizarInspeccion = async () => {
           />
         </main>
       </div>
+       <!-- ===== FIN DE CAMBIOS ===== -->
     </div>
     
     <div v-else class="flex-1 flex items-center justify-center text-red-500">No se encontraron datos válidos para esta inspección.</div>
