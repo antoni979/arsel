@@ -1,6 +1,6 @@
 <!-- src/views/InspeccionDetailView.vue -->
 <script setup>
-// ... (la sección <script> no necesita cambios, puedes dejarla como está)
+// ... (el resto de las importaciones y setup inicial no cambian)
 import { ref, onMounted, computed, inject } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
@@ -35,6 +35,7 @@ const canEditInspection = computed(() => {
 });
 
 onMounted(async () => {
+  // ... (esta función no cambia)
   loading.value = true;
   const { data: inspectionData, error: inspectionError } = await supabase.from('inspecciones').select('*, centros(*), versiones_plano(*)').eq('id', inspeccionId).single();
   if (inspectionError || !inspectionData || !inspectionData.versiones_plano) {
@@ -57,6 +58,7 @@ onMounted(async () => {
 });
 
 const initializeInspectionPoints = async () => {
+  // ... (esta función no cambia)
   const { data: existingPoints } = await supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId);
   puntosInspeccionados.value = existingPoints || [];
   if (canEditInspection.value && puntosInspeccionados.value.length === 0 && puntosMaestros.value.length > 0) {
@@ -91,6 +93,7 @@ const puntosAgrupadosPorSala = computed(() => {
 });
 
 const createNewPointAt = async (coords, salaId) => {
+  // ... (esta función no cambia)
   const salaSeleccionada = salas.value.find(s => s.id === salaId);
   const puntosDeLaSala = puntosMaestros.value.filter(p => p.sala_id === salaId);
   const ultimoNumero = Math.max(0, ...puntosDeLaSala.map(p => parseInt(p.nomenclatura.split('-').pop() || 0)));
@@ -130,10 +133,35 @@ const createNewPointAt = async (coords, salaId) => {
   }
 };
 
+// ===== INICIO DE LA CORRECCIÓN: Función `updatePuntoEstado` mejorada =====
 const updatePuntoEstado = async (punto, nuevoEstado) => {
-    if (!canEditInspection.value) return;
-    const { error } = await supabase.from('puntos_inspeccionados').update({ estado: nuevoEstado }).eq('id', punto.id);
-    if (error) { showNotification('No se pudo actualizar el estado del punto.', 'error'); }
+    console.log(`[InspeccionDetailView.vue] Recibido @update-state. Actualizando punto ID ${punto.id} al estado: ${nuevoEstado}`);
+    
+    if (!canEditInspection.value) {
+        console.warn('[InspeccionDetailView.vue] Actualización bloqueada: la inspección está en modo solo lectura.');
+        return;
+    }
+
+    // 1. Actualizar la base de datos
+    const { error } = await supabase
+      .from('puntos_inspeccionados')
+      .update({ estado: nuevoEstado })
+      .eq('id', punto.id);
+
+    if (error) {
+        console.error('[InspeccionDetailView.vue] Error al actualizar en Supabase:', error);
+        showNotification('No se pudo actualizar el estado del punto.', 'error');
+    } else {
+        console.log('[InspeccionDetailView.vue] Actualización en Supabase exitosa. Actualizando estado local.');
+        // 2. Si no hay error, actualizar el estado local para que la UI reaccione
+        const pointInArray = puntosInspeccionados.value.find(p => p.id === punto.id);
+        if (pointInArray) {
+            pointInArray.estado = nuevoEstado;
+            showNotification(`Punto ${punto.nomenclatura} marcado como '${nuevoEstado}'.`, 'success', 2000);
+        } else {
+            console.error('[InspeccionDetailView.vue] ¡Error crítico! No se encontró el punto en el array local para actualizar la UI.');
+        }
+    }
 };
 
 const startPlacementMode = (salaId) => {
@@ -223,12 +251,12 @@ const finalizarInspeccion = async () => {
 </script>
 
 <template>
+  <!-- La sección <template> no necesita ningún cambio, solo la lógica del script -->
   <div class="h-full flex flex-col">
     <div v-if="loading" class="flex-1 flex items-center justify-center text-slate-500">Cargando datos de la inspección...</div>
     
     <div v-else-if="inspeccion && centro && version" class="flex-1 flex flex-col min-h-0">
       
-      <!-- ===== INICIO DE CAMBIOS: Cabecera adaptable ===== -->
       <header class="flex-shrink-0 px-4 md:px-8 pt-6 pb-4 bg-slate-100/80 backdrop-blur-sm border-b border-slate-200 z-10">
         <div class="flex flex-col md:flex-row justify-between items-start gap-4">
           <div class="flex-1">
@@ -253,7 +281,6 @@ const finalizarInspeccion = async () => {
         </div>
       </header>
       
-      <!-- ===== INICIO DE CAMBIOS: Layout principal adaptable (flex-col para móvil) ===== -->
       <div class="flex-1 flex flex-col lg:flex-row overflow-hidden">
         
         <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col h-1/2 lg:h-full">
@@ -300,7 +327,6 @@ const finalizarInspeccion = async () => {
           />
         </main>
       </div>
-       <!-- ===== FIN DE CAMBIOS ===== -->
     </div>
     
     <div v-else class="flex-1 flex items-center justify-center text-red-500">No se encontraron datos válidos para esta inspección.</div>

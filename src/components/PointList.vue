@@ -10,25 +10,31 @@ defineProps({
   }
 });
 
-defineEmits(['select-point', 'update-state', 'delete-new-point']);
+// ===== INICIO DE LA CORRECCIÓN: Hacemos explícito el 'emit' para añadir el log =====
+const emit = defineEmits(['select-point', 'update-state', 'delete-new-point']);
 
 const openSalaId = ref(null);
 
 const toggleSala = (salaId) => {
   openSalaId.value = openSalaId.value === salaId ? null : salaId;
 };
+
+// Función para registrar el evento antes de emitirlo
+function handleUpdateState(punto, newState) {
+  console.log(`[PointList.vue] Clic detectado. Emitiendo @update-state para el punto ID ${punto.id} con el nuevo estado: ${newState}`);
+  emit('update-state', punto, newState);
+}
+// ===== FIN DE LA CORRECCIÓN =====
 </script>
 
 <template>
   <div class="space-y-2">
     <div v-for="grupo in groupedPoints" :key="grupo.id">
-      <!-- Encabezado de la Sala (clickeable) -->
       <button @click="toggleSala(grupo.id)" class="w-full flex justify-between items-center p-3 rounded-lg text-left" :class="openSalaId === grupo.id ? 'bg-blue-50' : 'hover:bg-slate-50'">
         <h3 class="font-bold text-slate-700">{{ grupo.nombre }}</h3>
         <ChevronDownIcon class="h-5 w-5 text-slate-400 transition-transform" :class="{'rotate-180': openSalaId === grupo.id}" />
       </button>
 
-      <!-- Lista de Puntos (se muestra si la sala está abierta) -->
       <ul v-if="openSalaId === grupo.id" class="space-y-1 pl-4 border-l-2 ml-3">
         <li v-for="punto in grupo.puntos" :key="punto.id">
           <div :class="['p-2 rounded-lg flex items-center justify-between group', { 'bg-slate-100': punto.estado === 'suprimido' }]">
@@ -48,12 +54,14 @@ const toggleSala = (salaId) => {
                 <TrashIcon class="h-5 w-5" />
               </button>
               
-              <button v-if="punto.estado !== 'suprimido'" @click="$emit('update-state', punto, 'suprimido')" class="p-1 text-slate-400 hover:text-red-500" title="Marcar como suprimido">
+              <!-- ===== INICIO DE LA CORRECCIÓN: Llamamos a nuestra nueva función con log ===== -->
+              <button v-if="punto.estado !== 'suprimido'" @click="handleUpdateState(punto, 'suprimido')" class="p-1 text-slate-400 hover:text-red-500" title="Marcar como suprimido">
                 <EyeSlashIcon class="h-5 w-5" />
               </button>
-              <button v-else @click="$emit('update-state', punto, 'existente')" class="p-1 text-slate-500 hover:text-blue-500" title="Reactivar punto">
+              <button v-else @click="handleUpdateState(punto, 'existente')" class="p-1 text-slate-500 hover:text-blue-500" title="Reactivar punto">
                 <ArrowUturnLeftIcon class="h-5 w-5" />
               </button>
+              <!-- ===== FIN DE LA CORRECCIÓN ===== -->
             </div>
           </div>
         </li>

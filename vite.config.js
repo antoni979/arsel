@@ -6,9 +6,6 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   plugins: [vue()],
   server: {
-    host: true, // <-- AÑADE ESTA LÍNEA
-    hmr: {
-      clientPort: 443,
-    }
+    host: true,
   }
 })
