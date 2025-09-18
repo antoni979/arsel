@@ -24,7 +24,6 @@ const isDrawingMode = ref(false);
 const isPointEditingMode = ref(false);
 const activeSala = computed(() => salas.value.find(s => s.id === activeSalaId.value));
 
-// --- Lógica para el nuevo modal de nomenclatura ---
 const isNomenclatureModalOpen = ref(false);
 const newPointCoords = ref(null);
 
@@ -43,12 +42,11 @@ const suggestedNextNumber = computed(() => {
     const sortedNumbers = [...existingNumbersInActiveSala.value].sort((a, b) => a - b);
     for (let i = 0; i < sortedNumbers.length; i++) {
         if (sortedNumbers[i] !== i + 1) {
-            return i + 1; // Encontramos un hueco
+            return i + 1;
         }
     }
-    return sortedNumbers.length + 1; // No hay huecos, usamos el siguiente
+    return sortedNumbers.length + 1;
 });
-// --- Fin de la lógica del modal ---
 
 const instructionText = computed(() => {
     if (isDrawingMode.value) {
@@ -97,13 +95,27 @@ const cancelAllModes = () => {
     isPointEditingMode.value = false;
 };
 
-const onFileSelected = (event) => {
+const onFileSelected = async (event) => {
     const file = event.target.files[0];
-    if (file) handleFileUpload(file);
+    if (!file) return;
+
+    const fileName = `planos/centro_${centro.value.id}/version_${versionId}/${Date.now()}_${file.name}`;
+    
+    const { error: uploadError } = await supabase.storage.from('planos-clientes').upload(fileName, file, { upsert: true });
+    if (uploadError) {
+      alert("Error al subir el plano: " + uploadError.message);
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from('planos-clientes').getPublicUrl(fileName);
+    const { error: updateError } = await supabase.from('versiones_plano').update({ url_imagen_plano: publicUrl }).eq('id', versionId);
+    if(updateError) {
+        alert("Error al guardar la URL del plano: " + updateError.message);
+    } else {
+        version.value.url_imagen_plano = publicUrl;
+        alert("Plano actualizado correctamente.");
+    }
 };
-const handleFileUpload = async (file) => {
-    // Lógica sin cambios
-};
+
 
 const enterDrawingMode = () => {
   if (!activeSalaId.value) { alert("Selecciona una sala para poder definir su área."); return; }
@@ -112,14 +124,29 @@ const enterDrawingMode = () => {
 };
 
 const handleAreaDrawn = async (points) => {
-  // Lógica sin cambios
+    if (!activeSalaId.value) return;
+    const { error } = await supabase.from('salas').update({ area_puntos: points }).eq('id', activeSalaId.value);
+    if (error) {
+        alert('Error al guardar el área: ' + error.message);
+    } else {
+        const sala = salas.value.find(s => s.id === activeSalaId.value);
+        if (sala) sala.area_puntos = points;
+        isDrawingMode.value = false;
+    }
 };
 
 const clearArea = async () => {
-    // Lógica sin cambios
+    if (!activeSalaId.value) return;
+    const { error } = await supabase.from('salas').update({ area_puntos: null }).eq('id', activeSalaId.value);
+    if (error) {
+        alert('Error al limpiar el área: ' + error.message);
+    } else {
+        const sala = salas.value.find(s => s.id === activeSalaId.value);
+        if (sala) sala.area_puntos = null;
+    }
 };
 
-// --- Nueva función para abrir el modal ---
+
 const handleMapClick = (coords) => {
   if (isPointEditingMode.value) {
     newPointCoords.value = coords;
@@ -127,7 +154,6 @@ const handleMapClick = (coords) => {
   }
 };
 
-// --- La antigua 'handleNewPoint' ahora es 'handleSaveNomenclature' ---
 const handleSaveNomenclature = async (pointNumber) => {
   isNomenclatureModalOpen.value = false;
   const coords = newPointCoords.value;
@@ -163,19 +189,89 @@ const handleDeletePoint = async (point) => {
     }
 };
 
+// ===== INICIO DE LA CORRECCIÓN: Lógica para `addSala` =====
 const addSala = async () => {
-  // Lógica sin cambios
+  const name = newSalaName.value.trim();
+  if (!name) {
+    alert('El nombre de la sala no puede estar vacío.');
+    return;
+  }
+  
+  const nameExists = salas.value.some(s => s.nombre.toLowerCase() === name.toLowerCase());
+  if (nameExists) {
+    alert(`La sala "${name}" ya existe en esta versión del plano.`);
+    return;
+  }
+
+  const { data: newSala, error } = await supabase
+    .from('salas')
+    .insert({
+      version_id: versionId,
+      nombre: name,
+      color: '#CCCCCC' // Un color gris por defecto
+    })
+    .select()
+    .single();
+
+  if (error) {
+    alert('Error al crear la nueva sala: ' + error.message);
+  } else {
+    salas.value.push(newSala);
+    salas.value.sort((a, b) => a.nombre.localeCompare(b.nombre)); // Mantener el orden alfabético
+    newSalaName.value = ''; // Limpiar el input
+  }
 };
+// ===== FIN DE LA CORRECCIÓN =====
+
+// ===== INICIO DE LA CORRECCIÓN: Lógica para `deleteSala` =====
 const deleteSala = async (salaId) => {
-  // Lógica sin cambios
+  const sala = salas.value.find(s => s.id === salaId);
+  if (!sala) return;
+  
+  const puntosEnSala = puntos.value.filter(p => p.sala_id === salaId).length;
+  if (puntosEnSala > 0) {
+    alert(`No se puede borrar la sala "${sala.nombre}" porque contiene ${puntosEnSala} puntos. Bórralos primero.`);
+    return;
+  }
+
+  if (confirm(`¿Estás seguro de que quieres borrar la sala "${sala.nombre}"? Esta acción no se puede deshacer.`)) {
+    const { error } = await supabase.from('salas').delete().eq('id', salaId);
+
+    if (error) {
+      alert('Error al borrar la sala: ' + error.message);
+    } else {
+      salas.value = salas.value.filter(s => s.id !== salaId);
+      if (activeSalaId.value === salaId) {
+        activeSalaId.value = salas.value.length > 0 ? salas.value[0].id : null;
+      }
+    }
+  }
 };
+// ===== FIN DE LA CORRECCIÓN =====
+
+// ===== INICIO DE LA CORRECCIÓN: Lógica para `handleUpdatePosition` =====
 const handleUpdatePosition = async (point) => {
-  // Lógica sin cambios
+  const { error } = await supabase
+    .from('puntos_maestros')
+    .update({ 
+        coordenada_x: point.coordenada_x, 
+        coordenada_y: point.coordenada_y 
+    })
+    .eq('id', point.id);
+
+  if (error) {
+    alert('Error al actualizar la posición del punto: ' + error.message);
+    // Opcional: recargar los datos para revertir el cambio visual
+    // fetchData(); 
+  }
 };
+// ===== FIN DE LA CORRECCIÓN =====
+
 const saveSalaColor = async (sala) => {
-  // Lógica sin cambios
+  await supabase.from('salas').update({ color: sala.color }).eq('id', sala.id);
 };
 </script>
+
 
 <template>
   <div class="p-4 sm:p-8 h-full flex flex-col">
@@ -276,7 +372,7 @@ const saveSalaColor = async (sala) => {
           <p class="text-slate-600 mt-4 text-lg">La versión <strong class="text-blue-600">{{ version.nombre }}</strong> no tiene un plano asignado.</p>
         </div>
         <div class="mt-8 max-w-lg w-full mx-auto bg-white p-8 rounded-lg shadow-md border">
-          <button @click="fileInput.click()" class="w-full ...">
+          <button @click="fileInput.click()" class="w-full flex flex-col items-center justify-center gap-4 p-6 border-2 border-dashed border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">
             <ArrowUpTrayIcon class="h-10 w-10 text-slate-400" />
             <span class="text-slate-500 font-medium">Haz clic aquí para seleccionar un archivo</span>
           </button>
