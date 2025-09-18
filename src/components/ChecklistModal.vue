@@ -20,7 +20,7 @@ const incidencias = ref([]);
 const loading = ref(false);
 const isUploading = ref(null);
 const puntoInspeccionado = ref(null);
-const collapsedItems = ref(new Set());
+const openItemId = ref(null);
 
 const gravedadOptions = [
   { label: 'Leve', value: 'verde' },
@@ -51,7 +51,7 @@ const detalleModificacion = computed({
 const loadData = async () => {
   if (!props.punto || !props.inspeccionId) return;
   loading.value = true;
-  collapsedItems.value.clear(); 
+  openItemId.value = null; 
   
   const { data: puntoRelacionado, error: findError } = await supabase
     .from('puntos_inspeccionados')
@@ -110,6 +110,23 @@ const handlePlacaStatusChange = async (status) => {
     .from('puntos_inspeccionados')
     .update({ tiene_placa_caracteristicas: status })
     .eq('id', puntoInspeccionado.value.id);
+
+  const incidenciasPlaca = getIncidenciasForItem(2).value;
+
+  if (status === true) {
+    if (incidenciasPlaca.length > 0) {
+      const idsToDelete = incidenciasPlaca.map(inc => inc.id);
+      await supabase.from('incidencias').delete().in('id', idsToDelete);
+      incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
+    }
+  } else {
+    if (incidenciasPlaca.length === 0) {
+      await addIncidencia(2, {
+          gravedad: 'verde',
+          observaciones: 'FALTA PLACA. Se debe solicitar e instalar una nueva placa con las características validadas.',
+      });
+    }
+  }
 };
 
 const handleModificationChange = async (newStatus) => {
@@ -185,23 +202,23 @@ const toggleItemStatus = async (itemId) => {
             const { error } = await supabase.from('incidencias').delete().in('id', idsToDelete);
             if (!error) {
                 incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
+                if(openItemId.value === itemId) {
+                    openItemId.value = null;
+                }
             }
         }
     } else {
         await addIncidencia(itemId);
+        openItemId.value = itemId;
     }
 };
 
-const isCollapsed = (itemId) => {
-  return collapsedItems.value.has(itemId);
+const isItemOpen = (itemId) => {
+  return openItemId.value === itemId;
 };
 
 const toggleCollapse = (itemId) => {
-  if (isCollapsed(itemId)) {
-    collapsedItems.value.delete(itemId);
-  } else {
-    collapsedItems.value.add(itemId);
-  }
+  openItemId.value = isItemOpen(itemId) ? null : itemId;
 };
 
 const handleFileChange = async (event, incidencia) => {
@@ -245,6 +262,15 @@ const handleClose = () => {
       <main class="flex-1 overflow-y-auto p-6 space-y-3">
         <div v-if="loading" class="text-center p-10">Cargando datos del punto...</div>
         <div v-else>
+          <div class="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-6">
+            <h3 class="font-bold text-blue-800 mb-3">¿Dispone de placa de características?</h3>
+            <div class="flex flex-col sm:flex-row gap-4">
+              <button @click="tienePlaca = true" :class="['w-full flex items-center justify-center gap-2 py-2 px-4 rounded-md font-semibold transition-all', tienePlaca === true ? 'bg-green-600 text-white shadow-md ring-2 ring-offset-2 ring-green-500' : 'bg-white border text-slate-700 hover:bg-slate-100']"><CheckCircleIcon class="h-5 w-5" />Sí, dispone de placa</button>
+              <button @click="tienePlaca = false" :class="['w-full flex items-center justify-center gap-2 py-2 px-4 rounded-md font-semibold transition-all', tienePlaca === false ? 'bg-red-600 text-white shadow-md ring-2 ring-offset-2 ring-red-500' : 'bg-white border text-slate-700 hover:bg-slate-100']"><XCircleIcon class="h-5 w-5" />No, no dispone de placa</button>
+            </div>
+            <p v-if="tienePlaca !== null" class="text-xs text-slate-500 mt-3 text-center">El estado del punto "2. Tiene las placas de identificación..." se ha actualizado automáticamente.</p>
+          </div>
+
           <div class="bg-orange-50 border-2 border-orange-200 rounded-lg p-4 mb-6">
             <h3 class="font-bold text-orange-800 mb-3">¿Ha habido alguna modificación en los módulos/niveles?</h3>
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -276,10 +302,10 @@ const handleClose = () => {
                 <span class="text-sm font-semibold text-slate-600">
                   {{ getIncidenciasForItem(item.id).value.length }} Incidencia(s)
                 </span>
-                <component :is="isCollapsed(item.id) ? ChevronDownIcon : ChevronUpIcon" class="h-5 w-5 text-slate-500" />
+                <component :is="isItemOpen(item.id) ? ChevronUpIcon : ChevronDownIcon" class="h-5 w-5 text-slate-500" />
               </div>
 
-              <div v-show="!isCollapsed(item.id)" class="bg-slate-50 p-4 space-y-4">
+              <div v-show="isItemOpen(item.id)" class="bg-slate-50 p-4 space-y-4">
                 <div v-if="item.id === 3" class="text-center text-sm text-slate-600 bg-slate-200 p-2 rounded-md">
                   Este parámetro se gestiona automáticamente desde las preguntas superiores.
                 </div>
@@ -321,7 +347,6 @@ const handleClose = () => {
                   <button @click="addIncidencia(item.id)" class="w-full flex items-center justify-center gap-2 py-2 text-sm font-semibold text-blue-700 bg-blue-50 rounded-md hover:bg-blue-100 border border-dashed border-blue-300"><PlusCircleIcon class="h-5 w-5"/>Añadir otra incidencia</button>
                 </div>
               </div>
-
             </div>
           </div>
         </div>
