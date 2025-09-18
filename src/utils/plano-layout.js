@@ -21,11 +21,8 @@ export function calculatePlanoLayout(allPointsData, mapDimensions, badgeWidth) {
             (point.counts.verde > 0 || point.counts.ambar > 0 || point.counts.rojo > 0);
         if (!needsBadge) continue;
 
-        // ===== INICIO DE LA CORRECCIÓN: Ajustamos la altura para el nuevo diseño compacto =====
-        let badgeHeight = 30; // Altura base más pequeña
-        if (point.estado !== 'existente' || point.detalle_modificacion !== null) {
-            badgeHeight += 10; // Espacio extra para el texto de estado
-        }
+        // ===== INICIO DE LA CORRECCIÓN: Altura fija y más compacta =====
+        const badgeHeight = 45; // Una altura fija que funciona para todos los casos
         const badgeSize = { width: badgeWidth, height: badgeHeight };
         // ===== FIN DE LA CORRECCIÓN =====
         
@@ -45,7 +42,7 @@ export function calculatePlanoLayout(allPointsData, mapDimensions, badgeWidth) {
 
 function findNonOverlappingPosition(point, badgeSize, obstacles, pageBounds) {
     const isOverlapping = (rect1, rect2) => {
-        const margin = 5; // Más margen para que no se peguen
+        const margin = 5; 
         return !(rect1.x > rect2.x + rect2.width + margin ||
             rect1.x + rect1.width + margin < rect2.x ||
             rect1.y > rect2.y + rect2.height + margin ||
@@ -87,7 +84,7 @@ function findNonOverlappingPosition(point, badgeSize, obstacles, pageBounds) {
         }
         [dx, dy] = [-dy, dx];
         turnCounter++;
-        if (turnCounter % 2 === 0) stepsInSegment += 0.5; // Espiral más densa
+        if (turnCounter % 2 === 0) stepsInSegment += 0.5;
     }
     return { x: point.absX, y: point.absY - (badgeSize.height / 2 + 10) };
 }

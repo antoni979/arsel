@@ -3,26 +3,29 @@
   <div
     class="w-full h-full p-1 flex flex-col items-center bg-white rounded-lg shadow-lg border border-gray-300 cursor-move font-sans"
   >
-    <div class="font-bold text-center text-xs text-gray-800">Punto {{ pointNumber }}</div>
+    <!-- MODIFICADO: Ajuste de padding y leading para mejor integración -->
+    <div class="text-center pt-0.5">
+      <div class="font-bold text-xs text-gray-800 leading-tight">Punto {{ pointNumber }}</div>
+      <div v-if="stateText" class="font-bold text-[9px] leading-tight text-blue-600 uppercase">
+        {{ stateText }}
+      </div>
+    </div>
+    
     <hr class="w-11/12 my-1 border-t border-gray-200">
     
-    <div v-if="stateText" class="font-bold text-center text-[10px] text-gray-600 mb-1">
-      {{ stateText }}
-    </div>
-
-    <!-- ===== INICIO DE LA CORRECCIÓN: Sección Semáforos compacta ===== -->
-    <div class="flex-1 w-full flex justify-center items-center space-x-2 px-1 pb-1">
+    <div class="flex-1 w-full flex justify-center items-center space-x-1.5 px-1 pb-1">
       <div 
         v-for="item in semaphoreItems" 
         :key="item.label" 
-        class="w-5 h-5 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-inner"
+     
+        class="w-5 h-5 flex-shrink-0 rounded-full flex items-center justify-center text-white font-bold text-[10px] shadow-inner"
+    
         :style="{ backgroundColor: item.color }"
         :title="`${item.count} incidencias de tipo ${item.label}`"
       >
         {{ item.count }}
       </div>
     </div>
-    <!-- ===== FIN DE LA CORRECCIÓN ===== -->
 
   </div>
 </template>
