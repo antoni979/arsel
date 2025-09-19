@@ -4,8 +4,7 @@ import { ref, onMounted, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { fetchReportData } from '../utils/pdf/pdf-data';
 import { calculatePlanoLayout } from '../utils/plano-layout';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
+import { generatePlanPdf } from '../utils/pdf';
 import PlanoBadge from '../components/PlanoBadge.vue';
 import { ArrowDownTrayIcon, ArrowUturnLeftIcon } from '@heroicons/vue/24/solid';
 
@@ -25,15 +24,14 @@ const isGenerating = ref(false);
 const draggedLabel = ref(null);
 const dragOffset = ref({ x: 0, y: 0 });
 
-const BADGE_WIDTH_PX = 60; 
+// ===== CORRECCIÓN: Usamos el mismo valor base que usaremos en el PDF =====
+const BADGE_WIDTH_PX = 55; 
 
 onMounted(async () => {
-  // --- INICIO DE LA CORRECCIÓN: Solicitamos la imagen del plano SIN optimizar ---
   reportData.value = await fetchReportData(inspeccionId, { optimizePlan: false });
-  // --- FIN DE LA CORRECCIÓN ---
 
-  if (!reportData.value) {
-    errorState.value = "No se pudieron cargar los datos de la inspección.";
+  if (!reportData.value || !reportData.value.planoBase64) {
+    errorState.value = "No se pudieron cargar los datos o el plano de la inspección.";
     loading.value = false;
     return;
   }
@@ -54,6 +52,7 @@ const prepareLayout = () => {
     const containerRatio = containerEl.clientWidth / containerEl.clientHeight;
     const imageRatio = img.width / img.height;
     let imgW, imgH, imgX, imgY;
+
     if (imageRatio > containerRatio) {
       imgW = containerEl.clientWidth;
       imgH = imgW / imageRatio;
@@ -79,44 +78,28 @@ const prepareLayout = () => {
       };
     }).filter(Boolean);
     
-    const calculatedLabels = calculatePlanoLayout(allPoints, mapDimensions.value, BADGE_WIDTH_PX);
-    
-    const showLabelsIncrementally = (index = 0) => {
-      if (index < calculatedLabels.length) {
-        labels.value.push(calculatedLabels[index]);
-        requestAnimationFrame(() => showLabelsIncrementally(index + 1));
-      } else {
-        layoutReady.value = true;
-      }
-    };
-    showLabelsIncrementally();
+    labels.value = calculatePlanoLayout(allPoints, mapDimensions.value, BADGE_WIDTH_PX);
+    layoutReady.value = true;
   };
   
   img.onerror = () => { errorState.value = "No se pudo cargar la imagen del plano."; }
   img.src = reportData.value.planoBase64;
 };
 
-const generatePdf = async () => {
+const handleGeneratePdf = async () => {
     isGenerating.value = true;
-    await nextTick();
-    const elementToCapture = planoContainer.value;
-    
-    const canvas = await html2canvas(elementToCapture, { 
-        scale: 3,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff'
-    });
-
-    const imgData = canvas.toDataURL('image/jpeg', 0.95);
-    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = pdf.internal.pageSize.getHeight();
-    pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
-    const { inspectionData } = reportData.value;
-    const fileName = `Plano_Incidencias_${inspectionData.centros.nombre.replace(/ /g, '_')}_${inspectionData.fecha_inspeccion}.pdf`;
-    pdf.save(fileName);
-    isGenerating.value = false;
+    try {
+        const previewDimensions = {
+            width: planoContainer.value.clientWidth,
+            height: planoContainer.value.clientHeight
+        };
+        await generatePlanPdf(inspeccionId, labels.value, previewDimensions);
+    } catch (error) {
+        console.error("Error al generar el PDF del plano:", error);
+        alert("Hubo un error al generar el plano. Revisa la consola.");
+    } finally {
+        isGenerating.value = false;
+    }
 };
 
 const onMouseDown = (label, event) => {
@@ -154,10 +137,10 @@ const onMouseUp = () => {
         <p v-if="reportData" class="text-sm text-slate-500">{{ reportData.inspectionData.centros.nombre }}</p>
       </div>
       <div class="flex items-center gap-4">
-        <button @click="$router.go(-1)" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-white border border-slate-300 rounded-md hover:bg-slate-50">
+        <button @click="router.go(-1)" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-white border border-slate-300 rounded-md hover:bg-slate-50">
           <ArrowUturnLeftIcon class="h-4 w-4" /> Volver
         </button>
-        <button @click="generatePdf" :disabled="isGenerating || !layoutReady" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-slate-400">
+        <button @click="handleGeneratePdf" :disabled="isGenerating || !layoutReady" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-slate-400">
           <ArrowDownTrayIcon class="h-4 w-4" />
           {{ isGenerating ? 'Generando...' : 'Generar PDF' }}
         </button>

@@ -3,8 +3,8 @@
   <div
     class="w-full h-full p-1 flex flex-col items-center bg-white rounded-lg shadow-lg border border-gray-300 cursor-move font-sans"
   >
-    <!-- MODIFICADO: Ajuste de padding y leading para mejor integración -->
-    <div class="text-center pt-0.5">
+    <!-- Cabecera con Punto y Estado -->
+    <div class="text-center">
       <div class="font-bold text-xs text-gray-800 leading-tight">Punto {{ pointNumber }}</div>
       <div v-if="stateText" class="font-bold text-[9px] leading-tight text-blue-600 uppercase">
         {{ stateText }}
@@ -13,20 +13,25 @@
     
     <hr class="w-11/12 my-1 border-t border-gray-200">
     
-    <div class="flex-1 w-full flex justify-center items-center space-x-1.5 px-1 pb-1">
-      <div 
-        v-for="item in semaphoreItems" 
-        :key="item.label" 
-     
-        class="w-5 h-5 flex-shrink-0 rounded-full flex items-center justify-center text-white font-bold text-[10px] shadow-inner"
-    
-        :style="{ backgroundColor: item.color }"
-        :title="`${item.count} incidencias de tipo ${item.label}`"
-      >
-        {{ item.count }}
+    <!-- Contenedor del semáforo -->
+    <div class="flex-1 w-full flex justify-center items-center">
+      <!-- Fila de círculos con espaciado explícito -->
+      <div class="flex items-center">
+        <!-- ===== INICIO DE LA SOLUCIÓN FINAL ===== -->
+        <div 
+          v-for="(item, index) in semaphoreItems" 
+          :key="item.label"
+          :class="['w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center', { 'mx-1': index === 1 }]"
+          :style="{ backgroundColor: item.color }"
+          :title="`${item.count} incidencias de tipo ${item.label}`"
+        >
+          <span class="text-white font-bold text-[10px] leading-none">
+            {{ item.count }}
+          </span>
+        </div>
+        <!-- ===== FIN DE LA SOLUCIÓN FINAL ===== -->
       </div>
     </div>
-
   </div>
 </template>
 

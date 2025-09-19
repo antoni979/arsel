@@ -21,8 +21,8 @@ export function calculatePlanoLayout(allPointsData, mapDimensions, badgeWidth) {
             (point.counts.verde > 0 || point.counts.ambar > 0 || point.counts.rojo > 0);
         if (!needsBadge) continue;
 
-        // ===== INICIO DE LA CORRECCIÓN: Altura fija y más compacta =====
-        const badgeHeight = 45; // Una altura fija que funciona para todos los casos
+        // ===== INICIO DE LA CORRECCIÓN: Usamos un tamaño base consistente =====
+        let badgeHeight = 45; // Altura fija en píxeles
         const badgeSize = { width: badgeWidth, height: badgeHeight };
         // ===== FIN DE LA CORRECCIÓN =====
         
