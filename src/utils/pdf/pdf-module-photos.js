@@ -96,8 +96,8 @@ export async function buildInitialPhotoAnnex(pdf, reportData) {
 export async function buildRemediationPhotoAnnex(pdf, reportData) {
   const { inspectionData, incidenciasData, puntosMaestrosData, puntosInspeccionadosData } = reportData;
   
-  const incidenciasSubsanadas = incidenciasData.filter(inc => inc.url_foto_antes && inc.url_foto_despues);
-  if (incidenciasSubsanadas.length === 0) return;
+  const incidenciasCorregidas = incidenciasData.filter(inc => inc.url_foto_antes && inc.url_foto_despues);
+  if (incidenciasCorregidas.length === 0) return;
 
   pdf.addPage();
   await drawHeader(pdf, inspectionData);
@@ -105,23 +105,22 @@ export async function buildRemediationPhotoAnnex(pdf, reportData) {
   pdf.setFontSize(FONT_SIZES.annexTitle);
   pdf.setFont('helvetica', 'bold');
   pdf.text('ANEXO 01:', DOC_WIDTH / 2, 145, { align: 'center' });
-  const remediationTitleLines = pdf.splitTextToSize('REPORTAJE FOTOGRÁFICO DE SUBSANACIÓN', 180);
+  const remediationTitleLines = pdf.splitTextToSize('INFORME FOTOGRÁFICO DE CIERRE', 180);
   pdf.text(remediationTitleLines, DOC_WIDTH / 2, 155, { align: 'center' });
   pdf.setFont('helvetica', 'normal');
   
-  for (const incidencia of incidenciasSubsanadas) {
+  for (const incidencia of incidenciasCorregidas) {
     const puntoInspeccionado = puntosInspeccionadosData.find(pi => pi.id === incidencia.punto_inspeccionado_id);
     const puntoMaestro = puntoInspeccionado ? puntosMaestrosData.find(pm => pm.id === puntoInspeccionado.punto_maestro_id) : null;
     if (!puntoMaestro) continue;
     
     pdf.addPage();
     await drawHeader(pdf, inspectionData);
-    pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'normal').text(`Subsanación de Incidencia: ${puntoMaestro.nomenclatura}`, MARGIN, 45);
+    pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'normal').text(`Corrección de Incidencia: ${puntoMaestro.nomenclatura}`, MARGIN, 45);
 
-    // --- CORRECCIÓN DE OPTIMIZACIÓN: Redimensiona a un tamaño más pequeño (600px) ---
     const [fotoAntesBase64, fotoDespuesBase64] = await Promise.all([
-      loadImageAsBase64(incidencia.url_foto_antes, 600, 600),
-      loadImageAsBase64(incidencia.url_foto_despues, 600, 600)
+      loadImageAsBase64(incidencia.url_foto_antes, { maxWidth: 600, maxHeight: 600 }),
+      loadImageAsBase64(incidencia.url_foto_despues, { maxWidth: 600, maxHeight: 600 })
     ]);
     
     const photoBoxY = 65;

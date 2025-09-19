@@ -15,24 +15,66 @@ function sanitizeFileName(name) {
 }
 
 export async function generateTextReport(inspeccionId, reportType = 'initial', outputType = 'download') {
-    // ... (sin cambios en esta función)
+    // Esta función no genera el plano, por lo que puede seguir en A4 si se desea.
+    // La mantenemos en A4 ya que es un formato estándar para informes de texto.
+  try {
+    console.log(`Iniciando generación de Informe de Texto (output: ${outputType})...`);
+    const reportData = await fetchReportData(inspeccionId, { optimizePlan: true }); 
+    if (!reportData) throw new Error("No se pudieron cargar los datos para el informe.");
+    
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    
+    console.log("Construyendo páginas de texto...");
+    await buildTextPages(pdf, reportData);
+    
+    if (reportType === 'initial') {
+      console.log("Construyendo anexo de fotos inicial...");
+      await buildInitialPhotoAnnex(pdf, reportData);
+    } else if (reportType === 'remediation') {
+      console.log("Construyendo anexo de fotos de subsanación...");
+      await buildRemediationPhotoAnnex(pdf, reportData);
+    }
+    
+    console.log("Construyendo anexo de checklist...");
+    await buildChecklistAnnex(pdf, reportData);
+    
+    const { inspectionData } = reportData;
+    const reportTypeName = reportType === 'initial' ? 'Informe_Inicial' : 'Informe_Cierre';
+    
+    const rawFileName = `${reportTypeName}_${inspectionData.centros.nombre}_${inspectionData.fecha_inspeccion}.pdf`;
+    const fileName = sanitizeFileName(rawFileName);
+
+    if (outputType === 'blob') {
+      console.log('Devolviendo PDF como Blob.');
+      return { blob: pdf.output('blob'), fileName: fileName };
+    } else {
+      console.log(`Guardando PDF como: ${fileName}`);
+      pdf.save(fileName);
+      return { blob: null, fileName: fileName };
+    }
+
+  } catch (err) {
+    console.error("Error generando el Informe de Texto:", err);
+    alert(`Hubo un error al generar el informe. Revisa la consola: ${err.message}`);
+    return null;
+  }
 }
 
-// ===== INICIO DE LA CORRECCIÓN =====
+
 export async function generatePlanPdf(inspeccionId, finalLabels, previewDimensions) {
   try {
-    console.log("Iniciando generación de PDF del Plano...");
-    // Pedimos la imagen SIN optimizar para máxima calidad
+    console.log("Iniciando generación de PDF del Plano en formato A3...");
     const reportData = await fetchReportData(inspeccionId, { optimizePlan: false }); 
     
     if (!reportData.planoBase64) {
         throw new Error("No se pudo cargar la imagen del plano para esta inspección.");
     }
 
-    const pdf = new jsPDF('l', 'mm', 'a4');
+    // ===== INICIO DE LA CORRECCIÓN: Cambiamos 'a4' por 'a3' =====
+    const pdf = new jsPDF('l', 'mm', 'a3');
+    // ===== FIN DE LA CORRECCIÓN =====
     
     console.log("Construyendo anexo de resumen visual con posiciones ajustadas...");
-    // Pasamos los datos extra a la función de dibujado
     await buildSummaryAnnex(pdf, reportData, finalLabels, previewDimensions);
     
     const { inspectionData } = reportData;
@@ -48,4 +90,3 @@ export async function generatePlanPdf(inspeccionId, finalLabels, previewDimensio
     alert(`Hubo un error al generar el plano. Revisa la consola: ${err.message}`);
   }
 }
-// ===== FIN DE LA CORRECCIÓN =====

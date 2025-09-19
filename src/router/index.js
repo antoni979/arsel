@@ -12,7 +12,8 @@ import InspeccionesListView from '../views/InspeccionesListView.vue'
 import InspeccionDetailView from '../views/InspeccionDetailView.vue'
 import CentroHistorialView from '../views/CentroHistorialView.vue';
 import CentroVersionsView from '../views/CentroVersionsView.vue';
-import SubsanacionView from '../views/SubsanacionView.vue';
+// ===== INICIO DE LA CORRECCIÓN: Importamos el nuevo componente =====
+import CierreInformeView from '../views/CierreInformeView.vue';
 
 const routes = [
   { path: '/', name: 'Login', component: Login, meta: { layout: 'Blank' } },
@@ -29,10 +30,11 @@ const routes = [
     component: () => import('../views/PlanoPreviewView.vue'),
     meta: { layout: 'Blank' }
   },
+  // ===== INICIO DE LA CORRECCIÓN: Actualizamos la ruta =====
   {
-    path: '/inspecciones/:id/subsanar',
-    name: 'SubsanacionDetail',
-    component: SubsanacionView,
+    path: '/inspecciones/:id/cierre',
+    name: 'CierreInforme',
+    component: CierreInformeView,
     meta: { requiresAuth: true }
   }
 ]
@@ -43,7 +45,6 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to, from, next) => {
-  // --- LOG DE DEBUG ---
   console.log(`[Router] Navegando de '${from.fullPath}' a '${to.fullPath}'`);
   
   const { data: { session } } = await supabase.auth.getSession()

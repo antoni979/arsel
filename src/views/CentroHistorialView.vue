@@ -7,7 +7,7 @@ import {
   EyeIcon, 
   TrashIcon, 
   PaperAirplaneIcon, 
-  WrenchScrewdriverIcon, 
+  ArchiveBoxIcon, // Cambiamos el icono para "Cierre"
   MapIcon, 
   ArrowDownCircleIcon,
   ArrowUturnLeftIcon,
@@ -29,12 +29,13 @@ const selectedInspeccion = ref(null);
 const availableYears = ref([]);
 const selectedYear = ref(null);
 
+// ===== CORRECCIÓN DE TEXTO =====
 const estadoInfo = computed(() => (estado) => {
   switch (estado) {
     case 'en_progreso': return { text: 'En Progreso', class: 'bg-blue-100 text-blue-800' };
     case 'finalizada': return { text: 'Pendiente de Envío', class: 'bg-orange-100 text-orange-800' };
-    case 'pendiente_subsanacion': return { text: 'Pendiente de Subsanación', class: 'bg-yellow-100 text-yellow-800' };
-    case 'cerrada': return { text: 'Cerrada y Subsanada', class: 'bg-green-100 text-green-800' };
+    case 'pendiente_subsanacion': return { text: 'Pendiente de Cierre', class: 'bg-yellow-100 text-yellow-800' };
+    case 'cerrada': return { text: 'Cerrada', class: 'bg-green-100 text-green-800' };
     default: return { text: estado, class: 'bg-slate-100 text-slate-800' };
   }
 });
@@ -222,22 +223,25 @@ onMounted(fetchData);
             </div>
 
             <div class="lg:col-span-2 flex justify-start lg:justify-end items-center flex-wrap gap-2">
-              <!-- ===== INICIO DE LA CORRECCIÓN: Botón Plano Restaurado ===== -->
-              <router-link :to="`/inspecciones/${inspeccion.id}/plano-preview`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200">
-                  <MapIcon class="h-4 w-4"/>Plano
-              </router-link>
-              <!-- ===== FIN DE LA CORRECCIÓN ===== -->
-              
               <button v-if="inspeccion.estado === 'finalizada'" @click="openSentModal(inspeccion)" :disabled="isProcessing === inspeccion.id" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 disabled:opacity-50">
                 <PaperAirplaneIcon class="h-4 w-4" /> Marcar Envío
               </button>
-              <router-link v-if="inspeccion.estado === 'pendiente_subsanacion'" :to="`/inspecciones/${inspeccion.id}/subsanar`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200"><WrenchScrewdriverIcon class="h-4 w-4" /> Subsanar </router-link>
               
+              <!-- ===== CORRECCIÓN DE TEXTO, ICONO Y ENLACE ===== -->
+              <router-link v-if="inspeccion.estado === 'pendiente_subsanacion'" :to="`/inspecciones/${inspeccion.id}/cierre`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200">
+                <ArchiveBoxIcon class="h-4 w-4" /> Cierre
+              </router-link>
+              
+              <router-link :to="`/inspecciones/${inspeccion.id}/plano-preview`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200">
+                  <MapIcon class="h-4 w-4"/>Plano
+              </router-link>
+
               <button @click="openArchivedPdf(inspeccion.url_pdf_informe_inicial)" :disabled="!inspeccion.url_pdf_informe_inicial" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md text-slate-600 bg-slate-100 hover:bg-slate-200 border border-slate-200 disabled:opacity-50 disabled:cursor-not-allowed">
                 <ArrowDownCircleIcon class="h-4 w-4" /> Inf. Inicial
               </button>
+
               <button v-if="inspeccion.estado === 'cerrada'" @click="openArchivedPdf(inspeccion.url_pdf_informe_final)" :disabled="!inspeccion.url_pdf_informe_final" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md text-green-700 bg-green-100 hover:bg-green-200 border border-green-200 disabled:opacity-50 disabled:cursor-not-allowed">
-                <ArrowDownCircleIcon class="h-4 w-4" /> Inf. Final
+                <ArrowDownCircleIcon class="h-4 w-4" /> Inf. Cierre
               </button>
 
               <div class="flex items-center gap-1 border-l pl-2 ml-1">

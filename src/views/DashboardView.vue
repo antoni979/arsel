@@ -5,15 +5,15 @@ import { supabase } from '../supabase';
 import { useRouter } from 'vue-router';
 import { 
   BuildingStorefrontIcon, 
-  ExclamationTriangleIcon, 
   ClockIcon,
   PaperAirplaneIcon,
-  CheckBadgeIcon
+  CheckBadgeIcon,
+  ArchiveBoxIcon
 } from '@heroicons/vue/24/outline';
-import { Line, Bar } from 'vue-chartjs';
-import { Chart as ChartJS, Title, Tooltip, Legend, LineElement, BarElement, PointElement, CategoryScale, LinearScale } from 'chart.js';
+import { Line } from 'vue-chartjs'; // Eliminamos 'Bar'
+import { Chart as ChartJS, Title, Tooltip, Legend, LineElement, PointElement, CategoryScale, LinearScale } from 'chart.js'; // Eliminamos 'BarElement'
 
-ChartJS.register(Title, Tooltip, Legend, LineElement, BarElement, PointElement, CategoryScale, LinearScale);
+ChartJS.register(Title, Tooltip, Legend, LineElement, PointElement, CategoryScale, LinearScale); // Eliminamos 'BarElement'
 
 const loading = ref(true);
 const centros = ref([]);
@@ -24,7 +24,8 @@ onMounted(async () => {
   loading.value = true;
   const [centrosRes, resumenRes] = await Promise.all([
     supabase.from('centros').select('id', { count: 'exact' }),
-    supabase.from('vista_resumen_inspecciones').select('*')
+    // Pedimos también la fecha de finalización para el gráfico
+    supabase.from('vista_resumen_inspecciones').select('*, fecha_envio_cliente')
   ]);
   
   centros.value = centrosRes.data || [];
@@ -35,23 +36,35 @@ onMounted(async () => {
 const totalCentros = computed(() => centros.value.length);
 const inspeccionesEnProgreso = computed(() => resumenInspecciones.value.filter(i => i.estado === 'en_progreso').length);
 const inspeccionesPendientesEnvio = computed(() => resumenInspecciones.value.filter(i => i.estado === 'finalizada').length);
-const inspeccionesPendientesSubsanacion = computed(() => resumenInspecciones.value.filter(i => i.estado === 'pendiente_subsanacion').length);
+// ===== CORRECCIÓN DEL NOMBRE DE LA VARIABLE =====
+const inspeccionesPendientesCierre = computed(() => resumenInspecciones.value.filter(i => i.estado === 'pendiente_subsanacion').length);
 const inspeccionesCerradas = computed(() => resumenInspecciones.value.filter(i => i.estado === 'cerrada').length);
 
+// ===== LÓGICA DEL GRÁFICO CORREGIDA =====
 const actividadMensual = computed(() => {
     const meses = {};
     const hoy = new Date();
+    // Preparamos los últimos 12 meses
     for (let i = 11; i >= 0; i--) {
         const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
-        const clave = d.toISOString().slice(0, 7);
+        const clave = d.toISOString().slice(0, 7); // Formato 'YYYY-MM'
         const etiqueta = d.toLocaleString('es-ES', { month: 'short', year: '2-digit' });
         meses[clave] = { etiqueta, realizadas: 0, cerradas: 0 };
     }
+    // Contamos las inspecciones realizadas
     resumenInspecciones.value.forEach(inspeccion => {
-        const claveMes = inspeccion.fecha_inspeccion.slice(0, 7);
-        if (meses[claveMes]) {
-            meses[claveMes].realizadas++;
-            if (inspeccion.estado === 'cerrada') meses[claveMes].cerradas++;
+        if (inspeccion.fecha_inspeccion) {
+            const claveMesRealizada = inspeccion.fecha_inspeccion.slice(0, 7);
+            if (meses[claveMesRealizada]) {
+                meses[claveMesRealizada].realizadas++;
+            }
+        }
+        // Contamos las inspecciones cerradas (usando la fecha de envío, que es cuando se cierra)
+        if (inspeccion.estado === 'cerrada' && inspeccion.fecha_envio_cliente) {
+             const claveMesCierre = inspeccion.fecha_envio_cliente.slice(0, 7);
+             if (meses[claveMesCierre]) {
+                meses[claveMesCierre].cerradas++;
+            }
         }
     });
     return Object.values(meses);
@@ -60,35 +73,14 @@ const actividadMensual = computed(() => {
 const monthlyChartData = computed(() => ({
   labels: actividadMensual.value.map(m => m.etiqueta),
   datasets: [
-    { label: 'Inspecciones Realizadas', backgroundColor: '#3B82F6', borderColor: '#3B82F6', data: actividadMensual.value.map(m => m.realizadas), tension: 0.2 },
-    { label: 'Inspecciones Cerradas', backgroundColor: '#22C55E', borderColor: '#22C55E', data: actividadMensual.value.map(m => m.cerradas), tension: 0.2 }
+    { label: 'Informes Iniciales', backgroundColor: '#3B82F6', borderColor: '#3B82F6', data: actividadMensual.value.map(m => m.realizadas), tension: 0.2 },
+    { label: 'Informes de Cierre', backgroundColor: '#22C55E', borderColor: '#22C55E', data: actividadMensual.value.map(m => m.cerradas), tension: 0.2 }
   ]
 }));
 
 const monthlyChartOptions = {
   responsive: true, maintainAspectRatio: false,
   plugins: { legend: { position: 'top' }, title: { display: true, text: 'Actividad Mensual (Últimos 12 Meses)' } },
-  scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
-};
-
-const informesPorTecnico = computed(() => {
-  const conteo = {};
-  resumenInspecciones.value.forEach(inspeccion => {
-    const tecnico = inspeccion.tecnico_nombre || 'Desconocido';
-    if (!conteo[tecnico]) conteo[tecnico] = 0;
-    conteo[tecnico]++;
-  });
-  return Object.entries(conteo).sort(([, a], [, b]) => b - a);
-});
-
-const technicianChartData = computed(() => ({
-  labels: informesPorTecnico.value.map(([tecnico]) => tecnico),
-  datasets: [{ label: 'Informes Realizados', backgroundColor: '#6366F1', borderColor: '#4F46E5', borderWidth: 1, borderRadius: 4, data: informesPorTecnico.value.map(([, count]) => count) }]
-}));
-
-const technicianChartOptions = {
-  responsive: true, maintainAspectRatio: false,
-  plugins: { legend: { display: false } },
   scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
 };
 
@@ -109,18 +101,14 @@ const accionesPendientes = computed(() => {
 </script>
 
 <template>
-  <!-- MODIFICADO: Ajustamos el padding para móvil -->
   <div class="h-full overflow-y-auto p-4 sm:p-8 bg-slate-50">
     <h1 class="text-3xl md:text-4xl font-bold text-slate-800 mb-6">Cuadro de Mando</h1>
     
     <div v-if="loading" class="text-center text-slate-500 py-16">Cargando datos del dashboard...</div>
     
     <div v-else class="space-y-6">
-      <!-- 1. Tarjetas de Resumen Global -->
       <section>
-        <!-- MODIFICADO: Grid adaptable -->
         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-          <!-- MODIFICADO: Estilos de tarjeta y texto para mejor visualización en móvil -->
           <div class="bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-3">
             <div class="bg-blue-100 p-3 rounded-lg"><BuildingStorefrontIcon class="h-6 w-6 text-blue-600" /></div>
             <div><p class="text-2xl font-bold text-slate-800">{{ totalCentros }}</p><p class="text-slate-500 text-sm font-semibold">Centros</p></div>
@@ -133,9 +121,10 @@ const accionesPendientes = computed(() => {
             <div class="bg-purple-100 p-3 rounded-lg"><PaperAirplaneIcon class="h-6 w-6 text-purple-600" /></div>
             <div><p class="text-2xl font-bold text-slate-800">{{ inspeccionesPendientesEnvio }}</p><p class="text-slate-500 text-sm font-semibold">Pend. Envío</p></div>
           </div>
+          <!-- ===== CORRECCIÓN DE TEXTO Y VARIABLE ===== -->
           <div class="bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-3">
-            <div class="bg-orange-100 p-3 rounded-lg"><ExclamationTriangleIcon class="h-6 w-6 text-orange-600" /></div>
-            <div><p class="text-2xl font-bold text-slate-800">{{ inspeccionesPendientesSubsanacion }}</p><p class="text-slate-500 text-sm font-semibold">Pend. Subsan.</p></div>
+            <div class="bg-orange-100 p-3 rounded-lg"><ArchiveBoxIcon class="h-6 w-6 text-orange-600" /></div>
+            <div><p class="text-2xl font-bold text-slate-800">{{ inspeccionesPendientesCierre }}</p><p class="text-slate-500 text-sm font-semibold">Pend. Cierre</p></div>
           </div>
           <div class="col-span-2 md:col-span-1 lg:col-span-1 bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-3">
             <div class="bg-green-100 p-3 rounded-lg"><CheckBadgeIcon class="h-6 w-6 text-green-600" /></div>
@@ -143,37 +132,29 @@ const accionesPendientes = computed(() => {
           </div>
         </div>
       </section>
-
-      <!-- MODIFICADO: Layout de 2 columnas adaptable -->
+      
+      <!-- ===== WIDGET DE PRODUCTIVIDAD ELIMINADO Y LAYOUT AJUSTADO ===== -->
       <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-2 bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200">
+           <h2 class="text-lg font-bold text-slate-800 mb-4">Actividad Mensual</h2>
            <div class="h-80">
               <Line :data="monthlyChartData" :options="monthlyChartOptions" />
            </div>
         </div>
 
-        <div class="lg:col-span-1 space-y-6">
-          <div class="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200">
-            <h2 class="text-lg font-bold text-slate-800 mb-4">Productividad por Técnico</h2>
-            <div class="h-40">
-              <Bar :data="technicianChartData" :options="technicianChartOptions" />
-            </div>
-          </div>
-
-          <div class="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col">
-            <h2 class="text-lg font-bold text-slate-800 mb-4 flex-shrink-0">Puntos Críticos Activos</h2>
-            <ul v-if="centrosConMasRojas.length > 0" class="divide-y divide-slate-100">
-              <li v-for="centro in centrosConMasRojas" :key="centro.id" class="py-3 flex justify-between items-center group">
-                <div>
-                  <p class="font-semibold text-slate-800 group-hover:text-blue-600">{{ centro.nombre }}</p>
-                  <p class="text-sm text-slate-500 flex items-center"><span class="h-2.5 w-2.5 rounded-full bg-red-500 mr-2"></span><span class="font-bold text-red-600">{{ centro.rojas }}</span>&nbsp;incidencias graves</p>
-                </div>
-                <router-link :to="`/centros/${centro.id}/historial`" class="opacity-0 group-hover:opacity-100 px-3 py-1 text-sm font-semibold text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-opacity">Revisar</router-link>
-              </li>
-            </ul>
-            <div v-else class="flex-1 flex flex-col items-center justify-center text-center text-slate-500 p-4">
-              <span class="text-2xl mb-2">🎉</span><p class="font-semibold">¡Todo en orden!</p><p class="text-sm">No hay incidencias graves activas.</p>
-            </div>
+        <div class="lg:col-span-1 bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col">
+          <h2 class="text-lg font-bold text-slate-800 mb-4 flex-shrink-0">Puntos Críticos Activos</h2>
+          <ul v-if="centrosConMasRojas.length > 0" class="divide-y divide-slate-100">
+            <li v-for="centro in centrosConMasRojas" :key="centro.id" class="py-3 flex justify-between items-center group">
+              <div>
+                <p class="font-semibold text-slate-800 group-hover:text-blue-600">{{ centro.nombre }}</p>
+                <p class="text-sm text-slate-500 flex items-center"><span class="h-2.5 w-2.5 rounded-full bg-red-500 mr-2"></span><span class="font-bold text-red-600">{{ centro.rojas }}</span>&nbsp;incidencias graves</p>
+              </div>
+              <router-link :to="`/centros/${centro.id}/historial`" class="opacity-0 group-hover:opacity-100 px-3 py-1 text-sm font-semibold text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-opacity">Revisar</router-link>
+            </li>
+          </ul>
+          <div v-else class="flex-1 flex flex-col items-center justify-center text-center text-slate-500 p-4">
+            <span class="text-2xl mb-2">🎉</span><p class="font-semibold">¡Todo en orden!</p><p class="text-sm">No hay incidencias graves activas.</p>
           </div>
         </div>
       </section>

@@ -1,4 +1,4 @@
-<!-- src/views/SubsanacionView.vue -->
+<!-- src/views/CierreInformeView.vue -->
 <script setup>
 import { ref, onMounted, computed, inject } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -35,7 +35,8 @@ const handleFileChange = async (event, incidencia) => {
   const file = event.target.files[0];
   if (!file) return;
   isUploading.value = incidencia.id;
-  const fileName = `subsanacion_${inspeccionId}/incidencia_${incidencia.id}/${Date.now()}_${file.name}`;
+  // Cambiamos el nombre de la carpeta para mantener consistencia
+  const fileName = `cierre_informe_${inspeccionId}/incidencia_${incidencia.id}/${Date.now()}_${file.name}`;
   const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, file, { upsert: true });
   if (uploadError) {
     showNotification("Error al subir la foto: " + uploadError.message, 'error');
@@ -69,14 +70,15 @@ function blobToBase64(blob) {
   });
 }
 
-const finalizarSubsanacion = async () => {
-  if (!confirm('¿Estás seguro de que quieres generar el informe final, archivarlo y cerrar esta inspección?')) {
+const finalizarInforme = async () => {
+  if (!confirm('¿Estás seguro de que quieres generar el Informe de Cierre, archivarlo y cerrar esta inspección?')) {
       return;
   }
   isFinalizing.value = true;
   try {
+    // Llamamos a generateTextReport con el tipo 'remediation' que internamente genera el informe de cierre
     const report = await generateTextReport(inspeccionId, 'remediation', 'blob');
-    if (!report || !report.blob) throw new Error("La generación del PDF de subsanación falló.");
+    if (!report || !report.blob) throw new Error("La generación del PDF de Cierre falló.");
 
     const base64File = await blobToBase64(report.blob);
 
@@ -84,13 +86,10 @@ const finalizarSubsanacion = async () => {
     const fileNameWithId = `${inspeccionId}-${report.fileName}`;
     const finalFileName = `centro_${centroId}/${fileNameWithId}`;
 
-    console.log("Invocando función Edge 'upload-pdf-to-b2' para subsanación con la ruta:", finalFileName);
     const { data, error: invokeError } = await supabase.functions.invoke('upload-pdf-to-b2', {
       body: { 
         file: base64File,
-        // --- INICIO DE LA CORRECCIÓN ---
         fileName: finalFileName,
-        // --- FIN DE LA CORRECCIÓN ---
         contentType: 'application/pdf'
       }
     });
@@ -107,8 +106,8 @@ const finalizarSubsanacion = async () => {
     showNotification('Inspección cerrada y archivada con éxito.');
     router.push(`/centros/${inspeccion.value.centros.id}/historial`);
   } catch (error) {
-    console.error("Error al finalizar subsanación:", error);
-    showNotification('Ocurrió un error al finalizar la subsanación: ' + error.message, 'error');
+    console.error("Error al finalizar el informe de cierre:", error);
+    showNotification('Ocurrió un error al finalizar: ' + error.message, 'error');
   } finally {
     isFinalizing.value = false;
   }
@@ -117,18 +116,18 @@ const finalizarSubsanacion = async () => {
 
 <template>
   <div class="h-full flex flex-col">
-    <div v-if="loading" class="flex-1 flex items-center justify-center">Cargando datos de subsanación...</div>
+    <div v-if="loading" class="flex-1 flex items-center justify-center">Cargando datos del informe...</div>
     <div v-else-if="inspeccion" class="flex-1 flex flex-col min-h-0">
       <header class="flex-shrink-0 px-4 sm:px-8 pt-6 sm:pt-8 pb-4 bg-slate-100/80 backdrop-blur-sm border-b border-slate-200 z-10">
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <h1 class="text-2xl sm:text-3xl font-bold text-slate-800">Gestión de Subsanación</h1>
+            <h1 class="text-2xl sm:text-3xl font-bold text-slate-800">Generar Informe de Cierre</h1>
             <p class="text-lg text-slate-600 mt-1">{{ inspeccion.centros.nombre }}</p>
             <p class="text-sm text-slate-500 mt-1">Inspección del {{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString() }}</p>
           </div>
           <div class="flex gap-4 w-full sm:w-auto">
             <button @click="router.go(-1)" class="flex-1 sm:flex-none px-4 py-2 font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">Volver</button>
-            <button @click="finalizarSubsanacion" :disabled="!todasSubsanadas || isFinalizing" class="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 disabled:bg-slate-400 disabled:cursor-not-allowed">
+            <button @click="finalizarInforme" :disabled="!todasSubsanadas || isFinalizing" class="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 disabled:bg-slate-400 disabled:cursor-not-allowed">
               <CheckCircleIcon class="h-5 w-5" />
               {{ isFinalizing ? 'Finalizando...' : 'Finalizar y Cerrar' }}
             </button>
@@ -138,8 +137,8 @@ const finalizarSubsanacion = async () => {
       <main class="flex-1 overflow-y-auto p-4 sm:p-8">
         <div class="space-y-6 max-w-7xl mx-auto">
           <div v-if="incidencias.length === 0" class="bg-white p-8 rounded-lg shadow-sm text-center">
-              <h3 class="text-lg font-medium text-slate-700">¡No hay incidencias que subsanar!</h3>
-              <p class="text-slate-500">Esta inspección no tiene incidencias que requieran una foto de subsanación. Puedes cerrarla directamente.</p>
+              <h3 class="text-lg font-medium text-slate-700">¡No hay incidencias que corregir!</h3>
+              <p class="text-slate-500">Esta inspección no tiene incidencias que requieran una foto de corrección. Puedes cerrarla directamente.</p>
           </div>
           <div v-for="incidencia in incidencias" :key="incidencia.id" class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <h3 class="font-bold text-lg text-slate-800 border-b pb-3 mb-4">{{ getItemText(incidencia.item_checklist) }}</h3>
@@ -155,7 +154,7 @@ const finalizarSubsanacion = async () => {
                 </div>
               </div>
               <div>
-                <p class="text-sm font-semibold text-slate-600 mb-2">DESPUÉS (Evidencia de Subsanación)</p>
+                <p class="text-sm font-semibold text-slate-600 mb-2">DESPUÉS (Evidencia de Corrección)</p>
                 <div class="aspect-video bg-slate-100 rounded-lg flex items-center justify-center overflow-hidden relative group">
                   <img v-if="incidencia.url_foto_despues" :src="incidencia.url_foto_despues" class="w-full h-full object-contain">
                   <div v-else-if="isUploading === incidencia.id" class="text-center text-slate-600">Subiendo foto...</div>
