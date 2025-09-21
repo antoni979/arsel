@@ -1,13 +1,13 @@
 <!-- src/components/Notification.vue -->
 <script setup>
-import { CheckCircleIcon, XCircleIcon } from '@heroicons/vue/24/solid';
+import { CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
 
 defineProps({
   show: Boolean,
   message: String,
   type: {
     type: String,
-    default: 'success', // 'success' o 'error'
+    default: 'success', // 'success', 'error', 'warning', 'info'
   },
 });
 </script>
@@ -35,10 +35,12 @@ defineProps({
               <div class="flex-shrink-0">
                 <CheckCircleIcon v-if="type === 'success'" class="h-6 w-6 text-green-400" aria-hidden="true" />
                 <XCircleIcon v-if="type === 'error'" class="h-6 w-6 text-red-400" aria-hidden="true" />
+                <ExclamationTriangleIcon v-if="type === 'warning'" class="h-6 w-6 text-yellow-400" aria-hidden="true" />
+                <InformationCircleIcon v-if="type === 'info'" class="h-6 w-6 text-blue-400" aria-hidden="true" />
               </div>
               <div class="ml-3 w-0 flex-1 pt-0.5">
                 <p class="text-sm font-medium text-gray-900">
-                  {{ type === 'success' ? 'Éxito' : 'Error' }}
+                  {{ type === 'success' ? 'Éxito' : type === 'error' ? 'Error' : type === 'warning' ? 'Advertencia' : 'Información' }}
                 </p>
                 <p class="mt-1 text-sm text-gray-500">
                   {{ message }}

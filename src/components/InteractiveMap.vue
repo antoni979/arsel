@@ -1,6 +1,6 @@
 <!-- src/components/InteractiveMap.vue -->
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue';
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
 
 const props = defineProps({
   imageUrl: { type: String, required: true },
@@ -17,6 +17,8 @@ const overlayRef = ref(null);
 const draggedPointId = ref(null);
 const drawingPoints = ref([]);
 const mousePosition = ref({ x: 0, y: 0 });
+const overlayWidth = ref(0);
+const overlayHeight = ref(0);
 
 watch(() => props.isAreaDrawingMode, (newVal) => {
   if (!newVal) {
@@ -24,9 +26,20 @@ watch(() => props.isAreaDrawingMode, (newVal) => {
   }
 });
 
-const toSvgPoints = (pointsArray, overlayWidth, overlayHeight) => {
-  if (!pointsArray || pointsArray.length === 0 || !overlayWidth || !overlayHeight) return "";
-  return pointsArray.map(p => `${p.x * overlayWidth},${p.y * overlayHeight}`).join(' ');
+watch(() => props.salas, () => {
+  nextTick(() => updateDimensions());
+}, { immediate: true });
+
+const updateDimensions = () => {
+  if (overlayRef.value) {
+    overlayWidth.value = overlayRef.value.clientWidth;
+    overlayHeight.value = overlayRef.value.clientHeight;
+  }
+};
+
+const toSvgPoints = (pointsArray) => {
+  if (!pointsArray || pointsArray.length === 0 || !overlayWidth.value || !overlayHeight.value) return "";
+  return pointsArray.map(p => `${p.x * overlayWidth.value},${p.y * overlayHeight.value}`).join(' ');
 };
 
 const handleMapClick = (event) => {
@@ -65,8 +78,15 @@ const handleKeydown = (e) => {
     }
 };
 
-onMounted(() => window.addEventListener('keydown', handleKeydown));
-onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
+onMounted(() => {
+  updateDimensions();
+  window.addEventListener('keydown', handleKeydown);
+  window.addEventListener('resize', updateDimensions);
+});
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown);
+  window.removeEventListener('resize', updateDimensions);
+});
 
 const getSalaColor = (salaId) => {
   const sala = props.salas.find(s => s.id === salaId);
@@ -114,7 +134,7 @@ const handlePointClick = (point) => {
     @mouseleave="stopDrag"
   >
     <div class="relative max-w-full max-h-full">
-      <img :src="imageUrl" class="block max-w-full max-h-full object-contain pointer-events-none" alt="Plano del centro">
+      <img :src="imageUrl" @load="updateDimensions" class="block max-w-full max-h-full object-contain pointer-events-none" alt="Plano del centro">
       <div
         ref="overlayRef"
         class="absolute inset-0"
@@ -125,21 +145,21 @@ const handlePointClick = (point) => {
         <svg class="absolute top-0 left-0 w-full h-full pointer-events-none">
           <template v-for="sala in salas" :key="`sala-area-${sala.id}`">
             <polygon
-              v-if="sala.area_puntos && overlayRef"
-              :points="toSvgPoints(sala.area_puntos, overlayRef.clientWidth, overlayRef.clientHeight)"
+              v-if="sala.area_puntos"
+              :points="toSvgPoints(sala.area_puntos)"
               :style="{ fill: `${getSalaColor(sala.id)}33`, stroke: getSalaColor(sala.id), strokeWidth: '2px' }"
             />
           </template>
 
           <g v-if="isAreaDrawingMode && overlayRef">
-            <polyline 
-              :points="toSvgPoints(drawingPoints, overlayRef.clientWidth, overlayRef.clientHeight)"
+            <polyline
+              :points="toSvgPoints(drawingPoints)"
               style="fill: none; stroke: #3b82f6; stroke-width: 2px; stroke-dasharray: 4;"
             />
-            <line 
+            <line
               v-if="drawingPoints.length > 0"
-              :x1="drawingPoints[drawingPoints.length - 1].x * overlayRef.clientWidth"
-              :y1="drawingPoints[drawingPoints.length - 1].y * overlayRef.clientHeight"
+              :x1="drawingPoints[drawingPoints.length - 1].x * overlayWidth"
+              :y1="drawingPoints[drawingPoints.length - 1].y * overlayHeight"
               :x2="mousePosition.x"
               :y2="mousePosition.y"
               style="stroke: #3b82f6; stroke-width: 2px; stroke-dasharray: 4;"
@@ -147,8 +167,8 @@ const handlePointClick = (point) => {
             <circle
               v-for="(point, index) in drawingPoints"
               :key="`drawing-point-${index}`"
-              :cx="point.x * overlayRef.clientWidth"
-              :cy="point.y * overlayRef.clientHeight"
+              :cx="point.x * overlayWidth"
+              :cy="point.y * overlayHeight"
               r="5"
               :class="index === 0 ? 'fill-green-500 stroke-white' : 'fill-blue-500 stroke-white'"
               style="stroke-width: 2px;"

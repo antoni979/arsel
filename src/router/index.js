@@ -4,39 +4,30 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { supabase } from '../supabase'
 
 // Importación de Vistas y Componentes
-import DashboardView from '../views/DashboardView.vue'
 import Login from '../components/Login.vue'
-import CentrosListView from '../views/CentrosListView.vue'
-import CentroConfigView from '../views/CentroConfigView.vue'
-import InspeccionesListView from '../views/InspeccionesListView.vue'
-import InspeccionDetailView from '../views/InspeccionDetailView.vue'
-import CentroHistorialView from '../views/CentroHistorialView.vue';
-import CentroVersionsView from '../views/CentroVersionsView.vue';
-// ===== INICIO DE LA CORRECCIÓN: Importamos el nuevo componente =====
-import CierreInformeView from '../views/CierreInformeView.vue';
 
 const routes = [
   { path: '/', name: 'Login', component: Login, meta: { layout: 'Blank' } },
-  { path: '/dashboard', name: 'Dashboard', component: DashboardView, meta: { requiresAuth: true } },
-  { path: '/centros', name: 'CentrosList', component: CentrosListView, meta: { requiresAuth: true } },
-  { path: '/centros/:id/versiones', name: 'CentroVersions', component: CentroVersionsView, meta: { requiresAuth: true } },
-  { path: '/versiones/:id/configurar', name: 'VersionConfig', component: CentroConfigView, meta: { requiresAuth: true } },
-  { path: '/inspecciones', name: 'InspeccionesList', component: InspeccionesListView, meta: { requiresAuth: true } },
-  { path: '/inspecciones/:id', name: 'InspeccionDetail', component: InspeccionDetailView, meta: { requiresAuth: true } },
-  { path: '/centros/:id/historial', name: 'CentroHistorial', component: CentroHistorialView, meta: { requiresAuth: true } },
+  { path: '/dashboard', name: 'Dashboard', component: () => import('../views/DashboardView.vue'), meta: { requiresAuth: true } },
+  { path: '/centros', name: 'CentrosList', component: () => import('../views/CentrosListView.vue'), meta: { requiresAuth: true } },
+  { path: '/centros/:id/versiones', name: 'CentroVersions', component: () => import('../views/CentroVersionsView.vue'), meta: { requiresAuth: true } },
+  { path: '/versiones/:id/configurar', name: 'VersionConfig', component: () => import('../views/CentroConfigView.vue'), meta: { requiresAuth: true } },
+  { path: '/inspecciones', name: 'InspeccionesList', component: () => import('../views/InspeccionesListView.vue'), meta: { requiresAuth: true } },
+  { path: '/inspecciones/:id', name: 'InspeccionDetail', component: () => import('../views/InspeccionDetailView.vue'), meta: { requiresAuth: true } },
+  { path: '/centros/:id/historial', name: 'CentroHistorial', component: () => import('../views/CentroHistorialView.vue'), meta: { requiresAuth: true } },
   {
     path: '/inspecciones/:id/plano-preview',
     name: 'PlanoPreview',
     component: () => import('../views/PlanoPreviewView.vue'),
     meta: { layout: 'Blank' }
   },
-  // ===== INICIO DE LA CORRECCIÓN: Actualizamos la ruta =====
   {
     path: '/inspecciones/:id/cierre',
     name: 'CierreInforme',
-    component: CierreInformeView,
+    component: () => import('../views/CierreInformeView.vue'),
     meta: { requiresAuth: true }
-  }
+  },
+  { path: '/admin', name: 'Admin', component: () => import('../views/AdminView.vue'), meta: { requiresAuth: true } }
 ]
 
 const router = createRouter({

@@ -10,6 +10,7 @@ import { CheckCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid'
 import { generateTextReport } from '../utils/pdf';
 
 const showNotification = inject('showNotification');
+const showConfirm = inject('showConfirm');
 const route = useRoute();
 const router = useRouter();
 const inspeccionId = Number(route.params.id);
@@ -268,7 +269,8 @@ function blobToBase64(blob) {
 }
 
 const finalizarInspeccion = async () => {
-    if (!confirm('¿Estás seguro de que quieres finalizar esta inspección? Se generará y archivará el informe PDF, y la inspección quedará bloqueada.')) {
+    const confirmed = await showConfirm('Finalizar Inspección', '¿Estás seguro de que quieres finalizar esta inspección? Se generará y archivará el informe PDF, y la inspección quedará bloqueada.');
+    if (!confirmed) {
         return;
     }
     isFinalizing.value = true;

@@ -1,6 +1,6 @@
 <!-- src/views/CentroHistorialView.vue -->
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, inject } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 import { 
@@ -16,6 +16,8 @@ import {
 } from '@heroicons/vue/24/outline';
 import MarkAsSentModal from '../components/MarkAsSentModal.vue';
 
+const showNotification = inject('showNotification');
+const showConfirm = inject('showConfirm');
 const route = useRoute();
 const router = useRouter();
 const centroId = route.params.id;
@@ -65,7 +67,15 @@ const fetchData = async () => {
   
   const { data: inspeccionesData } = await supabase
     .from('inspecciones')
-    .select('*, versiones_plano(id, nombre)')
+    .select(`
+      *,
+      versiones_plano(id, nombre),
+      puntos_inspeccionados(
+        id, nomenclatura, punto_maestro_id,
+        puntos_maestros(id, sala_id, salas(id, nombre)),
+        incidencias(gravedad)
+      )
+    `)
     .eq('centro_id', centroId)
     .order('fecha_inspeccion', { ascending: false });
 
@@ -75,55 +85,46 @@ const fetchData = async () => {
     return;
   }
 
-  const detailedInspections = await Promise.all(inspeccionesData.map(async (inspeccion) => {
-    const { data: salas } = await supabase
-        .from('salas')
-        .select('id, nombre')
-        .eq('version_id', inspeccion.versiones_plano.id);
-    
-    // Para encontrar la sala de un punto, necesitamos los puntos maestros
-    const { data: puntosMaestros } = await supabase
-        .from('puntos_maestros')
-        .select('id, sala_id')
-        .eq('version_id', inspeccion.versiones_plano.id);
-    
-    const puntoMaestroMap = new Map(puntosMaestros.map(pm => [pm.id, pm.sala_id]));
+  const detailedInspections = inspeccionesData.map(inspeccion => {
+    const puntos = inspeccion.puntos_inspeccionados || [];
+    const salasMap = new Map();
+    const salaCountsMap = new Map();
 
-    const { data: puntos } = await supabase
-      .from('puntos_inspeccionados')
-      .select('id, nomenclatura, punto_maestro_id, incidencias(gravedad)')
-      .eq('inspeccion_id', inspeccion.id);
+    puntos.forEach(punto => {
+      const salaId = punto.puntos_maestros?.sala_id;
+      const salaNombre = punto.puntos_maestros?.salas?.nombre;
+      if (salaId && salaNombre) {
+        if (!salasMap.has(salaId)) {
+          salasMap.set(salaId, { id: salaId, nombre: salaNombre, puntos: [] });
+          salaCountsMap.set(salaId, { verde: 0, ambar: 0, rojo: 0 });
+        }
+        const counts = { verde: 0, ambar: 0, rojo: 0 };
+        (punto.incidencias || []).forEach(inc => {
+          if (counts[inc.gravedad] !== undefined) counts[inc.gravedad]++;
+        });
+        salasMap.get(salaId).puntos.push({ ...punto, counts });
+        const salaCounts = salaCountsMap.get(salaId);
+        salaCounts.verde += counts.verde;
+        salaCounts.ambar += counts.ambar;
+        salaCounts.rojo += counts.rojo;
+      }
+    });
 
-    const salasConPuntos = (salas || []).map(sala => {
-      const puntosDeLaSala = (puntos || [])
-        .filter(p => puntoMaestroMap.get(p.punto_maestro_id) === sala.id)
-        .map(punto => {
-          const counts = { verde: 0, ambar: 0, rojo: 0 };
-          (punto.incidencias || []).forEach(inc => {
-            if(counts[inc.gravedad] !== undefined) counts[inc.gravedad]++;
-          });
-          return { ...punto, counts };
-        }).sort((a,b) => a.nomenclatura.localeCompare(b.nomenclatura, undefined, {numeric: true}));
-      
-      const salaCounts = puntosDeLaSala.reduce((acc, punto) => {
-        acc.verde += punto.counts.verde;
-        acc.ambar += punto.counts.ambar;
-        acc.rojo += punto.counts.rojo;
-        return acc;
-      }, { verde: 0, ambar: 0, rojo: 0 });
+    const salasConPuntos = Array.from(salasMap.values()).map(sala => ({
+      ...sala,
+      puntos: sala.puntos.sort((a,b) => a.nomenclatura.localeCompare(b.nomenclatura, undefined, {numeric: true})),
+      counts: salaCountsMap.get(sala.id)
+    })).filter(s => s.puntos.length > 0);
 
-      return { ...sala, puntos: puntosDeLaSala, counts: salaCounts };
-    }).filter(s => s.puntos.length > 0);
-    
     const totalCounts = salasConPuntos.reduce((acc, sala) => {
-        acc.verde += sala.counts.verde;
-        acc.ambar += sala.counts.ambar;
-        acc.rojo += sala.counts.rojo;
-        return acc;
+      acc.verde += sala.counts.verde;
+      acc.ambar += sala.counts.ambar;
+      acc.rojo += sala.counts.rojo;
+      return acc;
     }, { verde: 0, ambar: 0, rojo: 0 });
 
     return { ...inspeccion, details: salasConPuntos, totalCounts };
-  }));
+  });
   
   inspecciones.value = detailedInspections;
 
@@ -158,9 +159,9 @@ const handleMarkAsSent = async (formData) => {
     if (error) throw error;
     
     await fetchData();
-    alert('Registro de envío guardado con éxito.');
+    showNotification('Registro de envío guardado con éxito.', 'success');
   } catch (error) {
-    alert('Error al registrar el envío: ' + error.message);
+    showNotification('Error al registrar el envío: ' + error.message, 'error');
   } finally {
     isProcessing.value = null;
   }
@@ -170,14 +171,13 @@ const openArchivedPdf = (url) => {
   if (url) {
     window.open(url, '_blank');
   } else {
-    alert('El informe PDF para esta inspección aún no ha sido generado o archivado.');
+    showNotification('El informe PDF para esta inspección aún no ha sido generado o archivado.', 'warning');
   }
 };
 
 const reabrirInspeccion = async (inspeccion) => {
-    if (!confirm(`¿Estás seguro de que quieres reabrir la inspección del ${new Date(inspeccion.fecha_inspeccion).toLocaleDateString()}? El PDF archivado será invalidado y deberás volver a finalizarla.`)) {
-        return;
-    }
+    const confirmed = await showConfirm('Reabrir Inspección', `¿Estás seguro de que quieres reabrir la inspección del ${new Date(inspeccion.fecha_inspeccion).toLocaleDateString()}? El PDF archivado será invalidado y deberás volver a finalizarla.`);
+    if (!confirmed) return;
     isProcessing.value = inspeccion.id;
     try {
         const { error } = await supabase
@@ -190,36 +190,36 @@ const reabrirInspeccion = async (inspeccion) => {
             .eq('id', inspeccion.id);
         if (error) throw error;
         await fetchData();
-        alert('Inspección reabierta. Ahora puedes editarla de nuevo.');
+        showNotification('Inspección reabierta. Ahora puedes editarla de nuevo.', 'success');
     } catch (error) {
-        alert('Error al reabrir la inspección: ' + error.message);
+        showNotification('Error al reabrir la inspección: ' + error.message, 'error');
     } finally {
         isProcessing.value = null;
     }
 }
 
 const handleDelete = async (inspeccionId) => {
-  if (confirm('¿Estás seguro de que quieres borrar esta inspección? Esta acción es permanente y eliminará todos los datos y fotos asociados.')) {
-    try {
-      const { data: incidencias, error: getError } = await supabase.from('incidencias').select('url_foto_antes, url_foto_despues').eq('inspeccion_id', inspeccionId);
-      if (getError) throw getError;
-      const filesToDelete = [];
-      if (incidencias && incidencias.length > 0) {
-        incidencias.forEach(inc => {
-          if (inc.url_foto_antes) { const filePath = inc.url_foto_antes.split('/incidencias/')[1]; if (filePath) filesToDelete.push(filePath); }
-          if (inc.url_foto_despues) { const filePath = inc.url_foto_despues.split('/incidencias/')[1]; if (filePath) filesToDelete.push(filePath); }
-        });
-      }
-      if (filesToDelete.length > 0) {
-        await supabase.storage.from('incidencias').remove(filesToDelete);
-      }
-      const { error: deleteError } = await supabase.from('inspecciones').delete().eq('id', inspeccionId);
-      if (deleteError) throw deleteError;
-      inspecciones.value = inspecciones.value.filter(i => i.id !== inspeccionId);
-      alert('Inspección borrada con éxito.');
-    } catch (error) {
-      alert('Ocurrió un error al borrar la inspección: ' + error.message);
+  const confirmed = await showConfirm('Borrar Inspección', '¿Estás seguro de que quieres borrar esta inspección? Esta acción es permanente y eliminará todos los datos y fotos asociados.');
+  if (!confirmed) return;
+  try {
+    const { data: incidencias, error: getError } = await supabase.from('incidencias').select('url_foto_antes, url_foto_despues').eq('inspeccion_id', inspeccionId);
+    if (getError) throw getError;
+    const filesToDelete = [];
+    if (incidencias && incidencias.length > 0) {
+      incidencias.forEach(inc => {
+        if (inc.url_foto_antes) { const filePath = inc.url_foto_antes.split('/incidencias/')[1]; if (filePath) filesToDelete.push(filePath); }
+        if (inc.url_foto_despues) { const filePath = inc.url_foto_despues.split('/incidencias/')[1]; if (filePath) filesToDelete.push(filePath); }
+      });
     }
+    if (filesToDelete.length > 0) {
+      await supabase.storage.from('incidencias').remove(filesToDelete);
+    }
+    const { error: deleteError } = await supabase.from('inspecciones').delete().eq('id', inspeccionId);
+    if (deleteError) throw deleteError;
+    inspecciones.value = inspecciones.value.filter(i => i.id !== inspeccionId);
+    showNotification('Inspección borrada con éxito.', 'success');
+  } catch (error) {
+    showNotification('Ocurrió un error al borrar la inspección: ' + error.message, 'error');
   }
 };
 

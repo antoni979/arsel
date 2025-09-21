@@ -2,7 +2,7 @@
 <script setup>
 import { ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
-import { HomeIcon, ListBulletIcon, DocumentMagnifyingGlassIcon, Bars3Icon, XMarkIcon } from '@heroicons/vue/24/outline';
+import { HomeIcon, ListBulletIcon, DocumentMagnifyingGlassIcon, Cog6ToothIcon, Bars3Icon, XMarkIcon } from '@heroicons/vue/24/outline';
 import { supabase } from '../supabase';
 import { useRouter } from 'vue-router';
 
@@ -14,6 +14,7 @@ const navigation = [
   { name: 'Menú Principal', href: '/dashboard', icon: HomeIcon },
   { name: 'Maestro de Centros', href: '/centros', icon: ListBulletIcon },
   { name: 'Inspecciones', href: '/inspecciones', icon: DocumentMagnifyingGlassIcon },
+  { name: 'Admin', href: '/admin', icon: Cog6ToothIcon },
 ];
 
 const isActive = (href) => {

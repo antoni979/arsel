@@ -20,7 +20,9 @@ const emit = defineEmits(['close', 'save', 'update-nomenclatura']);
 const incidencias = ref([]);
 const loading = ref(false);
 const isUploading = ref(null);
-const puntoInspeccionado = computed(() => props.punto); 
+const puntoInspeccionado = computed(() => props.punto);
+const customFields = ref([]);
+const customValues = ref({});
 const collapsedItems = ref(new Set());
 
 const isEditingName = ref(false);
@@ -71,13 +73,28 @@ const loadData = async () => {
   loading.value = true;
   isEditingName.value = false;
   collapsedItems.value.clear();
-  
-  const { data: incidenciasData } = await supabase
-    .from('incidencias')
-    .select('*')
-    .eq('punto_inspeccionado_id', props.punto.id);
-    
-  incidencias.value = incidenciasData || [];
+
+  const [incidenciasRes, fieldsRes] = await Promise.all([
+    supabase.from('incidencias').select('*').eq('punto_inspeccionado_id', props.punto.id),
+    supabase.from('checklist_custom_fields').select('*').order('point_id, id')
+  ]);
+
+  incidencias.value = incidenciasRes.data || [];
+  customFields.value = fieldsRes.data || [];
+  customValues.value = {};
+
+  // Initialize custom values for all items
+  checklistItems.forEach(item => {
+    if (!customValues.value[item.id]) customValues.value[item.id] = {};
+  });
+
+  // Load existing custom values per item
+  incidencias.value.forEach(inc => {
+    if (inc.custom_fields) {
+      Object.assign(customValues.value[inc.item_checklist], inc.custom_fields);
+    }
+  });
+
   loading.value = false;
 };
 
@@ -86,9 +103,9 @@ watch(() => props.isOpen, (newVal) => {
 });
 
 const gravedadOptions = [
-  { label: 'Leve', value: 'verde' },
-  { label: 'Moderado', value: 'ambar' },
-  { label: 'Grave', value: 'rojo' },
+  { label: 'Verde', value: 'verde' },
+  { label: 'Ambar', value: 'ambar' },
+  { label: 'Rojo', value: 'rojo' },
 ];
 
 const tienePlaca = computed({
@@ -170,18 +187,46 @@ const getIncidenciasForItem = (itemId) => {
     return computed(() => incidencias.value.filter(inc => inc.item_checklist === itemId));
 };
 
+const getCustomFieldsForItem = (itemId) => {
+    return customFields.value.filter(field => field.point_id === itemId);
+};
+
 const addIncidencia = async (itemId, defaults = {}) => {
   if (!puntoInspeccionado.value) return;
+
+  // Validate custom fields for this item
+  const itemFields = getCustomFieldsForItem(itemId);
+  for (const field of itemFields) {
+    if (field.required && !customValues.value[itemId]?.[field.id]) {
+      alert(`El campo "${field.field_name}" es obligatorio.`);
+      return;
+    }
+  }
+
+  let defaultSeverity = defaults.gravedad || 'verde';
+  if (!defaults.gravedad) {
+    // Fetch default from DB
+    const { data: def } = await supabase
+      .from('checklist_defaults')
+      .select('default_severity')
+      .eq('point_id', itemId)
+      .single();
+    if (def) {
+      defaultSeverity = def.default_severity;
+    }
+  }
+
   const { data: newIncidencia } = await supabase
     .from('incidencias')
     .insert({
       punto_inspeccionado_id: puntoInspeccionado.value.id,
       inspeccion_id: props.inspeccionId,
       item_checklist: itemId,
-      gravedad: defaults.gravedad || 'verde',
-      observaciones: defaults.observaciones || null
+      gravedad: defaultSeverity,
+      observaciones: defaults.observaciones || null,
+      custom_fields: customValues.value[itemId] || {}
     }).select().single();
-    
+
   if (newIncidencia) {
     incidencias.value.push(newIncidencia);
   }
@@ -310,16 +355,54 @@ const handleClose = () => {
           <div v-for="item in checklistItems" :key="item.id" class="bg-white rounded-lg shadow-sm border transition-all duration-300">
             <div class="p-3 flex items-center justify-between">
               <p class="text-slate-700">{{ item.id }}. {{ item.text }}</p>
-              <button 
+              <button
                 @click="toggleItemStatus(item.id)"
                 :disabled="item.id === 3"
-                :class="['px-3 py-1 text-xs font-bold rounded-full disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500', 
+                :class="['px-3 py-1 text-xs font-bold rounded-full disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500',
                          getIncidenciasForItem(item.id).value.length > 0 ? 'bg-red-100 text-red-800 hover:bg-red-200' : 'bg-green-100 text-green-800 hover:bg-green-200']"
               >
                 {{ getIncidenciasForItem(item.id).value.length > 0 ? 'INSATISFACTORIO' : 'SATISFACTORIO' }}
               </button>
             </div>
-            
+
+            <!-- Campos Personalizados por Item -->
+            <div v-if="getCustomFieldsForItem(item.id).length > 0" class="bg-green-50 border-2 border-green-200 rounded-lg p-4 mb-6">
+              <h4 class="font-bold text-green-800 mb-3">Campos Adicionales para {{ item.id }}. {{ item.text }}</h4>
+              <div class="space-y-4">
+                <div v-for="field in getCustomFieldsForItem(item.id)" :key="field.id" class="space-y-2">
+                  <label class="block text-sm font-medium text-slate-700">
+                    {{ field.field_name }}
+                    <span v-if="field.required" class="text-red-500">*</span>
+                  </label>
+                  <input
+                    v-if="field.field_type === 'text'"
+                    v-model="customValues[item.id][field.id]"
+                    type="text"
+                    :required="field.required"
+                    class="w-full rounded-md border-slate-300 shadow-sm focus:border-green-500 focus:ring-green-500"
+                    :placeholder="`Ingrese ${field.field_name.toLowerCase()}`"
+                  >
+                  <input
+                    v-else-if="field.field_type === 'number'"
+                    v-model.number="customValues[item.id][field.id]"
+                    type="number"
+                    :required="field.required"
+                    class="w-full rounded-md border-slate-300 shadow-sm focus:border-green-500 focus:ring-green-500"
+                    :placeholder="`Ingrese ${field.field_name.toLowerCase()}`"
+                  >
+                  <select
+                    v-else-if="field.field_type === 'select'"
+                    v-model="customValues[item.id][field.id]"
+                    :required="field.required"
+                    class="w-full rounded-md border-slate-300 shadow-sm focus:border-green-500 focus:ring-green-500"
+                  >
+                    <option value="">Seleccionar...</option>
+                    <option v-for="option in field.options" :key="option" :value="option">{{ option }}</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
             <div v-if="getIncidenciasForItem(item.id).value.length > 0" class="border-t">
               <div 
                 @click="toggleCollapse(item.id)" 

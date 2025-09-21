@@ -1,15 +1,17 @@
 <!-- src/views/InspeccionesListView.vue -->
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, inject } from 'vue';
 import { useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 
 const router = useRouter();
+const showNotification = inject('showNotification');
 const centros = ref([]);
 const loading = ref(true);
 const isStarting = ref(false);
 const searchTerm = ref('');
 const tecnicoNombre = ref('');
+const fechaInspeccion = ref(new Date().toISOString().slice(0, 10));
 
 const filteredCentros = computed(() => {
   if (!searchTerm.value) return centros.value;
@@ -21,7 +23,16 @@ const filteredCentros = computed(() => {
 // === INICIO DE LA LÓGICA CORREGIDA ===
 const startInspection = async (centroId) => {
   if (!tecnicoNombre.value.trim()) {
-    alert('Por favor, introduce el nombre del técnico para continuar.');
+    showNotification('Por favor, introduce el nombre del técnico para continuar.', 'warning');
+    return;
+  }
+  if (!fechaInspeccion.value) {
+    showNotification('Por favor, selecciona una fecha de inspección.', 'warning');
+    return;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (fechaInspeccion.value > today) {
+    showNotification('La fecha de inspección no puede ser futura.', 'warning');
     return;
   }
   isStarting.value = true;
@@ -35,7 +46,7 @@ const startInspection = async (centroId) => {
     .single();
 
   if (versionError || !activeVersion) {
-    alert('Error: Este centro no tiene una versión de plano activa. Por favor, configúralo en el Maestro de Centros.');
+    showNotification('Error: Este centro no tiene una versión de plano activa. Por favor, configúralo en el Maestro de Centros.', 'error');
     console.error("Error buscando versión activa:", versionError);
     isStarting.value = false;
     return;
@@ -49,9 +60,9 @@ const startInspection = async (centroId) => {
     .eq('centro_id', centroId)
     .eq('estado', 'en_progreso')
     .maybeSingle();
-  
+
   if (findError) {
-    alert('Error buscando inspección existente: ' + findError.message);
+    showNotification('Error buscando inspección existente: ' + findError.message, 'error');
     isStarting.value = false;
     return;
   }
@@ -60,29 +71,29 @@ const startInspection = async (centroId) => {
   if (!inspection) {
     const { data: newInspection, error: createError } = await supabase
       .from('inspecciones')
-      .insert({ 
-        centro_id: centroId, 
+      .insert({
+        centro_id: centroId,
         version_id: versionId, // <-- Guardamos la versión correcta
         estado: 'en_progreso',
         tecnico_nombre: tecnicoNombre.value.trim(),
-        fecha_inspeccion: new Date().toISOString().slice(0, 10)
+        fecha_inspeccion: fechaInspeccion.value
       })
       .select('id')
       .single();
-    
+
     if (createError) {
-      alert('Error creando inspección: ' + createError.message);
+      showNotification('Error creando inspección: ' + createError.message, 'error');
       isStarting.value = false;
       return;
     }
     inspection = newInspection;
   } else {
     // Si ya existía, la actualizamos para asegurarnos de que usa la última versión activa
-     await supabase.from('inspecciones').update({ 
-      tecnico_nombre: tecnicoNombre.value.trim(),
-      fecha_inspeccion: new Date().toISOString().slice(0, 10),
-      version_id: versionId // <-- Actualizamos también la versión
-    }).eq('id', inspection.id);
+     await supabase.from('inspecciones').update({
+       tecnico_nombre: tecnicoNombre.value.trim(),
+       fecha_inspeccion: fechaInspeccion.value,
+       version_id: versionId // <-- Actualizamos también la versión
+     }).eq('id', inspection.id);
   }
 
   // 4. Navegar a la página de detalle
@@ -105,11 +116,21 @@ onMounted(async () => {
       
       <div class="mb-6">
         <label for="tecnico" class="block text-sm font-medium text-slate-700 mb-1">Nombre del Técnico</label>
-        <input 
-          v-model="tecnicoNombre" 
-          id="tecnico" 
-          type="text" 
-          placeholder="Escribe tu nombre..." 
+        <input
+          v-model="tecnicoNombre"
+          id="tecnico"
+          type="text"
+          placeholder="Escribe tu nombre..."
+          class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+        >
+      </div>
+
+      <div class="mb-6">
+        <label for="fecha" class="block text-sm font-medium text-slate-700 mb-1">Fecha de Inspección</label>
+        <input
+          v-model="fechaInspeccion"
+          id="fecha"
+          type="date"
           class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
         >
       </div>
