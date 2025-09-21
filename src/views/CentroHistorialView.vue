@@ -7,11 +7,12 @@ import {
   EyeIcon, 
   TrashIcon, 
   PaperAirplaneIcon, 
-  ArchiveBoxIcon, // Cambiamos el icono para "Cierre"
+  ArchiveBoxIcon, 
   MapIcon, 
   ArrowDownCircleIcon,
   ArrowUturnLeftIcon,
-  UserIcon
+  UserIcon,
+  ChevronDownIcon
 } from '@heroicons/vue/24/outline';
 import MarkAsSentModal from '../components/MarkAsSentModal.vue';
 
@@ -28,8 +29,16 @@ const selectedInspeccion = ref(null);
 
 const availableYears = ref([]);
 const selectedYear = ref(null);
+const expandedInspectionId = ref(null);
 
-// ===== CORRECCIÓN DE TEXTO =====
+const toggleDetails = (inspeccionId) => {
+  if (expandedInspectionId.value === inspeccionId) {
+    expandedInspectionId.value = null;
+  } else {
+    expandedInspectionId.value = inspeccionId;
+  }
+};
+
 const estadoInfo = computed(() => (estado) => {
   switch (estado) {
     case 'en_progreso': return { text: 'En Progreso', class: 'bg-blue-100 text-blue-800' };
@@ -48,6 +57,83 @@ const filteredInspecciones = computed(() => {
     return new Date(inspeccion.fecha_inspeccion).getFullYear() === selectedYear.value;
   });
 });
+
+const fetchData = async () => {
+  loading.value = true;
+  const { data: centroData } = await supabase.from('centros').select('nombre').eq('id', centroId).single();
+  centro.value = centroData;
+  
+  const { data: inspeccionesData } = await supabase
+    .from('inspecciones')
+    .select('*, versiones_plano(id, nombre)')
+    .eq('centro_id', centroId)
+    .order('fecha_inspeccion', { ascending: false });
+
+  if (!inspeccionesData) {
+    inspecciones.value = [];
+    loading.value = false;
+    return;
+  }
+
+  const detailedInspections = await Promise.all(inspeccionesData.map(async (inspeccion) => {
+    const { data: salas } = await supabase
+        .from('salas')
+        .select('id, nombre')
+        .eq('version_id', inspeccion.versiones_plano.id);
+    
+    // Para encontrar la sala de un punto, necesitamos los puntos maestros
+    const { data: puntosMaestros } = await supabase
+        .from('puntos_maestros')
+        .select('id, sala_id')
+        .eq('version_id', inspeccion.versiones_plano.id);
+    
+    const puntoMaestroMap = new Map(puntosMaestros.map(pm => [pm.id, pm.sala_id]));
+
+    const { data: puntos } = await supabase
+      .from('puntos_inspeccionados')
+      .select('id, nomenclatura, punto_maestro_id, incidencias(gravedad)')
+      .eq('inspeccion_id', inspeccion.id);
+
+    const salasConPuntos = (salas || []).map(sala => {
+      const puntosDeLaSala = (puntos || [])
+        .filter(p => puntoMaestroMap.get(p.punto_maestro_id) === sala.id)
+        .map(punto => {
+          const counts = { verde: 0, ambar: 0, rojo: 0 };
+          (punto.incidencias || []).forEach(inc => {
+            if(counts[inc.gravedad] !== undefined) counts[inc.gravedad]++;
+          });
+          return { ...punto, counts };
+        }).sort((a,b) => a.nomenclatura.localeCompare(b.nomenclatura, undefined, {numeric: true}));
+      
+      const salaCounts = puntosDeLaSala.reduce((acc, punto) => {
+        acc.verde += punto.counts.verde;
+        acc.ambar += punto.counts.ambar;
+        acc.rojo += punto.counts.rojo;
+        return acc;
+      }, { verde: 0, ambar: 0, rojo: 0 });
+
+      return { ...sala, puntos: puntosDeLaSala, counts: salaCounts };
+    }).filter(s => s.puntos.length > 0);
+    
+    const totalCounts = salasConPuntos.reduce((acc, sala) => {
+        acc.verde += sala.counts.verde;
+        acc.ambar += sala.counts.ambar;
+        acc.rojo += sala.counts.rojo;
+        return acc;
+    }, { verde: 0, ambar: 0, rojo: 0 });
+
+    return { ...inspeccion, details: salasConPuntos, totalCounts };
+  }));
+  
+  inspecciones.value = detailedInspections;
+
+  if (inspecciones.value.length > 0) {
+    const years = new Set(inspecciones.value.map(i => new Date(i.fecha_inspeccion).getFullYear()));
+    availableYears.value = Array.from(years).sort((a, b) => b - a);
+  }
+
+  loading.value = false;
+};
 
 const openSentModal = (inspeccion) => {
   selectedInspeccion.value = inspeccion;
@@ -112,26 +198,6 @@ const reabrirInspeccion = async (inspeccion) => {
     }
 }
 
-const fetchData = async () => {
-  loading.value = true;
-  const { data: centroData } = await supabase.from('centros').select('nombre').eq('id', centroId).single();
-  centro.value = centroData;
-  const { data: inspeccionesData } = await supabase
-    .from('vista_historial_inspecciones')
-    .select('*')
-    .eq('centro_id', centroId)
-    .order('fecha_inspeccion', { ascending: false });
-  
-  inspecciones.value = inspeccionesData || [];
-
-  if (inspecciones.value.length > 0) {
-    const years = new Set(inspecciones.value.map(i => new Date(i.fecha_inspeccion).getFullYear()));
-    availableYears.value = Array.from(years).sort((a, b) => b - a);
-  }
-
-  loading.value = false;
-};
-
 const handleDelete = async (inspeccionId) => {
   if (confirm('¿Estás seguro de que quieres borrar esta inspección? Esta acción es permanente y eliminará todos los datos y fotos asociados.')) {
     try {
@@ -162,7 +228,7 @@ onMounted(fetchData);
 
 <template>
   <div class="p-4 md:p-8">
-    <div v-if="loading">Cargando...</div>
+    <div v-if="loading" class="text-center p-10">Cargando historial...</div>
     <div v-else-if="centro">
       <div class="flex flex-col md:flex-row justify-between md:items-center mb-4 gap-4">
         <div>
@@ -194,8 +260,9 @@ onMounted(fetchData);
         <div v-if="filteredInspecciones.length === 0" class="p-8 text-center text-slate-500 bg-white rounded-xl shadow-sm border">
           No hay inspecciones para el año seleccionado.
         </div>
-        <div v-for="inspeccion in filteredInspecciones" :key="inspeccion.id" class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-center">
+        
+        <div v-for="inspeccion in filteredInspecciones" :key="inspeccion.id" class="bg-white rounded-xl shadow-sm border border-slate-200 transition-all">
+          <div class="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-center">
             
             <div class="space-y-2">
               <div>
@@ -216,9 +283,9 @@ onMounted(fetchData);
                  </span>
                </div>
                <div class="flex items-center gap-x-3" title="Incidencias: Leves / Moderadas / Graves">
-                  <div class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-green-500"></span><span class="font-bold text-sm text-slate-700">{{ inspeccion.incidencias_verdes }}</span></div>
-                  <div class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-amber-500"></span><span class="font-bold text-sm text-slate-700">{{ inspeccion.incidencias_ambares }}</span></div>
-                  <div class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-red-500"></span><span class="font-bold text-sm text-slate-700">{{ inspeccion.incidencias_rojas }}</span></div>
+                  <div class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-green-500"></span><span class="font-bold text-sm text-slate-700">{{ inspeccion.totalCounts.verde }}</span></div>
+                  <div class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-amber-500"></span><span class="font-bold text-sm text-slate-700">{{ inspeccion.totalCounts.ambar }}</span></div>
+                  <div class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-red-500"></span><span class="font-bold text-sm text-slate-700">{{ inspeccion.totalCounts.rojo }}</span></div>
               </div>
             </div>
 
@@ -227,7 +294,6 @@ onMounted(fetchData);
                 <PaperAirplaneIcon class="h-4 w-4" /> Marcar Envío
               </button>
               
-              <!-- ===== CORRECCIÓN DE TEXTO, ICONO Y ENLACE ===== -->
               <router-link v-if="inspeccion.estado === 'pendiente_subsanacion'" :to="`/inspecciones/${inspeccion.id}/cierre`" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200">
                 <ArchiveBoxIcon class="h-4 w-4" /> Cierre
               </router-link>
@@ -250,6 +316,41 @@ onMounted(fetchData);
                     <ArrowUturnLeftIcon class="h-5 w-5" />
                 </button>
                 <button @click="handleDelete(inspeccion.id)" class="p-2 text-slate-500 hover:text-red-600" title="Borrar Inspección"><TrashIcon class="h-5 w-5" /></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="px-4 pb-2 text-center">
+            <button @click="toggleDetails(inspeccion.id)" class="w-full text-xs font-semibold text-slate-500 hover:text-blue-600 flex items-center justify-center gap-1 py-1 border-t border-slate-200">
+              <span>{{ expandedInspectionId === inspeccion.id ? 'Ocultar Detalles' : 'Mostrar Detalles' }}</span>
+              <ChevronDownIcon class="h-4 w-4 transition-transform" :class="{'rotate-180': expandedInspectionId === inspeccion.id}" />
+            </button>
+          </div>
+
+          <div v-if="expandedInspectionId === inspeccion.id" class="border-t border-slate-200 p-4 bg-slate-50/50">
+            <div class="space-y-3">
+              <div v-if="inspeccion.details.length === 0" class="text-center text-sm text-slate-500 py-4">
+                  No hay puntos con incidencias en esta inspección.
+              </div>
+              <div v-for="sala in inspeccion.details" :key="sala.id" class="bg-white p-3 rounded-md border">
+                <div class="flex justify-between items-center mb-2">
+                  <h4 class="font-bold text-slate-800">{{ sala.nombre }}</h4>
+                  <div class="flex items-center gap-x-3" title="Incidencias: Leves / Moderadas / Graves">
+                    <div class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-green-500"></span><span class="font-bold text-sm text-slate-700">{{ sala.counts.verde }}</span></div>
+                    <div class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-amber-500"></span><span class="font-bold text-sm text-slate-700">{{ sala.counts.ambar }}</span></div>
+                    <div class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-red-500"></span><span class="font-bold text-sm text-slate-700">{{ sala.counts.rojo }}</span></div>
+                  </div>
+                </div>
+                <ul class="divide-y divide-slate-100">
+                  <li v-for="punto in sala.puntos" :key="punto.id" class="py-1.5 flex justify-between items-center text-sm">
+                    <span class="text-slate-600">{{ punto.nomenclatura }}</span>
+                     <div class="flex items-center gap-x-3">
+                      <div class="flex items-center gap-1.5 w-8 justify-end"><span class="h-2 w-2 rounded-full bg-green-500"></span><span class="font-medium text-xs text-slate-700">{{ punto.counts.verde }}</span></div>
+                      <div class="flex items-center gap-1.5 w-8 justify-end"><span class="h-2 w-2 rounded-full bg-amber-500"></span><span class="font-medium text-xs text-slate-700">{{ punto.counts.ambar }}</span></div>
+                      <div class="flex items-center gap-1.5 w-8 justify-end"><span class="h-2 w-2 rounded-full bg-red-500"></span><span class="font-medium text-xs text-slate-700">{{ punto.counts.rojo }}</span></div>
+                    </div>
+                  </li>
+                </ul>
               </div>
             </div>
           </div>
