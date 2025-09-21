@@ -2,9 +2,8 @@
 
 import autoTable from 'jspdf-autotable';
 import { checklistItems } from '../checklist';
-import { MARGIN, DOC_WIDTH, FONT_SIZES } from './pdf-helpers';
+import { MARGIN, FONT_SIZES, DOC_WIDTH } from './pdf-helpers';
 
-// Helper para determinar la gravedad máxima de un grupo de incidencias
 function getHighestSeverity(incidencias) {
     if (incidencias.some(inc => inc.gravedad === 'rojo')) return 'rojo';
     if (incidencias.some(inc => inc.gravedad === 'ambar')) return 'ambar';
@@ -15,7 +14,6 @@ function getHighestSeverity(incidencias) {
 export async function buildChecklistAnnex(pdf, reportData) {
     const { inspectionData, salasData, puntosMaestrosData, puntosInspeccionadosData, incidenciasData } = reportData;
 
-    // Lógica de filtrado principal
     if (!incidenciasData || incidenciasData.length === 0) {
         return;
     }
@@ -29,7 +27,6 @@ export async function buildChecklistAnnex(pdf, reportData) {
         return;
     }
 
-    // Página de portada del anexo
     pdf.addPage();
     autoTable(pdf, {
         body: [['ANEXO 02:\nCHECKLIST']],
@@ -40,7 +37,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
             fontStyle: 'bold', 
             halign: 'center',
             font: 'helvetica',
-            textColor: 0 // <-- AÑADIDO: Color de texto negro
+            textColor: 0
         },
         margin: { left: MARGIN, right: MARGIN }
     });
@@ -57,40 +54,63 @@ export async function buildChecklistAnnex(pdf, reportData) {
         for (const puntoMaestro of puntosDeLaSala) {
             pdf.addPage();
 
+            // ===== INICIO DE LA CORRECCIÓN DEFINITIVA DE ANCHOS =====
+            const ANCHO_TOTAL = DOC_WIDTH - (MARGIN * 2); // Ancho total disponible: 210 - 30 = 180
+
+            // Tabla 1: Título Naranja
             autoTable(pdf, {
                 body: [['FORMATO DE INSPECCIÓN DEL SISTEMA DE ALMACENAJE']],
                 startY: 25,
-                theme: 'plain',
-                styles: { fontSize: FONT_SIZES.h2, fontStyle: 'bold', halign: 'center', font: 'helvetica', textColor: 0 }, // <-- AÑADIDO
+                theme: 'grid',
+                styles: {
+                    fontSize: 10,
+                    fontStyle: 'bold',
+                    halign: 'center',
+                    fillColor: [255, 192, 0],
+                    textColor: 0,
+                    lineColor: 0,
+                    lineWidth: 0.1,
+                    minCellHeight: 8
+                },
                 margin: { left: MARGIN, right: MARGIN }
             });
 
+            // Tabla 2: Información del Centro
             autoTable(pdf, {
                 body: [[
                     `HIPERMERCADO: ${inspectionData.centros.nombre.toUpperCase()}`,
                     `Reserva: ${sala.nombre.toUpperCase()}`,
                     `Alineación: ${puntoMaestro.nomenclatura.split('-').pop()}`
                 ]],
-                startY: pdf.lastAutoTable.finalY + 1,
+                startY: pdf.lastAutoTable.finalY,
                 theme: 'grid',
-                styles: { fontSize: FONT_SIZES.body, fontStyle: 'normal', lineColor: 0, lineWidth: 0.1, font: 'helvetica', textColor: 0 }, // <-- AÑADIDO
-                headStyles: { fillColor: [255, 192, 0] },
+                styles: {
+                    fontStyle: 'bold',
+                    fontSize: 9,
+                    textColor: 0,
+                    lineColor: 0,
+                    lineWidth: 0.1,
+                    valign: 'middle',
+                    minCellHeight: 8
+                },
                 columnStyles: {
-                    0: { cellWidth: 100 },
-                    1: { cellWidth: 40 },
-                    2: { cellWidth: 40, halign: 'left' }
+                    0: { cellWidth: 108, halign: 'left' }, // Ancho ajustado
+                    1: { cellWidth: 42, halign: 'center' }, // Ancho ajustado
+                    2: { cellWidth: 30, halign: 'center' } // Ancho ajustado
                 },
                 margin: { left: MARGIN, right: MARGIN }
             });
-
+            
             const puntoInspeccionado = puntosInspeccionadosData.find(pi => pi.punto_maestro_id === puntoMaestro.id);
             const puntoInspeccionadoId = puntoInspeccionado ? puntoInspeccionado.id : null;
+            
             const head = [
-                [{ content: 'Parámetro de control', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-                { content: 'S', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-                { content: 'I', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } }, 
-                { content: 'N', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-                { content: 'RIESGO', colSpan: 3, styles: { halign: 'center' } }],
+                [
+                    { content: 'Parámetro de control', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+                    { content: 'S', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+                    { content: 'I', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } }, 
+                    { content: 'RIESGO', colSpan: 3, styles: { halign: 'center' } }
+                ],
                 ['V', 'A', 'R']
             ];
             
@@ -103,25 +123,27 @@ export async function buildChecklistAnnex(pdf, reportData) {
                     `${item.id}. ${item.text}`,
                     !tieneIncidencias ? 'X' : '',
                     tieneIncidencias ? 'X' : '',
-                    '', // N/A
                     maxSeverity === 'verde' ? 'X' : '',
                     maxSeverity === 'ambar' ? 'X' : '',
                     maxSeverity === 'rojo' ? 'X' : '',
                 ];
             });
 
+            // Tabla 3: Checklist Principal
             autoTable(pdf, {
                 head, body, 
-                startY: pdf.lastAutoTable.finalY, 
+                startY: pdf.lastAutoTable.finalY,
                 margin: { left: MARGIN, right: MARGIN }, 
                 theme: 'grid',
-                headStyles: { fillColor: [255, 192, 0], textColor: 0, fontStyle: 'bold', halign: 'center', fontSize: 7, lineColor: 0, lineWidth: 0.1, font: 'helvetica' },
-                // --- INICIO DE LA CORRECCIÓN ---
-                styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak', lineColor: 0, lineWidth: 0.1, font: 'helvetica', textColor: 0 },
-                // --- FIN DE LA CORRECCIÓN ---
+                headStyles: { fillColor: [220, 220, 220], textColor: 0, fontStyle: 'bold', halign: 'center', fontSize: 7, lineColor: 0, lineWidth: 0.1, font: 'helvetica' },
+                styles: { fontSize: 8, cellPadding: 1.5, overflow: 'linebreak', lineColor: 0, lineWidth: 0.1, font: 'helvetica', textColor: 0 },
                 columnStyles: {
-                    0: { cellWidth: 129 }, 1: { cellWidth: 7, halign: 'center' }, 2: { cellWidth: 7, halign: 'center' }, 3: { cellWidth: 7, halign: 'center' },
-                    4: { cellWidth: 10, halign: 'center' }, 5: { cellWidth: 10, halign: 'center' }, 6: { cellWidth: 10, halign: 'center' },
+                    0: { cellWidth: 136 }, // 180 - 7 - 7 - 10 - 10 - 10 = 136
+                    1: { cellWidth: 7, halign: 'center' }, 
+                    2: { cellWidth: 7, halign: 'center' }, 
+                    3: { cellWidth: 10, halign: 'center' }, 
+                    4: { cellWidth: 10, halign: 'center' }, 
+                    5: { cellWidth: 10, halign: 'center' },
                 },
             });
 
@@ -129,21 +151,14 @@ export async function buildChecklistAnnex(pdf, reportData) {
 
             const observacionesDelPunto = incidenciasData
                 .filter(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && inc.observaciones && inc.observaciones.trim() !== '')
-                .map((obs) => {
-                    const itemIncidencias = incidenciasData.filter(i => i.punto_inspeccionado_id === puntoInspeccionadoId && i.item_checklist === obs.item_checklist);
-                    const obsIndex = itemIncidencias.findIndex(i => i.id === obs.id);
-                    const numTotal = itemIncidencias.length;
-                    const countStr = numTotal > 1 ? ` (${obsIndex + 1}/${numTotal})` : '';
-
-                    return `Parámetro ${obs.item_checklist}${countStr}: ${obs.observaciones}`;
-                })
+                .map((obs) => `Parámetro ${obs.item_checklist}: ${obs.observaciones}`)
                 .join('\n');
             
             autoTable(pdf, {
                 body: [[{ content: `Observaciones:\n${observacionesDelPunto}`, styles: { fontStyle: 'bold', valign: 'top' } }]],
                 startY: finalY,
                 theme: 'grid',
-                styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 20, font: 'helvetica', textColor: 0 }, // <-- AÑADIDO
+                styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 20, font: 'helvetica', textColor: 0 },
                 margin: { left: MARGIN, right: MARGIN }
             });
 
@@ -155,16 +170,16 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 ]],
                 startY: pdf.lastAutoTable.finalY,
                 theme: 'grid',
-                styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 15, valign: 'top', font: 'helvetica', textColor: 0 }, // <-- AÑADIDO
+                styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 15, valign: 'top', font: 'helvetica', textColor: 0 },
                 columnStyles: { 1: { halign: 'left' } },
                 margin: { left: MARGIN, right: MARGIN }
             });
 
             autoTable(pdf, {
-                body: [['S: Satisfactorio, I: Insatisfactorio, N: No aplica; V: Verde, A: Ámbar, R: Rojo']],
+                body: [['S: Satisfactorio, I: Insatisfactorio; V: Verde, A: Ámbar, R: Rojo']],
                 startY: pdf.lastAutoTable.finalY,
                 theme: 'plain',
-                styles: { fontSize: 7, halign: 'left', font: 'helvetica', textColor: 0 }, // <-- AÑADIDO
+                styles: { fontSize: 7, halign: 'left', font: 'helvetica', textColor: 0 },
                 margin: { left: MARGIN, right: MARGIN }
             });
         }
