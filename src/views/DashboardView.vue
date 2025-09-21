@@ -10,77 +10,114 @@ import {
   CheckBadgeIcon,
   ArchiveBoxIcon
 } from '@heroicons/vue/24/outline';
-import { Line } from 'vue-chartjs'; // Eliminamos 'Bar'
-import { Chart as ChartJS, Title, Tooltip, Legend, LineElement, PointElement, CategoryScale, LinearScale } from 'chart.js'; // Eliminamos 'BarElement'
+import { Line } from 'vue-chartjs';
+import { Chart as ChartJS, Title, Tooltip, Legend, LineElement, PointElement, CategoryScale, LinearScale } from 'chart.js';
 
-ChartJS.register(Title, Tooltip, Legend, LineElement, PointElement, CategoryScale, LinearScale); // Eliminamos 'BarElement'
+ChartJS.register(Title, Tooltip, Legend, LineElement, PointElement, CategoryScale, LinearScale);
 
 const loading = ref(true);
 const centros = ref([]);
 const resumenInspecciones = ref([]);
 const router = useRouter();
 
+// ===== INICIO DE LA CORRECCIÓN: Función robusta para parsear fechas =====
+function parseDate(dateString) {
+  if (!dateString) return null;
+  // Añadimos 'T00:00:00' para asegurar que se interprete como la medianoche en la zona horaria local,
+  // evitando problemas de desplazamiento de un día.
+  return new Date(`${dateString}T00:00:00`);
+}
+// ===== FIN DE LA CORRECCIÓN =====
+
+
 onMounted(async () => {
   loading.value = true;
   const [centrosRes, resumenRes] = await Promise.all([
     supabase.from('centros').select('id', { count: 'exact' }),
-    // Pedimos también la fecha de finalización para el gráfico
-    supabase.from('vista_resumen_inspecciones').select('*, fecha_envio_cliente')
+    supabase.from('vista_resumen_inspecciones').select('*')
   ]);
   
   centros.value = centrosRes.data || [];
-  resumenInspecciones.value = resumenRes.data || [];
+  
+  // ===== INICIO DE LA CORRECCIÓN: Procesamos las fechas al recibir los datos =====
+  if (resumenRes.data) {
+    resumenInspecciones.value = resumenRes.data.map(inspeccion => ({
+      ...inspeccion,
+      fecha_inspeccion_obj: parseDate(inspeccion.fecha_inspeccion),
+      fecha_envio_cliente_obj: parseDate(inspeccion.fecha_envio_cliente),
+    }));
+  } else {
+    resumenInspecciones.value = [];
+  }
+  // ===== FIN DE LA CORRECCIÓN =====
+  
   loading.value = false;
 });
 
 const totalCentros = computed(() => centros.value.length);
 const inspeccionesEnProgreso = computed(() => resumenInspecciones.value.filter(i => i.estado === 'en_progreso').length);
 const inspeccionesPendientesEnvio = computed(() => resumenInspecciones.value.filter(i => i.estado === 'finalizada').length);
-// ===== CORRECCIÓN DEL NOMBRE DE LA VARIABLE =====
 const inspeccionesPendientesCierre = computed(() => resumenInspecciones.value.filter(i => i.estado === 'pendiente_subsanacion').length);
 const inspeccionesCerradas = computed(() => resumenInspecciones.value.filter(i => i.estado === 'cerrada').length);
 
-// ===== LÓGICA DEL GRÁFICO CORREGIDA =====
+
 const actividadMensual = computed(() => {
     const meses = {};
     const hoy = new Date();
-    // Preparamos los últimos 12 meses
+    
     for (let i = 11; i >= 0; i--) {
         const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
-        const clave = d.toISOString().slice(0, 7); // Formato 'YYYY-MM'
+        const clave = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; // 'YYYY-MM'
         const etiqueta = d.toLocaleString('es-ES', { month: 'short', year: '2-digit' });
-        meses[clave] = { etiqueta, realizadas: 0, cerradas: 0 };
+        meses[clave] = { etiqueta, iniciales: 0, cierres: 0 };
     }
-    // Contamos las inspecciones realizadas
+    
+    // ===== INICIO DE LA CORRECCIÓN: Usamos las fechas ya procesadas =====
     resumenInspecciones.value.forEach(inspeccion => {
-        if (inspeccion.fecha_inspeccion) {
-            const claveMesRealizada = inspeccion.fecha_inspeccion.slice(0, 7);
-            if (meses[claveMesRealizada]) {
-                meses[claveMesRealizada].realizadas++;
+        if (inspeccion.fecha_inspeccion_obj) {
+            const fecha = inspeccion.fecha_inspeccion_obj;
+            const claveMesInicial = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`;
+            if (meses[claveMesInicial]) {
+                meses[claveMesInicial].iniciales++;
             }
         }
-        // Contamos las inspecciones cerradas (usando la fecha de envío, que es cuando se cierra)
-        if (inspeccion.estado === 'cerrada' && inspeccion.fecha_envio_cliente) {
-             const claveMesCierre = inspeccion.fecha_envio_cliente.slice(0, 7);
+        
+        if (inspeccion.estado === 'cerrada' && inspeccion.fecha_envio_cliente_obj) {
+             const fecha = inspeccion.fecha_envio_cliente_obj;
+             const claveMesCierre = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`;
              if (meses[claveMesCierre]) {
-                meses[claveMesCierre].cerradas++;
+                meses[claveMesCierre].cierres++;
             }
         }
     });
+    // ===== FIN DE LA CORRECCIÓN =====
+    
     return Object.values(meses);
 });
 
 const monthlyChartData = computed(() => ({
   labels: actividadMensual.value.map(m => m.etiqueta),
   datasets: [
-    { label: 'Informes Iniciales', backgroundColor: '#3B82F6', borderColor: '#3B82F6', data: actividadMensual.value.map(m => m.realizadas), tension: 0.2 },
-    { label: 'Informes de Cierre', backgroundColor: '#22C55E', borderColor: '#22C55E', data: actividadMensual.value.map(m => m.cerradas), tension: 0.2 }
+    { 
+      label: 'Informes Iniciales', 
+      backgroundColor: '#3B82F6', 
+      borderColor: '#3B82F6', 
+      data: actividadMensual.value.map(m => m.iniciales), 
+      tension: 0.2 
+    },
+    { 
+      label: 'Informes de Cierre', 
+      backgroundColor: '#22C55E', 
+      borderColor: '#22C55E', 
+      data: actividadMensual.value.map(m => m.cierres), 
+      tension: 0.2 
+    }
   ]
 }));
 
 const monthlyChartOptions = {
   responsive: true, maintainAspectRatio: false,
-  plugins: { legend: { position: 'top' }, title: { display: true, text: 'Actividad Mensual (Últimos 12 Meses)' } },
+  plugins: { legend: { position: 'top' } },
   scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
 };
 
@@ -96,7 +133,8 @@ const centrosConMasRojas = computed(() => {
 const accionesPendientes = computed(() => {
     return resumenInspecciones.value
         .filter(i => i.estado === 'finalizada')
-        .sort((a, b) => new Date(a.fecha_inspeccion) - new Date(b.fecha_inspeccion));
+        // Usamos la fecha procesada para ordenar
+        .sort((a, b) => a.fecha_inspeccion_obj - b.fecha_inspeccion_obj);
 });
 </script>
 
@@ -121,7 +159,6 @@ const accionesPendientes = computed(() => {
             <div class="bg-purple-100 p-3 rounded-lg"><PaperAirplaneIcon class="h-6 w-6 text-purple-600" /></div>
             <div><p class="text-2xl font-bold text-slate-800">{{ inspeccionesPendientesEnvio }}</p><p class="text-slate-500 text-sm font-semibold">Pend. Envío</p></div>
           </div>
-          <!-- ===== CORRECCIÓN DE TEXTO Y VARIABLE ===== -->
           <div class="bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-3">
             <div class="bg-orange-100 p-3 rounded-lg"><ArchiveBoxIcon class="h-6 w-6 text-orange-600" /></div>
             <div><p class="text-2xl font-bold text-slate-800">{{ inspeccionesPendientesCierre }}</p><p class="text-slate-500 text-sm font-semibold">Pend. Cierre</p></div>
@@ -133,7 +170,6 @@ const accionesPendientes = computed(() => {
         </div>
       </section>
       
-      <!-- ===== WIDGET DE PRODUCTIVIDAD ELIMINADO Y LAYOUT AJUSTADO ===== -->
       <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-2 bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200">
            <h2 class="text-lg font-bold text-slate-800 mb-4">Actividad Mensual</h2>
@@ -178,9 +214,9 @@ const accionesPendientes = computed(() => {
               <tr v-for="inspeccion in accionesPendientes" :key="inspeccion.inspeccion_id" class="hover:bg-slate-50">
                 <td class="px-4 py-4 whitespace-nowrap font-semibold text-slate-800 text-sm">
                   {{ inspeccion.centro_nombre }}
-                  <div class="sm:hidden text-xs text-slate-500 font-normal">{{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString() }}</div>
+                  <div class="sm:hidden text-xs text-slate-500 font-normal">{{ inspeccion.fecha_inspeccion_obj.toLocaleDateString('es-ES') }}</div>
                 </td>
-                <td class="px-4 py-4 whitespace-nowrap text-slate-600 hidden sm:table-cell text-sm">{{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString() }}</td>
+                <td class="px-4 py-4 whitespace-nowrap text-slate-600 hidden sm:table-cell text-sm">{{ inspeccion.fecha_inspeccion_obj.toLocaleDateString('es-ES') }}</td>
                 <td class="px-4 py-4 whitespace-nowrap text-slate-600 hidden md:table-cell text-sm">{{ inspeccion.tecnico_nombre }}</td>
                 <td class="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <router-link :to="`/centros/${inspeccion.centro_id}/historial`" class="font-semibold text-purple-600 hover:text-purple-800">Gestionar</router-link>
