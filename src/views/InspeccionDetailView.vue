@@ -1,14 +1,12 @@
 <!-- src/views/InspeccionDetailView.vue -->
 <script setup>
-// ... (el resto de las importaciones y setup inicial no cambian)
 import { ref, onMounted, computed, inject } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 import InteractiveMap from '../components/InteractiveMap.vue';
 import ChecklistModal from '../components/ChecklistModal.vue';
-import PointList from '../components/PointList.vue';
-import AddPointForm from '../components/AddPointForm.vue';
-import { CheckCircleIcon, PlusIcon, XCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
+import InspectionSidebar from '../components/InspectionSidebar.vue';
+import { CheckCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
 import { generateTextReport } from '../utils/pdf';
 
 const showNotification = inject('showNotification');
@@ -26,16 +24,17 @@ const puntosMaestros = ref([]);
 const puntosInspeccionados = ref([]);
 const isModalOpen = ref(false);
 const selectedPunto = ref(null);
-const showAddPointForm = ref(false);
+
 const isPlacementMode = ref(false);
 const newPointSalaId = ref(null);
+const isAreaDrawingMode = ref(false);
+const salaParaDibujar = ref(null);
 
 const canEditInspection = computed(() => {
   return inspeccion.value?.estado === 'en_progreso';
 });
 
 onMounted(async () => {
-  // ... (esta función no cambia)
   loading.value = true;
   const { data: inspectionData, error: inspectionError } = await supabase.from('inspecciones').select('*, centros(*), versiones_plano(*)').eq('id', inspeccionId).single();
   if (inspectionError || !inspectionData || !inspectionData.versiones_plano) {
@@ -58,7 +57,6 @@ onMounted(async () => {
 });
 
 const initializeInspectionPoints = async () => {
-  // ... (esta función no cambia)
   const { data: existingPoints } = await supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId);
   puntosInspeccionados.value = existingPoints || [];
   if (canEditInspection.value && puntosInspeccionados.value.length === 0 && puntosMaestros.value.length > 0) {
@@ -89,14 +87,16 @@ const puntosAgrupadosPorSala = computed(() => {
     puntos: puntosParaMostrar.value
       .filter(p => p.sala_id === sala.id)
       .sort((a,b) => a.nomenclatura.localeCompare(b.nomenclatura, undefined, {numeric: true}))
-  })).filter(g => g.puntos.length > 0);
+  })).filter(g => g.puntos.length > 0 || g.isNew);
 });
 
 const createNewPointAt = async (coords, salaId) => {
-  // ... (esta función no cambia)
   const salaSeleccionada = salas.value.find(s => s.id === salaId);
   const puntosDeLaSala = puntosMaestros.value.filter(p => p.sala_id === salaId);
-  const ultimoNumero = Math.max(0, ...puntosDeLaSala.map(p => parseInt(p.nomenclatura.split('-').pop() || 0)));
+  const ultimoNumero = Math.max(0, ...puntosDeLaSala.map(p => {
+      const num = parseInt(p.nomenclatura.split('-').pop());
+      return isNaN(num) ? 0 : num;
+  }));
   const nuevaNomenclatura = `${salaSeleccionada.nombre}-${ultimoNumero + 1}`;
   
   const { data: nuevoPuntoMaestro, error: maestroError } = await supabase.from('puntos_maestros')
@@ -133,65 +133,125 @@ const createNewPointAt = async (coords, salaId) => {
   }
 };
 
-// ===== INICIO DE LA CORRECCIÓN: Función `updatePuntoEstado` mejorada =====
 const updatePuntoEstado = async (punto, nuevoEstado) => {
-    console.log(`[InspeccionDetailView.vue] Recibido @update-state. Actualizando punto ID ${punto.id} al estado: ${nuevoEstado}`);
-    
-    if (!canEditInspection.value) {
-        console.warn('[InspeccionDetailView.vue] Actualización bloqueada: la inspección está en modo solo lectura.');
-        return;
-    }
-
-    // 1. Actualizar la base de datos
-    const { error } = await supabase
-      .from('puntos_inspeccionados')
-      .update({ estado: nuevoEstado })
-      .eq('id', punto.id);
-
-    if (error) {
-        console.error('[InspeccionDetailView.vue] Error al actualizar en Supabase:', error);
-        showNotification('No se pudo actualizar el estado del punto.', 'error');
-    } else {
-        console.log('[InspeccionDetailView.vue] Actualización en Supabase exitosa. Actualizando estado local.');
-        // 2. Si no hay error, actualizar el estado local para que la UI reaccione
-        const pointInArray = puntosInspeccionados.value.find(p => p.id === punto.id);
-        if (pointInArray) {
-            pointInArray.estado = nuevoEstado;
-            showNotification(`Punto ${punto.nomenclatura} marcado como '${nuevoEstado}'.`, 'success', 2000);
-        } else {
-            console.error('[InspeccionDetailView.vue] ¡Error crítico! No se encontró el punto en el array local para actualizar la UI.');
-        }
-    }
+  const { error } = await supabase.from('puntos_inspeccionados').update({ estado: nuevoEstado }).eq('id', punto.id);
+  if (error) { showNotification('No se pudo actualizar el estado del punto.', 'error'); }
+  else {
+    const pointInArray = puntosInspeccionados.value.find(p => p.id === punto.id);
+    if (pointInArray) { pointInArray.estado = nuevoEstado; }
+  }
 };
 
-const startPlacementMode = (salaId) => {
-  showAddPointForm.value = false;
-  newPointSalaId.value = salaId;
+const handleDeleteNewPoint = async (punto) => {
+  if (!canEditInspection.value) return;
+  if (confirm(`¿Estás seguro de que quieres borrar permanentemente el punto "${punto.nomenclatura}"?`)) {
+      const { error: inspError } = await supabase.from('puntos_inspeccionados').delete().eq('id', punto.id);
+      if (inspError) { showNotification("Error al borrar el punto de la inspección: " + inspError.message, 'error'); return; }
+      const { error: maestroError } = await supabase.from('puntos_maestros').delete().eq('id', punto.punto_maestro_id);
+      if (maestroError) { showNotification("Advertencia: No se pudo borrar el punto del plano maestro.", 'error'); }
+      puntosInspeccionados.value = puntosInspeccionados.value.filter(p => p.id !== punto.id);
+      puntosMaestros.value = puntosMaestros.value.filter(p => p.id !== punto.punto_maestro_id);
+      showNotification(`Punto ${punto.nomenclatura} borrado con éxito.`);
+  }
+};
+
+const openChecklistFor = (punto) => {
+  if (isPlacementMode.value || isAreaDrawingMode.value) return;
+  selectedPunto.value = punto; 
+  isModalOpen.value = true;
+};
+
+const handleTogglePlanoEditing = (isActive) => {
+  if (!isActive) {
+    isAreaDrawingMode.value = false;
+    salaParaDibujar.value = null;
+  }
+};
+
+const handleAddSala = async (name) => {
+    const { data: newSala, error } = await supabase.from('salas').insert({ version_id: version.value.id, nombre: name, color: '#808080' }).select().single();
+    if (error) { showNotification('Error al crear la sala: ' + error.message, 'error'); return; }
+    newSala.isNew = true;
+    salas.value.push(newSala);
+    salas.value.sort((a,b) => a.nombre.localeCompare(b.nombre));
+    showNotification(`Sala "${name}" creada en el plano.`, 'success');
+    handleStartAreaDrawing(newSala);
+};
+
+const handleStartAreaDrawing = (sala) => {
+    salaParaDibujar.value = sala;
+    isAreaDrawingMode.value = true;
+    showNotification(`Modo dibujo activado para "${sala.nombre}". Haz clic en el mapa para definir su área.`, 'success', 4000);
+};
+
+const handleAreaDrawn = async (points) => {
+    const { error } = await supabase.from('salas').update({ area_puntos: points }).eq('id', salaParaDibujar.value.id);
+    if (error) { showNotification('Error al guardar el área.', 'error'); }
+    else {
+        const salaInArray = salas.value.find(s => s.id === salaParaDibujar.value.id);
+        if (salaInArray) salaInArray.area_puntos = points;
+        showNotification(`Área de "${salaParaDibujar.value.nombre}" guardada.`, 'success');
+    }
+    isAreaDrawingMode.value = false;
+    salaParaDibujar.value = null;
+};
+
+const handleDrawingCancelled = () => {
+    isAreaDrawingMode.value = false;
+    salaParaDibujar.value = null;
+    showNotification('Dibujo cancelado.', 'success', 2000);
+};
+
+const handleStartPlacementMode = (salaId) => {
   isPlacementMode.value = true;
+  newPointSalaId.value = salaId;
 };
-const cancelPlacementMode = () => {
+
+const handleCancelPlacementMode = () => {
   isPlacementMode.value = false;
   newPointSalaId.value = null;
 };
-const handleDeleteNewPoint = async (punto) => {
-    if (!canEditInspection.value) return;
-    if (confirm(`¿Estás seguro de que quieres borrar permanentemente el punto "${punto.nomenclatura}"?`)) {
-        const { error: inspError } = await supabase.from('puntos_inspeccionados').delete().eq('id', punto.id);
-        if (inspError) { showNotification("Error al borrar el punto de la inspección: " + inspError.message, 'error'); return; }
-        const { error: maestroError } = await supabase.from('puntos_maestros').delete().eq('id', punto.punto_maestro_id);
-        if (maestroError) { showNotification("Advertencia: No se pudo borrar el punto del plano maestro.", 'error'); }
-        puntosInspeccionados.value = puntosInspeccionados.value.filter(p => p.id !== punto.id);
-        puntosMaestros.value = puntosMaestros.value.filter(p => p.id !== punto.punto_maestro_id);
-        showNotification(`Punto ${punto.nomenclatura} borrado con éxito.`);
-    }
-};
-const openChecklistFor = (punto) => {
-  if (isPlacementMode.value) return;
-  selectedPunto.value = puntosMaestros.value.find(pm => pm.id === punto.punto_maestro_id);
-  isModalOpen.value = true;
-};
+
 const handleMapClick = (coords) => {
-  if (isPlacementMode.value) { createNewPointAt(coords, newPointSalaId.value); }
+  if (isPlacementMode.value) { 
+    createNewPointAt(coords, newPointSalaId.value);
+  }
+};
+
+const handleUpdatePointNomenclatura = async (puntoMaestro, newNomenclature) => {
+    const trimmedNomenclature = newNomenclature.trim();
+    if (!trimmedNomenclature) {
+        showNotification('El nombre no puede estar vacío.', 'error');
+        return;
+    }
+
+    const nameExists = puntosMaestros.value.some(p => 
+        p.sala_id === puntoMaestro.sala_id && 
+        p.nomenclatura.toLowerCase() === trimmedNomenclature.toLowerCase() && 
+        p.id !== puntoMaestro.id
+    );
+    if (nameExists) {
+        showNotification(`Ya existe un punto con el nombre "${trimmedNomenclature}" en esta sala.`, 'error');
+        return;
+    }
+
+    const puntoInspeccionado = puntosInspeccionados.value.find(pi => pi.punto_maestro_id === puntoMaestro.id);
+    if (!puntoInspeccionado) {
+        showNotification('Error: no se encontró el punto de inspección correspondiente.', 'error');
+        return;
+    }
+
+    const { error: maestroError } = await supabase.from('puntos_maestros').update({ nomenclatura: trimmedNomenclature }).eq('id', puntoMaestro.id);
+    const { error: inspeccionadoError } = await supabase.from('puntos_inspeccionados').update({ nomenclatura: trimmedNomenclature }).eq('id', puntoInspeccionado.id);
+
+    if (maestroError || inspeccionadoError) {
+        showNotification('Error al actualizar el nombre del punto.', 'error');
+    } else {
+        const maestro = puntosMaestros.value.find(p => p.id === puntoMaestro.id);
+        if (maestro) maestro.nomenclatura = trimmedNomenclature;
+        if (puntoInspeccionado) puntoInspeccionado.nomenclatura = trimmedNomenclature;
+        showNotification('Nombre del punto actualizado.', 'success');
+    }
 };
 
 function blobToBase64(blob) {
@@ -251,12 +311,10 @@ const finalizarInspeccion = async () => {
 </script>
 
 <template>
-  <!-- La sección <template> no necesita ningún cambio, solo la lógica del script -->
   <div class="h-full flex flex-col">
-    <div v-if="loading" class="flex-1 flex items-center justify-center text-slate-500">Cargando datos de la inspección...</div>
+    <div v-if="loading" class="flex-1 flex items-center justify-center text-slate-500">Cargando...</div>
     
     <div v-else-if="inspeccion && centro && version" class="flex-1 flex flex-col min-h-0">
-      
       <header class="flex-shrink-0 px-4 md:px-8 pt-6 pb-4 bg-slate-100/80 backdrop-blur-sm border-b border-slate-200 z-10">
         <div class="flex flex-col md:flex-row justify-between items-start gap-4">
           <div class="flex-1">
@@ -271,59 +329,48 @@ const finalizarInspeccion = async () => {
                 <span>Esta inspección está bloqueada (modo solo lectura).</span>
             </div>
           </div>
-          <button v-if="canEditInspection" @click="finalizarInspeccion" :disabled="isFinalizing" class="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm disabled:bg-slate-400">
-            <CheckCircleIcon class="h-5 w-5" />
-            {{ isFinalizing ? 'Finalizando...' : 'Finalizar Inspección' }}
-          </button>
-          <button v-else @click="router.push(`/centros/${centro.id}/historial`)" class="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
-            Volver al Historial
-          </button>
+          <div class="w-full md:w-auto flex items-center flex-col sm:flex-row gap-2">
+            <button v-if="canEditInspection" @click="finalizarInspeccion" :disabled="isFinalizing" class="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm disabled:bg-slate-400">
+              <CheckCircleIcon class="h-5 w-5" />
+              {{ isFinalizing ? 'Finalizando...' : 'Finalizar Inspección' }}
+            </button>
+            <button v-else @click="router.push(`/centros/${centro.id}/historial`)" class="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
+              Volver al Historial
+            </button>
+          </div>
         </div>
       </header>
       
       <div class="flex-1 flex flex-col lg:flex-row overflow-hidden">
         
-        <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col h-1/2 lg:h-full">
-          <div class="p-4 flex-shrink-0">
-             <div v-if="canEditInspection">
-                <AddPointForm 
-                   v-if="showAddPointForm"
-                   :salas="salas"
-                   @save="startPlacementMode"
-                   @cancel="showAddPointForm = false"
-                />
-                <button v-else-if="!isPlacementMode" @click="showAddPointForm = true" class="w-full flex items-center justify-center gap-2 px-4 py-2 font-semibold text-slate-600 bg-slate-100 rounded-md hover:bg-slate-200">
-                   <PlusIcon class="h-5 w-5" />
-                   Agregar Punto Nuevo
-                </button>
-                <button v-if="isPlacementMode" @click="cancelPlacementMode" class="w-full flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-red-600 rounded-md hover:bg-red-700">
-                   <XCircleIcon class="h-5 w-5" />
-                   Cancelar Colocación
-                </button>
-             </div>
-          </div>
-
-          <div class="flex-1 overflow-y-auto px-4 pb-4">
-            <PointList 
-              :grouped-points="puntosAgrupadosPorSala"
-              @select-point="openChecklistFor"
-              @update-state="updatePuntoEstado"
-              @delete-new-point="handleDeleteNewPoint"
-              :class="{ 'pointer-events-none opacity-50': isPlacementMode }"
-            />
-          </div>
-        </aside>
+        <InspectionSidebar
+          :can-edit="canEditInspection"
+          :salas="salas"
+          :puntos-agrupados="puntosAgrupadosPorSala"
+          @toggle-plano-editing="handleTogglePlanoEditing"
+          @add-sala="handleAddSala"
+          @start-area-drawing="handleStartAreaDrawing"
+          @start-placement-mode="handleStartPlacementMode"
+          @cancel-placement-mode="handleCancelPlacementMode"
+          @select-point="openChecklistFor"
+          @update-point-state="updatePuntoEstado"
+          @delete-new-point="handleDeleteNewPoint"
+          @update-point-nomenclatura="handleUpdatePointNomenclatura"
+        />
         
         <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full overflow-auto">
           <InteractiveMap 
             :image-url="version.url_imagen_plano" 
             :points="puntosParaMostrar.filter(p => p.estado !== 'suprimido')"
             :salas="salas"
-            :is-read-only="!canEditInspection || !isPlacementMode"
+            :is-read-only="!canEditInspection || (!isPlacementMode && !isAreaDrawingMode)"
             :is-placement-mode="isPlacementMode"
+            :is-area-drawing-mode="isAreaDrawingMode"
             @point-click="openChecklistFor"
             @add-point="handleMapClick"
             @delete-point="handleDeleteNewPoint"
+            @area-drawn="handleAreaDrawn"
+            @drawing-cancelled="handleDrawingCancelled"
           />
         </main>
       </div>
@@ -336,6 +383,8 @@ const finalizarInspeccion = async () => {
       :punto="selectedPunto"
       :inspeccion-id="inspeccionId" 
       @close="isModalOpen = false" 
+      @save="initializeInspectionPoints"
+      @update-nomenclatura="handleUpdatePointNomenclatura"
     />
   </div>
 </template>

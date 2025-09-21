@@ -1,26 +1,89 @@
 <!-- src/components/ChecklistModal.vue -->
 <script setup>
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, nextTick } from 'vue';
 import { supabase } from '../supabase';
 import { checklistItems } from '../utils/checklist';
 import { 
   ArrowUpTrayIcon, CheckCircleIcon, XCircleIcon, PlusCircleIcon, TrashIcon, 
-  ArrowTrendingUpIcon, ArrowTrendingDownIcon, StopCircleIcon, ChevronUpIcon, ChevronDownIcon 
+  ArrowTrendingUpIcon, ArrowTrendingDownIcon, StopCircleIcon, ChevronUpIcon, ChevronDownIcon,
+  PencilIcon, CheckIcon
 } from '@heroicons/vue/24/solid';
 
 const props = defineProps({
   isOpen: Boolean,
-  punto: Object,
+  punto: Object, 
   inspeccionId: Number,
 });
 
-const emit = defineEmits(['close', 'save']);
+const emit = defineEmits(['close', 'save', 'update-nomenclatura']);
 
 const incidencias = ref([]);
 const loading = ref(false);
 const isUploading = ref(null);
-const puntoInspeccionado = ref(null);
-const openItemId = ref(null);
+const puntoInspeccionado = computed(() => props.punto); 
+const collapsedItems = ref(new Set());
+
+const isEditingName = ref(false);
+const tempPointIdentifier = ref('');
+const nameInputRef = ref(null);
+
+const pointPrefix = computed(() => {
+  if (!props.punto?.nomenclatura) return '';
+  const parts = props.punto.nomenclatura.split('-');
+  if (parts.length > 1) {
+    parts.pop();
+    return `${parts.join('-')}-`;
+  }
+  return '';
+});
+
+const startNameEditing = () => {
+  isEditingName.value = true;
+  const parts = props.punto.nomenclatura.split('-');
+  tempPointIdentifier.value = parts.length > 1 ? parts.pop() : props.punto.nomenclatura;
+  nextTick(() => nameInputRef.value?.focus());
+};
+
+const saveName = () => {
+  const newNomenclature = `${pointPrefix.value}${tempPointIdentifier.value.trim()}`;
+  if (tempPointIdentifier.value.trim() && newNomenclature !== props.punto.nomenclatura) {
+    findPuntoMaestroAndEmitUpdate(newNomenclature);
+  }
+  isEditingName.value = false;
+};
+
+const findPuntoMaestroAndEmitUpdate = async (newNomenclature) => {
+    const { data: puntoMaestro, error } = await supabase
+        .from('puntos_maestros')
+        .select('*')
+        .eq('id', props.punto.punto_maestro_id)
+        .single();
+    
+    if (puntoMaestro && !error) {
+        emit('update-nomenclatura', puntoMaestro, newNomenclature);
+    } else {
+        alert('Error: No se pudo encontrar el punto maestro para actualizar.');
+    }
+};
+
+const loadData = async () => {
+  if (!props.punto) return;
+  loading.value = true;
+  isEditingName.value = false;
+  collapsedItems.value.clear();
+  
+  const { data: incidenciasData } = await supabase
+    .from('incidencias')
+    .select('*')
+    .eq('punto_inspeccionado_id', props.punto.id);
+    
+  incidencias.value = incidenciasData || [];
+  loading.value = false;
+};
+
+watch(() => props.isOpen, (newVal) => {
+  if (newVal) loadData();
+});
 
 const gravedadOptions = [
   { label: 'Leve', value: 'verde' },
@@ -46,61 +109,6 @@ const detalleModificacion = computed({
       handleModificationChange(newValue);
     }
   }
-});
-
-const loadData = async () => {
-  if (!props.punto || !props.inspeccionId) return;
-  loading.value = true;
-  openItemId.value = null; 
-  
-  const { data: puntoRelacionado, error: findError } = await supabase
-    .from('puntos_inspeccionados')
-    .select('*')
-    .eq('inspeccion_id', props.inspeccionId)
-    .eq('punto_maestro_id', props.punto.id)
-    .maybeSingle();
-
-  if (findError) {
-    console.error("Error buscando punto inspeccionado:", findError);
-    loading.value = false;
-    return;
-  }
-  
-  if (puntoRelacionado) {
-    puntoInspeccionado.value = puntoRelacionado;
-  } else {
-    const { data: nuevoPunto, error: createError } = await supabase
-      .from('puntos_inspeccionados')
-      .insert({
-        inspeccion_id: props.inspeccionId,
-        punto_maestro_id: props.punto.id,
-        nomenclatura: props.punto.nomenclatura,
-        coordenada_x: props.punto.coordenada_x,
-        coordenada_y: props.punto.coordenada_y,
-        tiene_placa_caracteristicas: true,
-      })
-      .select('*')
-      .single();
-    
-    if (createError) {
-      console.error("Error crítico al crear el punto de inspección:", createError);
-      loading.value = false;
-      return;
-    }
-    puntoInspeccionado.value = nuevoPunto;
-  }
-
-  const { data: incidenciasData } = await supabase
-    .from('incidencias')
-    .select('*')
-    .eq('punto_inspeccionado_id', puntoInspeccionado.value.id);
-    
-  incidencias.value = incidenciasData || [];
-  loading.value = false;
-};
-
-watch(() => props.isOpen, (newVal) => {
-  if (newVal) loadData();
 });
 
 const handlePlacaStatusChange = async (status) => {
@@ -202,23 +210,23 @@ const toggleItemStatus = async (itemId) => {
             const { error } = await supabase.from('incidencias').delete().in('id', idsToDelete);
             if (!error) {
                 incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
-                if(openItemId.value === itemId) {
-                    openItemId.value = null;
-                }
             }
         }
     } else {
         await addIncidencia(itemId);
-        openItemId.value = itemId;
     }
 };
 
-const isItemOpen = (itemId) => {
-  return openItemId.value === itemId;
+const isCollapsed = (itemId) => {
+  return collapsedItems.value.has(itemId);
 };
 
 const toggleCollapse = (itemId) => {
-  openItemId.value = isItemOpen(itemId) ? null : itemId;
+  if (isCollapsed(itemId)) {
+    collapsedItems.value.delete(itemId);
+  } else {
+    collapsedItems.value.add(itemId);
+  }
 };
 
 const handleFileChange = async (event, incidencia) => {
@@ -250,12 +258,30 @@ const handleClose = () => {
 </script>
 
 <template>
-  <!-- ===== INICIO DE LA CORRECCIÓN: Se restaura @click.self="handleClose" ===== -->
   <div v-if="isOpen" @click.self="handleClose" class="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
-  <!-- ===== FIN DE LA CORRECCIÓN ===== -->
     <div class="bg-slate-50 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
       <header class="p-4 border-b bg-white rounded-t-lg flex justify-between items-center">
-        <h2 class="text-xl font-bold text-slate-800">Checklist para Punto: {{ punto?.nomenclatura }}</h2>
+        <div class="flex items-center gap-2">
+          <h2 class="text-xl font-bold text-slate-800">Checklist para Punto:</h2>
+          <div v-if="isEditingName" class="flex items-center gap-1 bg-white border border-blue-400 rounded-md p-1">
+            <span class="text-slate-500 pl-1">{{ pointPrefix }}</span>
+            <input 
+              ref="nameInputRef"
+              v-model="tempPointIdentifier"
+              @keyup.enter="saveName"
+              @keyup.esc="isEditingName = false"
+              type="text"
+              class="text-xl font-bold text-slate-800 p-0 border-none focus:ring-0 w-24"
+            />
+            <button @click="saveName" class="p-1 text-green-600 hover:bg-green-100 rounded">
+              <CheckIcon class="h-5 w-5"/>
+            </button>
+          </div>
+          <h2 v-else class="text-xl font-bold text-slate-800">{{ punto?.nomenclatura }}</h2>
+          <button v-if="!isEditingName" @click="startNameEditing" class="p-1 text-slate-400 hover:text-blue-600">
+            <PencilIcon class="h-5 w-5"/>
+          </button>
+        </div>
         <button @click="handleClose" class="text-slate-400 hover:text-slate-600 text-2xl">&times;</button>
       </header>
       
@@ -302,10 +328,10 @@ const handleClose = () => {
                 <span class="text-sm font-semibold text-slate-600">
                   {{ getIncidenciasForItem(item.id).value.length }} Incidencia(s)
                 </span>
-                <component :is="isItemOpen(item.id) ? ChevronUpIcon : ChevronDownIcon" class="h-5 w-5 text-slate-500" />
+                <component :is="isCollapsed(item.id) ? ChevronDownIcon : ChevronUpIcon" class="h-5 w-5 text-slate-500" />
               </div>
 
-              <div v-show="isItemOpen(item.id)" class="bg-slate-50 p-4 space-y-4">
+              <div v-show="!isCollapsed(item.id)" class="bg-slate-50 p-4 space-y-4">
                 <div v-if="item.id === 3" class="text-center text-sm text-slate-600 bg-slate-200 p-2 rounded-md">
                   Este parámetro se gestiona automáticamente desde las preguntas superiores.
                 </div>

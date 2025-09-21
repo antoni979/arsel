@@ -1,6 +1,6 @@
 <!-- src/components/InteractiveMap.vue -->
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, watch, onMounted, onUnmounted } from 'vue';
 
 const props = defineProps({
   imageUrl: { type: String, required: true },
@@ -30,7 +30,7 @@ const toSvgPoints = (pointsArray, overlayWidth, overlayHeight) => {
 };
 
 const handleMapClick = (event) => {
-  if (!overlayRef.value) return;
+  if (props.isReadOnly || !overlayRef.value) return;
   const overlayRect = overlayRef.value.getBoundingClientRect();
   const x = (event.clientX - overlayRect.left) / overlayRect.width;
   const y = (event.clientY - overlayRect.top) / overlayRect.height;
