@@ -57,6 +57,7 @@ export async function buildTextPages(pdf, reportData) {
   const lineasSuprimidas = agruparPuntosPorPropiedad('estado', 'suprimido');
   const lineasNuevas = agruparPuntosPorPropiedad('estado', 'nuevo');
   const lineasDisminuidas = agruparPuntosPorPropiedad('detalle_modificacion', 'disminuido');
+  const lineasAumentadas = agruparPuntosPorPropiedad('detalle_modificacion', 'aumentado');
   const lineasConPlacaInvalida = agruparPuntosConPlacaInvalida();
   
   const getSalaYNumeroDeIncidencia = (incidencia) => {
@@ -135,13 +136,12 @@ export async function buildTextPages(pdf, reportData) {
   };
 
   const addSection = async (title, content) => {
-    if (!content && !title.toLowerCase().includes('nuevas montadas')) return;
     content = content || 'Ninguna';
-    
+
     const titleHeight = 8;
     const contentHeight = content.split('\n').length * 5 + 5;
     await checkPageBreak(titleHeight + contentHeight);
-    
+
     pdf.setFont('helvetica', 'normal').setFontSize(FONT_SIZES.body).text(title, MARGIN, currentY);
     currentY += titleHeight;
     pdf.setFont('helvetica', 'bold').text(content, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
@@ -194,6 +194,7 @@ export async function buildTextPages(pdf, reportData) {
 
   await addSection('Alineaciones sin placa de características o con placa no válida (por aumento de módulos/niveles):', lineasConPlacaInvalida);
   await addSection('Alineaciones con módulos DISMINUIDOS desde la inspección anterior:', lineasDisminuidas);
+  await addSection('Alineaciones con módulos AUMENTADOS desde la inspección anterior:', lineasAumentadas);
   await addSection('Alineaciones desmontadas desde la inspección anterior:', lineasSuprimidas);
   await addSection('Alineaciones nuevas montadas desde la inspección anterior:', lineasNuevas);
 
