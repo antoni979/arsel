@@ -1,10 +1,13 @@
 // src/utils/pdf/pdf-module-text.js
 
-import { drawHeader, loadImageAsBase64, ARSEL_LOGO_URL, MARGIN, DOC_WIDTH, FONT_SIZES } from './pdf-helpers';
+import { drawHeader, loadImageAsBase64, getArselLogoUrl, MARGIN, DOC_WIDTH, FONT_SIZES } from './pdf-helpers';
 
 export async function buildTextPages(pdf, reportData) {
   const { inspectionData, incidenciasData, puntosMaestrosData, puntosInspeccionadosData, salasData } = reportData;
-  
+
+  // Fetch logo URL
+  const arselLogoUrl = await getArselLogoUrl();
+
   const CONTENT_WIDTH = DOC_WIDTH - (MARGIN * 2);
 
   const fecha = new Date(inspectionData.fecha_inspeccion).toLocaleDateString('es-ES');
@@ -90,7 +93,7 @@ export async function buildTextPages(pdf, reportData) {
   const TOP_MARGIN = 50;
 
   // --- PÁGINA 1 ---
-  await drawHeader(pdf, inspectionData);
+  await drawHeader(pdf, inspectionData, arselLogoUrl);
   let currentY = TOP_MARGIN;
   
   pdf.setFont('helvetica', 'bold');
@@ -116,7 +119,7 @@ export async function buildTextPages(pdf, reportData) {
   pdf.text('La inspección consiste en la revisión visual del sistema llevada a cabo por un técnico cualificado, con la comprobación de los puntos recogidos en el checklist previsto para tal fin en la memoria de evaluación previa, con el consiguiente registro escrito de los resultados obtenidos.', MARGIN, currentY, { maxWidth: CONTENT_WIDTH, align: 'justify', lineHeightFactor: 1.5 }); 
   
   pdf.addPage();
-  await drawHeader(pdf, inspectionData);
+  await drawHeader(pdf, inspectionData, arselLogoUrl);
   currentY = TOP_MARGIN;
 
   // --- PÁGINA 2 Y SIGUIENTES ---
@@ -126,7 +129,7 @@ export async function buildTextPages(pdf, reportData) {
   const checkPageBreak = async (heightNeeded) => {
     if (currentY + heightNeeded > PAGE_HEIGHT - FOOTER_MARGIN) {
       pdf.addPage();
-      await drawHeader(pdf, inspectionData);
+      await drawHeader(pdf, inspectionData, arselLogoUrl);
       currentY = TOP_MARGIN;
     }
   };
@@ -198,9 +201,11 @@ export async function buildTextPages(pdf, reportData) {
   pdf.setFont('helvetica', 'normal').setFontSize(FONT_SIZES.body);
   pdf.text('Para cerrar el proceso de inspección completo, el centro subsanará las deficiencias de menor grado detectadas en los próximos días, comunicando la resolución de las mismas mediante correo electrónico a ARSEL Ingeniería y al Técnico de Prevención Regional.', MARGIN, currentY, { maxWidth: CONTENT_WIDTH, align: 'justify', lineHeightFactor: 1.5 }); 
   currentY += 40;
-  pdf.text('Informe realizado por:', MARGIN, currentY); 
+  pdf.text('Informe realizado por:', MARGIN, currentY);
   currentY += 15;
-  const arselLogoBase64 = await loadImageAsBase64(ARSEL_LOGO_URL);
+  const signatureLogoUrl = await getArselLogoUrl('signature_logo');
+  const finalLogoUrl = signatureLogoUrl || arselLogoUrl;
+  const arselLogoBase64 = await loadImageAsBase64(finalLogoUrl);
   if (arselLogoBase64) {
       pdf.addImage(arselLogoBase64, 'PNG', MARGIN, currentY, 35, 15, undefined, 'MEDIUM');
       currentY += 18;

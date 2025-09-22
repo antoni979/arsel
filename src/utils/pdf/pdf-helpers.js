@@ -5,7 +5,20 @@ export const MARGIN = 15;
 export const DOC_WIDTH = 210;
 export const DOC_WIDTH_LANDSCAPE = 297;
 export const FONT_SIZES = { annexTitle: 22, title: 16, h1: 14, h2: 12, body: 11, small: 8 };
-export const ARSEL_LOGO_URL = "https://bgltxcklvjumltuktdvv.supabase.co/storage/v1/object/public/logos-clientes/logo.PNG";
+const FALLBACK_LOGO_URL = "https://bgltxcklvjumltuktdvv.supabase.co/storage/v1/object/public/logos-clientes/logo.PNG";
+
+// --- FUNCIÓN PARA OBTENER LOGO DINÁMICO ---
+export async function getArselLogoUrl(assetType = 'header_logo') {
+  try {
+    const { supabase } = await import('../../supabase');
+    const { data: assets } = await supabase.from('company_assets').select('*');
+    const assetsMap = new Map((assets || []).map(a => [a.asset_type, a.url]));
+    return assetsMap.get(assetType) || FALLBACK_LOGO_URL;
+  } catch (error) {
+    console.error('Error fetching ARSEL logo:', error);
+    return FALLBACK_LOGO_URL;
+  }
+}
 
 // --- FUNCIÓN DE AYUDA PARA CARGAR IMÁGENES (CON CONTROL DE OPTIMIZACIÓN) ---
 export async function loadImageAsBase64(url, options = {}) {
@@ -84,11 +97,13 @@ export async function loadImageAsBase64(url, options = {}) {
 }
 
 // --- CABECERA PRINCIPAL (REUTILIZABLE EN TODO EL PDF) ---
-export async function drawHeader(pdf, inspectionData) {
+export async function drawHeader(pdf, inspectionData, arselLogoUrl = null) {
+  const finalArselLogoUrl = arselLogoUrl || ARSEL_LOGO_URL;
+
   const [clientLogoBase64, arselLogoBase64] = await Promise.all([
     // Los logos siempre los optimizamos a un tamaño pequeño
     loadImageAsBase64(inspectionData.centros.url_logo_cliente, { maxWidth: 300, maxHeight: 300 }),
-    loadImageAsBase64(ARSEL_LOGO_URL, { maxWidth: 300, maxHeight: 300 })
+    loadImageAsBase64(finalArselLogoUrl, { maxWidth: 300, maxHeight: 300 })
   ]);
 
   // (El resto de la función drawHeader no cambia)

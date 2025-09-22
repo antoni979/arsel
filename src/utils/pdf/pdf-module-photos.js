@@ -2,15 +2,24 @@
 
 import { checklistItems } from '../checklist';
 import { drawHeader, loadImageAsBase64, MARGIN, DOC_WIDTH, FONT_SIZES } from './pdf-helpers';
+import { getArselLogoUrl } from './pdf-helpers';
+import { supabase } from '../../supabase';
 
 // --- ANEXO DE FOTOS INICIAL (OPTIMIZADO) ---
 export async function buildInitialPhotoAnnex(pdf, reportData) {
   const { inspectionData, incidenciasData, puntosMaestrosData, puntosInspeccionadosData, salasData } = reportData;
-  
-  const incidenciasConFoto = incidenciasData.filter(inc => 
+
+  const incidenciasConFoto = incidenciasData.filter(inc =>
     inc.url_foto_antes && inc.item_checklist !== 2
   );
   if (incidenciasConFoto.length === 0) return;
+
+  // Fetch custom fields and logo
+  const [customFieldsRes, arselLogoUrl] = await Promise.all([
+    supabase.from('checklist_custom_fields').select('*'),
+    getArselLogoUrl()
+  ]);
+  const customFieldsMap = new Map(customFieldsRes.data.map(f => [f.id, f]));
 
   const puntoMaestroASalaMap = new Map(puntosMaestrosData.map(pm => [pm.id, salasData.find(s => s.id === pm.sala_id)]));
   const puntoInspeccionadoAMaestroMap = new Map(puntosInspeccionadosData.map(pi => [pi.id, pi.punto_maestro_id]));
@@ -34,7 +43,7 @@ export async function buildInitialPhotoAnnex(pdf, reportData) {
   });
 
   pdf.addPage();
-  await drawHeader(pdf, inspectionData);
+  await drawHeader(pdf, inspectionData, arselLogoUrl);
   
   pdf.setFontSize(FONT_SIZES.annexTitle);
   pdf.setFont('helvetica', 'bold');
@@ -48,7 +57,7 @@ export async function buildInitialPhotoAnnex(pdf, reportData) {
     if (!puntoMaestro) continue;
 
     pdf.addPage();
-    await drawHeader(pdf, inspectionData);
+    await drawHeader(pdf, inspectionData, arselLogoUrl);
     
     let currentY = 45;
     pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'normal');
@@ -75,7 +84,16 @@ export async function buildInitialPhotoAnnex(pdf, reportData) {
 
     let obsBlockY = currentY + 100 + 10;
     pdf.setFontSize(FONT_SIZES.body);
-    const obsText = incidencia.observaciones || '';
+    let obsText = '';
+    if (incidencia.custom_fields) {
+      const customs = Object.entries(incidencia.custom_fields).map(([fieldId, value]) => {
+        const field = customFieldsMap.get(parseInt(fieldId));
+        return field ? `${field.field_name}: ${value}` : '';
+      }).filter(s => s).join(' / ');
+      if (customs) obsText = customs;
+    }
+    const obsNotes = incidencia.observaciones || '';
+    if (obsNotes) obsText = obsText ? `${obsText} / ${obsNotes}` : obsNotes;
     const splitObs = pdf.splitTextToSize(obsText, DOC_WIDTH - (MARGIN * 2) - 4);
     const requiredTextHeight = splitObs.length * 5;
     const minBoxHeight = 20;
@@ -95,12 +113,19 @@ export async function buildInitialPhotoAnnex(pdf, reportData) {
 // --- ANEXO DE FOTOS DE SUBSANACIÓN (OPTIMIZADO) ---
 export async function buildRemediationPhotoAnnex(pdf, reportData) {
   const { inspectionData, incidenciasData, puntosMaestrosData, puntosInspeccionadosData } = reportData;
-  
+
   const incidenciasCorregidas = incidenciasData.filter(inc => inc.url_foto_antes && inc.url_foto_despues);
   if (incidenciasCorregidas.length === 0) return;
 
+  // Fetch custom fields and logo
+  const [customFieldsRes, arselLogoUrl] = await Promise.all([
+    supabase.from('checklist_custom_fields').select('*'),
+    getArselLogoUrl()
+  ]);
+  const customFieldsMap = new Map(customFieldsRes.data.map(f => [f.id, f]));
+
   pdf.addPage();
-  await drawHeader(pdf, inspectionData);
+  await drawHeader(pdf, inspectionData, arselLogoUrl);
 
   pdf.setFontSize(FONT_SIZES.annexTitle);
   pdf.setFont('helvetica', 'bold');
@@ -115,7 +140,7 @@ export async function buildRemediationPhotoAnnex(pdf, reportData) {
     if (!puntoMaestro) continue;
     
     pdf.addPage();
-    await drawHeader(pdf, inspectionData);
+    await drawHeader(pdf, inspectionData, arselLogoUrl);
     pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'normal').text(`Corrección de Incidencia: ${puntoMaestro.nomenclatura}`, MARGIN, 45);
 
     const [fotoAntesBase64, fotoDespuesBase64] = await Promise.all([
@@ -141,7 +166,16 @@ export async function buildRemediationPhotoAnnex(pdf, reportData) {
     
     let obsBlockY = 160;
     pdf.setFontSize(FONT_SIZES.body);
-    const obsText = incidencia.observaciones || '';
+    let obsText = '';
+    if (incidencia.custom_fields) {
+      const customs = Object.entries(incidencia.custom_fields).map(([fieldId, value]) => {
+        const field = customFieldsMap.get(parseInt(fieldId));
+        return field ? `${field.field_name}: ${value}` : '';
+      }).filter(s => s).join(' / ');
+      if (customs) obsText = customs;
+    }
+    const obsNotes = incidencia.observaciones || '';
+    if (obsNotes) obsText = obsText ? `${obsText} / ${obsNotes}` : obsNotes;
     const splitObs = pdf.splitTextToSize(obsText, DOC_WIDTH - (MARGIN * 2) - 4);
     const requiredTextHeight = splitObs.length * 5;
     const minBoxHeight = 20;

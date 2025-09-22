@@ -3,6 +3,8 @@
 import autoTable from 'jspdf-autotable';
 import { checklistItems } from '../checklist';
 import { MARGIN, FONT_SIZES, DOC_WIDTH } from './pdf-helpers';
+import { getArselLogoUrl } from './pdf-helpers';
+import { supabase } from '../../supabase';
 
 function getHighestSeverity(incidencias) {
     if (incidencias.some(inc => inc.gravedad === 'rojo')) return 'rojo';
@@ -17,6 +19,13 @@ export async function buildChecklistAnnex(pdf, reportData) {
     if (!incidenciasData || incidenciasData.length === 0) {
         return;
     }
+
+    // Fetch custom fields and logo
+    const [customFieldsRes, arselLogoUrl] = await Promise.all([
+        supabase.from('checklist_custom_fields').select('*'),
+        getArselLogoUrl()
+    ]);
+    const customFieldsMap = new Map(customFieldsRes.data.map(f => [f.id, f]));
     const puntosInspeccionadosConIncidenciasIds = new Set(incidenciasData.map(inc => inc.punto_inspeccionado_id));
     const puntosMaestrosConIncidenciasIds = new Set(
         puntosInspeccionadosData
@@ -150,8 +159,21 @@ export async function buildChecklistAnnex(pdf, reportData) {
             let finalY = pdf.lastAutoTable.finalY;
 
             const observacionesDelPunto = incidenciasData
-                .filter(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && inc.observaciones && inc.observaciones.trim() !== '')
-                .map((obs) => `Parámetro ${obs.item_checklist}: ${obs.observaciones}`)
+                .filter(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && (inc.observaciones || inc.custom_fields))
+                .map((obs) => {
+                    let customStr = '';
+                    if (obs.custom_fields) {
+                        const customs = Object.entries(obs.custom_fields).map(([fieldId, value]) => {
+                            const field = customFieldsMap.get(parseInt(fieldId));
+                            return field ? `${field.field_name}: ${value}` : '';
+                        }).filter(s => s).join(' / ');
+                        if (customs) customStr = customs;
+                    }
+                    const obsText = obs.observaciones && obs.observaciones.trim() ? obs.observaciones : '';
+                    const fullObs = [customStr, obsText].filter(s => s).join(' / ');
+                    return `Parámetro ${obs.item_checklist}: ${fullObs}`;
+                })
+                .filter(obs => obs.split(': ')[1]) // Only include if there's content after :
                 .join('\n');
             
             autoTable(pdf, {

@@ -88,11 +88,9 @@ const loadData = async () => {
     if (!customValues.value[item.id]) customValues.value[item.id] = {};
   });
 
-  // Load existing custom values per item
+  // Load existing custom values per incidence
   incidencias.value.forEach(inc => {
-    if (inc.custom_fields) {
-      Object.assign(customValues.value[inc.item_checklist], inc.custom_fields);
-    }
+    customValues.value[inc.id] = inc.custom_fields || {};
   });
 
   loading.value = false;
@@ -229,6 +227,7 @@ const addIncidencia = async (itemId, defaults = {}) => {
 
   if (newIncidencia) {
     incidencias.value.push(newIncidencia);
+    customValues.value[newIncidencia.id] = customValues.value[itemId] || {};
   }
 };
 
@@ -293,6 +292,7 @@ const handleFileChange = async (event, incidencia) => {
 
 const saveIncidencia = async (incidencia) => {
   const { id, ...dataToUpdate } = incidencia;
+  dataToUpdate.custom_fields = customValues.value[id] || {};
   await supabase.from('incidencias').update(dataToUpdate).eq('id', id);
 };
 
@@ -365,44 +365,6 @@ const handleClose = () => {
               </button>
             </div>
 
-            <!-- Campos Personalizados por Item -->
-            <div v-if="getCustomFieldsForItem(item.id).length > 0" class="bg-green-50 border-2 border-green-200 rounded-lg p-4 mb-6">
-              <h4 class="font-bold text-green-800 mb-3">Campos Adicionales para {{ item.id }}. {{ item.text }}</h4>
-              <div class="space-y-4">
-                <div v-for="field in getCustomFieldsForItem(item.id)" :key="field.id" class="space-y-2">
-                  <label class="block text-sm font-medium text-slate-700">
-                    {{ field.field_name }}
-                    <span v-if="field.required" class="text-red-500">*</span>
-                  </label>
-                  <input
-                    v-if="field.field_type === 'text'"
-                    v-model="customValues[item.id][field.id]"
-                    type="text"
-                    :required="field.required"
-                    class="w-full rounded-md border-slate-300 shadow-sm focus:border-green-500 focus:ring-green-500"
-                    :placeholder="`Ingrese ${field.field_name.toLowerCase()}`"
-                  >
-                  <input
-                    v-else-if="field.field_type === 'number'"
-                    v-model.number="customValues[item.id][field.id]"
-                    type="number"
-                    :required="field.required"
-                    class="w-full rounded-md border-slate-300 shadow-sm focus:border-green-500 focus:ring-green-500"
-                    :placeholder="`Ingrese ${field.field_name.toLowerCase()}`"
-                  >
-                  <select
-                    v-else-if="field.field_type === 'select'"
-                    v-model="customValues[item.id][field.id]"
-                    :required="field.required"
-                    class="w-full rounded-md border-slate-300 shadow-sm focus:border-green-500 focus:ring-green-500"
-                  >
-                    <option value="">Seleccionar...</option>
-                    <option v-for="option in field.options" :key="option" :value="option">{{ option }}</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
             <div v-if="getIncidenciasForItem(item.id).value.length > 0" class="border-t">
               <div 
                 @click="toggleCollapse(item.id)" 
@@ -429,6 +391,45 @@ const handleClose = () => {
                         <label class="block text-xs font-medium text-slate-600">Gravedad</label>
                         <select v-model="incidencia.gravedad" @change="saveIncidencia(incidencia)" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm text-sm"><option v-for="opt in gravedadOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option></select>
                       </div>
+
+                      <!-- Campos Personalizados -->
+                      <div v-if="getCustomFieldsForItem(item.id).length > 0" class="space-y-3">
+                        <div v-for="field in getCustomFieldsForItem(item.id)" :key="field.id">
+                          <label class="block text-xs font-medium text-slate-600">
+                            {{ field.field_name }}
+                            <span v-if="field.required" class="text-red-500">*</span>
+                          </label>
+                          <input
+                            v-if="field.field_type === 'text'"
+                            v-model="customValues[incidencia.id][field.id]"
+                            @blur="saveIncidencia(incidencia)"
+                            type="text"
+                            :required="field.required"
+                            class="mt-1 block w-full rounded-md border-slate-300 shadow-sm text-sm"
+                            :placeholder="`Ingrese ${field.field_name.toLowerCase()}`"
+                          >
+                          <input
+                            v-else-if="field.field_type === 'number'"
+                            v-model.number="customValues[incidencia.id][field.id]"
+                            @blur="saveIncidencia(incidencia)"
+                            type="number"
+                            :required="field.required"
+                            class="mt-1 block w-full rounded-md border-slate-300 shadow-sm text-sm"
+                            :placeholder="`Ingrese ${field.field_name.toLowerCase()}`"
+                          >
+                          <select
+                            v-else-if="field.field_type === 'select'"
+                            v-model="customValues[incidencia.id][field.id]"
+                            @change="saveIncidencia(incidencia)"
+                            :required="field.required"
+                            class="mt-1 block w-full rounded-md border-slate-300 shadow-sm text-sm"
+                          >
+                            <option value="">Seleccionar...</option>
+                            <option v-for="option in field.options" :key="option" :value="option">{{ option }}</option>
+                          </select>
+                        </div>
+                      </div>
+
                       <div>
                         <label class="block text-xs font-medium text-slate-600">Observaciones</label>
                         <textarea v-model="incidencia.observaciones" @blur="saveIncidencia(incidencia)" rows="3" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm text-sm"></textarea>

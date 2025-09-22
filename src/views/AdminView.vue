@@ -9,6 +9,7 @@ const defaults = ref([]);
 const customFields = ref([]);
 const loading = ref(true);
 const saving = ref(false);
+const companyAssets = ref({ logo: null, signature: null });
 
 // Modal states
 const showPointModal = ref(false);
@@ -50,9 +51,10 @@ const pointsWithFields = computed(() => {
 
 const loadData = async () => {
   loading.value = true;
-  const [defaultsRes, fieldsRes] = await Promise.all([
+  const [defaultsRes, fieldsRes, assetsRes] = await Promise.all([
     supabase.from('checklist_defaults').select('*').order('point_id'),
-    supabase.from('checklist_custom_fields').select('*').order('point_id, id')
+    supabase.from('checklist_custom_fields').select('*').order('point_id, id'),
+    supabase.from('company_assets').select('*')
   ]);
 
   if (defaultsRes.error) {
@@ -71,7 +73,74 @@ const loadData = async () => {
     customFields.value = fieldsRes.data;
   }
 
+  if (assetsRes.error) {
+    console.error('Error loading assets:', assetsRes.error);
+  } else {
+    const assetsMap = new Map(assetsRes.data.map(a => [a.asset_type, a.url]));
+    companyAssets.value = {
+      logo: assetsMap.get('header_logo'),
+      signature: assetsMap.get('signature_logo')
+    };
+  }
+
   loading.value = false;
+};
+
+const validateFile = (file, maxSize, allowedTypes) => {
+  if (!file) return 'No se seleccionó archivo';
+  if (file.size > maxSize) return `Archivo demasiado grande (máx. ${maxSize / 1024}KB)`;
+  if (!allowedTypes.includes(file.type)) return `Tipo de archivo no permitido (${allowedTypes.join(', ')})`;
+  return null;
+};
+
+const handleLogoUpload = async (event) => {
+  const file = event.target.files[0];
+  const error = validateFile(file, 500 * 1024, ['image/png', 'image/jpeg', 'image/svg+xml']);
+  if (error) {
+    showNotification(error, 'error');
+    return;
+  }
+
+  const fileName = `logo_${Date.now()}.${file.name.split('.').pop()}`;
+  const { error: uploadError } = await supabase.storage.from('logos').upload(fileName, file);
+  if (uploadError) {
+    showNotification('Error al subir logo: ' + uploadError.message, 'error');
+    return;
+  }
+
+  const { data: { publicUrl } } = supabase.storage.from('logos').getPublicUrl(fileName);
+  const { error: dbError } = await supabase.from('company_assets').upsert({ asset_type: 'header_logo', url: publicUrl });
+  if (dbError) {
+    showNotification('Error al guardar logo: ' + dbError.message, 'error');
+  } else {
+    companyAssets.value.logo = publicUrl;
+    showNotification('Logo actualizado correctamente', 'success');
+  }
+};
+
+const handleSignatureUpload = async (event) => {
+  const file = event.target.files[0];
+  const error = validateFile(file, 200 * 1024, ['image/png', 'image/jpeg']);
+  if (error) {
+    showNotification(error, 'error');
+    return;
+  }
+
+  const fileName = `signature_${Date.now()}.${file.name.split('.').pop()}`;
+  const { error: uploadError } = await supabase.storage.from('logos').upload(fileName, file);
+  if (uploadError) {
+    showNotification('Error al subir firma: ' + uploadError.message, 'error');
+    return;
+  }
+
+  const { data: { publicUrl } } = supabase.storage.from('logos').getPublicUrl(fileName);
+  const { error: dbError } = await supabase.from('company_assets').upsert({ asset_type: 'signature_logo', url: publicUrl });
+  if (dbError) {
+    showNotification('Error al guardar firma: ' + dbError.message, 'error');
+  } else {
+    companyAssets.value.signature = publicUrl;
+    showNotification('Firma actualizada correctamente', 'success');
+  }
 };
 
 const saveDefaults = async () => {
@@ -184,18 +253,55 @@ onMounted(loadData);
     <h1 class="text-4xl font-bold text-slate-800 mb-8">Administración de Checklist</h1>
 
     <div v-if="loading" class="text-center p-10">Cargando configuraciones...</div>
-    <div v-else>
-      <!-- Cuadrícula de Puntos del Checklist -->
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
-        <div
-          v-for="point in pointsWithFields"
-          :key="point.id"
-          @click="openPointModal(point)"
-          class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 cursor-pointer hover:shadow-md transition-shadow"
-        >
-          <div class="flex items-center justify-between mb-4">
-            <div class="flex items-center gap-3">
-              <div class="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold"
+    <div v-else class="space-y-8">
+      <!-- Configuración de Logos y Firmas -->
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-xl font-semibold text-slate-800 mb-4">Configuración de Logos y Firmas</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <!-- Logo de ARSEL -->
+          <div class="border border-slate-200 rounded-lg p-4">
+            <h3 class="font-medium text-slate-800 mb-3">Logo de ARSEL</h3>
+            <div class="mb-4">
+              <img v-if="companyAssets.logo" :src="companyAssets.logo" alt="Logo ARSEL" class="max-w-full h-16 object-contain border border-slate-300 rounded">
+              <div v-else class="w-full h-16 border-2 border-dashed border-slate-300 rounded flex items-center justify-center text-slate-500">
+                No hay logo configurado
+              </div>
+            </div>
+            <input type="file" ref="logoInput" @change="handleLogoUpload" accept="image/png,image/jpeg,image/svg+xml" class="hidden">
+            <button @click="$refs.logoInput.click()" class="w-full px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">
+              Cambiar Logo
+            </button>
+          </div>
+
+          <!-- Firma de ARSEL -->
+          <div class="border border-slate-200 rounded-lg p-4">
+            <h3 class="font-medium text-slate-800 mb-3">Firma de ARSEL</h3>
+            <div class="mb-4">
+              <img v-if="companyAssets.signature" :src="companyAssets.signature" alt="Firma ARSEL" class="max-w-full h-16 object-contain border border-slate-300 rounded">
+              <div v-else class="w-full h-16 border-2 border-dashed border-slate-300 rounded flex items-center justify-center text-slate-500">
+                No hay firma configurada
+              </div>
+            </div>
+            <input type="file" ref="signatureInput" @change="handleSignatureUpload" accept="image/png,image/jpeg" class="hidden">
+            <button @click="$refs.signatureInput.click()" class="w-full px-4 py-2 text-sm font-semibold text-white bg-green-600 rounded-md hover:bg-green-700">
+              Cambiar Firma
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Lista de Puntos del Checklist -->
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="text-xl font-semibold text-slate-800 mb-4">Puntos del Checklist</h2>
+        <div class="space-y-3">
+          <div
+            v-for="point in pointsWithFields"
+            :key="point.id"
+            @click="openPointModal(point)"
+            class="flex items-center justify-between p-4 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition-colors"
+          >
+            <div class="flex items-center gap-4">
+              <div class="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm"
                    :class="{
                      'bg-green-500': point.default_severity === 'verde',
                      'bg-amber-500': point.default_severity === 'ambar',
@@ -204,12 +310,12 @@ onMounted(loadData);
                 {{ point.id }}
               </div>
               <div>
-                <h3 class="font-semibold text-slate-800">{{ point.id }}</h3>
-                <p class="text-sm text-slate-600">{{ point.fields.length }} campos</p>
+                <p class="font-medium text-slate-800">{{ point.text }}</p>
+                <p class="text-sm text-slate-600">{{ point.fields.length }} campos personalizados</p>
               </div>
             </div>
             <div class="text-right">
-              <p class="text-xs text-slate-500">Gravedad</p>
+              <p class="text-xs text-slate-500">Gravedad predeterminada</p>
               <p class="font-medium" :class="{
                 'text-green-600': point.default_severity === 'verde',
                 'text-amber-600': point.default_severity === 'ambar',
@@ -219,7 +325,6 @@ onMounted(loadData);
               </p>
             </div>
           </div>
-          <p class="text-sm text-slate-700 line-clamp-2">{{ point.text }}</p>
         </div>
       </div>
 
