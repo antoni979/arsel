@@ -1,6 +1,6 @@
 <!-- src/views/CentroConfigView.vue -->
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 import InteractiveMap from '../components/InteractiveMap.vue';
@@ -22,6 +22,8 @@ const fileInput = ref(null);
 
 const isDrawingMode = ref(false);
 const isPointEditingMode = ref(false);
+const isSavingArea = ref(false);
+const channel = ref(null);
 const activeSala = computed(() => salas.value.find(s => s.id === activeSalaId.value));
 
 const isNomenclatureModalOpen = ref(false);
@@ -79,6 +81,40 @@ onMounted(async () => {
       activeSalaId.value = salas.value[0].id;
   }
   loading.value = false;
+
+  // Suscripción en tiempo real
+  channel.value = supabase.channel(`version-${versionId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'salas', filter: `version_id=eq.${versionId}` }, (payload) => {
+      if (payload.eventType === 'INSERT') {
+        salas.value.push(payload.new);
+        salas.value.sort((a, b) => a.nombre.localeCompare(b.nombre));
+      } else if (payload.eventType === 'UPDATE') {
+        const index = salas.value.findIndex(s => s.id === payload.new.id);
+        if (index !== -1) salas.value[index] = payload.new;
+      } else if (payload.eventType === 'DELETE') {
+        salas.value = salas.value.filter(s => s.id !== payload.old.id);
+        if (activeSalaId.value === payload.old.id) {
+          activeSalaId.value = salas.value.length > 0 ? salas.value[0].id : null;
+        }
+      }
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'puntos_maestros', filter: `version_id=eq.${versionId}` }, (payload) => {
+      if (payload.eventType === 'INSERT') {
+        puntos.value.push(payload.new);
+      } else if (payload.eventType === 'UPDATE') {
+        const index = puntos.value.findIndex(p => p.id === payload.new.id);
+        if (index !== -1) puntos.value[index] = payload.new;
+      } else if (payload.eventType === 'DELETE') {
+        puntos.value = puntos.value.filter(p => p.id !== payload.old.id);
+      }
+    })
+    .subscribe();
+});
+
+onUnmounted(() => {
+  if (channel.value) {
+    channel.value.unsubscribe();
+  }
 });
 
 const togglePointEditingMode = () => {
@@ -118,20 +154,31 @@ const onFileSelected = async (event) => {
 
 
 const enterDrawingMode = () => {
-  if (!activeSalaId.value) { alert("Selecciona una sala para poder definir su área."); return; }
+  if (!activeSalaId.value) { 
+    alert("Selecciona una sala para poder definir su área."); 
+    return; 
+  }
   isDrawingMode.value = true;
   isPointEditingMode.value = false;
 };
 
 const handleAreaDrawn = async (points) => {
+    console.log('Area drawn for sala', activeSalaId.value, 'points:', points);
     if (!activeSalaId.value) return;
-    const { error } = await supabase.from('salas').update({ area_puntos: points }).eq('id', activeSalaId.value);
-    if (error) {
-        alert('Error al guardar el área: ' + error.message);
-    } else {
+    isSavingArea.value = true;
+    try {
+        console.log('Updating sala', activeSalaId.value, 'with points', points);
+        const { error } = await supabase.from('salas').update({ area_puntos: points }).eq('id', activeSalaId.value);
+        if (error) throw error;
+        console.log('Area saved successfully');
         const sala = salas.value.find(s => s.id === activeSalaId.value);
         if (sala) sala.area_puntos = points;
         isDrawingMode.value = false;
+    } catch (error) {
+        console.error('Error saving area:', error);
+        alert('Error al guardar el área: ' + error.message);
+    } finally {
+        isSavingArea.value = false;
     }
 };
 
@@ -299,7 +346,7 @@ const saveSalaColor = async (sala) => {
           </div>
         </div>
         
-        <div class="flex-grow grid grid-cols-1 lg:grid-cols-4 gap-8">
+        <div class="flex-grow h-full grid grid-cols-1 lg:grid-cols-4 gap-8">
           <div class="lg:col-span-1 lg:sticky lg:top-8 self-start bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col">
             <div class="flex justify-between items-center mb-4">
                 <h2 class="text-xl font-bold text-slate-800">Salas</h2>
@@ -324,15 +371,15 @@ const saveSalaColor = async (sala) => {
                   </div>
                 </div>
                 <div v-if="activeSalaId === sala.id" class="pl-10 pt-1 pb-2 flex items-center space-x-4">
-                    <button @click="enterDrawingMode" :disabled="isPointEditingMode" class="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 disabled:text-slate-400 disabled:cursor-not-allowed">
+                    <button @click="enterDrawingMode" :disabled="isPointEditingMode || isSavingArea" class="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 disabled:text-slate-400 disabled:cursor-not-allowed">
                        <MapIcon class="h-4 w-4" /> <span>Definir Área</span>
-                    </button>
-                    <button v-if="sala.area_puntos" @click="clearArea" :disabled="isPointEditingMode" class="flex items-center gap-1.5 text-xs text-red-600 hover:text-red-800 disabled:text-slate-400 disabled:cursor-not-allowed">
-                       <XCircleIcon class="h-4 w-4" /> <span>Limpiar</span>
-                    </button>
-                    <button @click="deleteSala(sala.id)" :disabled="isPointEditingMode" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-red-600 disabled:text-slate-400 disabled:cursor-not-allowed">
-                       <TrashIcon class="h-4 w-4" /> <span>Borrar</span>
-                    </button>
+                     </button>
+                     <button v-if="sala.area_puntos" @click="clearArea" :disabled="isPointEditingMode || isSavingArea" class="flex items-center gap-1.5 text-xs text-red-600 hover:text-red-800 disabled:text-slate-400 disabled:cursor-not-allowed">
+                        <XCircleIcon class="h-4 w-4" /> <span>Limpiar</span>
+                     </button>
+                     <button @click="deleteSala(sala.id)" :disabled="isPointEditingMode || isSavingArea" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-red-600 disabled:text-slate-400 disabled:cursor-not-allowed">
+                        <TrashIcon class="h-4 w-4" /> <span>Borrar</span>
+                     </button>
                  </div>
               </li>
             </ul>
@@ -345,23 +392,26 @@ const saveSalaColor = async (sala) => {
           </div>
           
           <div class="lg:col-span-3 relative">
-            <div v-if="instructionText" class="sticky top-4 left-1/2 -translate-x-1/2 max-w-[90%] bg-blue-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-lg z-20 pointer-events-none flex items-center gap-2">
+            <div v-if="instructionText" class="bg-blue-600 text-white text-sm font-semibold py-2 px-4 flex items-center gap-2 mb-4">
               <InformationCircleIcon class="h-5 w-5 flex-shrink-0" />
               <span>{{ instructionText }}</span>
             </div>
-            <InteractiveMap 
-              :image-url="version.url_imagen_plano" 
-              :points="puntos" 
+            <!-- ======================= INICIO DE LA CORRECCIÓN ======================= -->
+            <InteractiveMap
+              class="h-full"
+              :image-url="version.url_imagen_plano"
+              :points="puntos"
               :salas="salas"
-              :is-read-only="!isPointEditingMode"
+              :is-read-only="!isPointEditingMode && !isDrawingMode"
               :is-placement-mode="isPointEditingMode"
               :is-area-drawing-mode="isDrawingMode"
               @add-point="handleMapClick"
-              @delete-point="handleDeletePoint" 
+              @delete-point="handleDeletePoint"
               @update-point-position="handleUpdatePosition"
               @area-drawn="handleAreaDrawn"
               @drawing-cancelled="cancelAllModes"
             />
+            <!-- ======================= FIN DE LA CORRECCIÓN ======================= -->
           </div>
         </div>
       </div>
@@ -393,4 +443,3 @@ const saveSalaColor = async (sala) => {
     />
   </div>
 </template>
-

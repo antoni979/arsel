@@ -11,7 +11,7 @@ const props = defineProps({
   isAreaDrawingMode: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['add-point', 'delete-point', 'update-point-position', 'point-click', 'area-drawn', 'drawing-cancelled']);
+const emit = defineEmits(['add-point', 'delete-point', 'update-point-position', 'point-click', 'area-drawn', 'drawing-cancelled', 'image-error']);
 
 const overlayRef = ref(null);
 const draggedPointId = ref(null);
@@ -19,8 +19,14 @@ const drawingPoints = ref([]);
 const mousePosition = ref({ x: 0, y: 0 });
 const overlayWidth = ref(0);
 const overlayHeight = ref(0);
+const lastWidth = ref(0);
+const lastHeight = ref(0);
+const resizeObserver = ref(null);
+const updateTimeout = ref(null);
 
 watch(() => props.isAreaDrawingMode, (newVal) => {
+  // NUEVO LOG: ¿El componente hijo recibe el cambio de la prop?
+  console.log('[InteractiveMap] La prop isAreaDrawingMode ha cambiado a:', newVal);
   if (!newVal) {
     drawingPoints.value = [];
   }
@@ -30,11 +36,25 @@ watch(() => props.salas, () => {
   nextTick(() => updateDimensions());
 }, { immediate: true });
 
+watch(() => props.imageUrl, () => {
+  nextTick(() => updateDimensions());
+}, { immediate: true });
+
 const updateDimensions = () => {
-  if (overlayRef.value) {
-    overlayWidth.value = overlayRef.value.clientWidth;
-    overlayHeight.value = overlayRef.value.clientHeight;
-  }
+  if (updateTimeout.value) clearTimeout(updateTimeout.value);
+  updateTimeout.value = setTimeout(() => {
+    if (overlayRef.value) {
+      const newWidth = overlayRef.value.clientWidth;
+      const newHeight = overlayRef.value.clientHeight;
+      if (newWidth !== lastWidth.value || newHeight !== lastHeight.value) {
+        overlayWidth.value = newWidth;
+        overlayHeight.value = newHeight;
+        lastWidth.value = newWidth;
+        lastHeight.value = newHeight;
+        console.log('Overlay dimensions updated:', newWidth, newHeight);
+      }
+    }
+  }, 100); // Debounce 100ms
 };
 
 const toSvgPoints = (pointsArray) => {
@@ -43,12 +63,25 @@ const toSvgPoints = (pointsArray) => {
 };
 
 const handleMapClick = (event) => {
-  if (props.isReadOnly || !overlayRef.value) return;
+  // NUEVO LOG: ¿Se detecta el clic en el mapa?
+  console.log('[InteractiveMap] Se ha detectado un clic en el mapa.');
+  
+  if (props.isReadOnly || !overlayRef.value) {
+    console.log('[InteractiveMap] Clic ignorado. Razón:', { isReadOnly: props.isReadOnly, hasOverlay: !!overlayRef.value });
+    return;
+  }
+  
   const overlayRect = overlayRef.value.getBoundingClientRect();
   const x = (event.clientX - overlayRect.left) / overlayRect.width;
   const y = (event.clientY - overlayRect.top) / overlayRect.height;
   
+  // NUEVO LOG: ¿Cuál es el estado del modo de dibujo DENTRO del manejador de clics?
+  console.log('[InteractiveMap] Dentro de handleMapClick, isAreaDrawingMode es:', props.isAreaDrawingMode);
+
   if (props.isAreaDrawingMode) {
+    // NUEVO LOG: ¡Hemos entrado en la lógica de dibujo!
+    console.log('[InteractiveMap] ¡MODO DIBUJO ACTIVO! Añadiendo punto en', { x, y });
+
     if (drawingPoints.value.length > 2) {
       const firstPoint = drawingPoints.value[0];
       const distance = Math.sqrt(Math.pow((x - firstPoint.x), 2) + Math.pow((y - firstPoint.y), 2));
@@ -59,6 +92,9 @@ const handleMapClick = (event) => {
       }
     }
     drawingPoints.value.push({ x, y });
+    // NUEVO LOG: ¿Cómo queda el array de puntos?
+    console.log('[InteractiveMap] Array de puntos de dibujo actualizado:', drawingPoints.value);
+
   } else if (props.isPlacementMode) {
     emit('add-point', { x, y });
   }
@@ -81,11 +117,21 @@ const handleKeydown = (e) => {
 onMounted(() => {
   updateDimensions();
   window.addEventListener('keydown', handleKeydown);
-  window.addEventListener('resize', updateDimensions);
+  if (overlayRef.value) {
+    resizeObserver.value = new ResizeObserver(() => {
+      updateDimensions();
+    });
+    resizeObserver.value.observe(overlayRef.value);
+  }
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown);
-  window.removeEventListener('resize', updateDimensions);
+  if (resizeObserver.value) {
+    resizeObserver.value.disconnect();
+  }
+  if (updateTimeout.value) {
+    clearTimeout(updateTimeout.value);
+  }
 });
 
 const getSalaColor = (salaId) => {
@@ -93,13 +139,15 @@ const getSalaColor = (salaId) => {
   return sala ? sala.color : '#9CA3AF';
 };
 
-const startDrag = (point) => {
+const startDrag = (point, event) => {
   if (props.isReadOnly) return;
+  event.preventDefault();
   draggedPointId.value = point.id;
 };
 
 const onDrag = (event) => {
   if (props.isReadOnly || draggedPointId.value === null || !overlayRef.value) return;
+  event.preventDefault();
   const point = props.points.find(p => p.id === draggedPointId.value);
   if (!point) return;
   const overlayRect = overlayRef.value.getBoundingClientRect();
@@ -124,24 +172,30 @@ const handlePointClick = (point) => {
   if (props.isPlacementMode || props.isAreaDrawingMode) return;
   emit('point-click', point);
 };
+
+const handleImageError = () => {
+  console.error('Error loading image from Supabase:', props.imageUrl);
+  // Emitir evento para manejar en el padre si es necesario
+  emit('image-error');
+};
 </script>
 
 <template>
-  <div 
-    class="relative"
+  <div
+    class="relative w-full h-full"
     @mousemove="onDrag"
     @mouseup="stopDrag"
     @mouseleave="stopDrag"
   >
-    <div class="relative max-w-full max-h-full">
-      <img :src="imageUrl" @load="updateDimensions" class="block max-w-full max-h-full object-contain pointer-events-none" alt="Plano del centro">
-      <div
-        ref="overlayRef"
-        class="absolute inset-0"
-        :class="{ 'cursor-crosshair': isPlacementMode || isAreaDrawingMode }"
-        @click="handleMapClick"
-        @mousemove="handleMouseMove"
-      >
+    <img :src="imageUrl" @load="updateDimensions" @error="handleImageError" class="absolute inset-0 w-full h-full object-contain pointer-events-none" alt="Plano del centro">
+    <div
+      ref="overlayRef"
+      class="absolute inset-0"
+      :class="{ 'cursor-crosshair': isPlacementMode || isAreaDrawingMode }"
+      style="z-index: 20;"
+      @click="handleMapClick"
+      @mousemove="handleMouseMove"
+    >
         <svg class="absolute top-0 left-0 w-full h-full pointer-events-none">
           <template v-for="sala in salas" :key="`sala-area-${sala.id}`">
             <polygon
@@ -189,7 +243,7 @@ const handlePointClick = (point) => {
             top: (point.coordenada_y * 100) + '%',
             backgroundColor: point.color || getSalaColor(point.sala_id)
           }"
-          @mousedown.stop="startDrag(point)"
+          @mousedown.stop="startDrag(point, $event)"
           @click.stop="handlePointClick(point)"
         >
           {{ point.nomenclatura.split('-').pop() || '?' }}
@@ -200,7 +254,6 @@ const handlePointClick = (point) => {
             title="Borrar punto"
           >X</button>
         </div>
-      </div>
     </div>
   </div>
 </template>

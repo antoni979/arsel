@@ -2455,25 +2455,30 @@ watch(() => props.isOpen, (newVal) => {
 });
 
 const handleLogoSelected = async (event) => {
+  console.log("Starting logo upload...");
   const file = event.target.files[0];
   if (!file || !form.value.id) {
     if(!form.value.id) alert("Guarda primero el centro para poder asignarle un logo.");
     return;
   }
-  
+
   isUploadingLogo.value = true;
   const fileName = `cliente_${form.value.id}/${Date.now()}_${file.name}`;
-  
+  console.log("File name:", fileName);
+
   // Subir el nuevo logo
   const { error: uploadError } = await supabase.storage.from('logos-clientes').upload(fileName, file);
   if (uploadError) {
+    console.error("Upload error:", uploadError);
     alert("Error al subir el logo: " + uploadError.message);
     isUploadingLogo.value = false;
     return;
   }
+  console.log("Upload successful");
 
   // Obtener la URL pública
   const { data: { publicUrl } } = supabase.storage.from('logos-clientes').getPublicUrl(fileName);
+  console.log("Public URL:", publicUrl);
 
   // Actualizar el campo en la BBDD y en el formulario
   const { error: updateError } = await supabase
@@ -2482,8 +2487,10 @@ const handleLogoSelected = async (event) => {
     .eq('id', form.value.id);
 
   if (updateError) {
+    console.error("Update error:", updateError);
     alert("Error al guardar la URL del logo: " + updateError.message);
   } else {
+    console.log("Update successful");
     // Actualizamos el logo en el formulario para que se vea el cambio al instante
     form.value.url_logo_cliente = publicUrl;
   }
@@ -2706,7 +2713,7 @@ const props = defineProps({
   isAreaDrawingMode: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['add-point', 'delete-point', 'update-point-position', 'point-click', 'area-drawn', 'drawing-cancelled']);
+const emit = defineEmits(['add-point', 'delete-point', 'update-point-position', 'point-click', 'area-drawn', 'drawing-cancelled', 'image-error']);
 
 const overlayRef = ref(null);
 const draggedPointId = ref(null);
@@ -2714,6 +2721,9 @@ const drawingPoints = ref([]);
 const mousePosition = ref({ x: 0, y: 0 });
 const overlayWidth = ref(0);
 const overlayHeight = ref(0);
+const lastWidth = ref(0);
+const lastHeight = ref(0);
+const resizeObserver = ref(null);
 
 watch(() => props.isAreaDrawingMode, (newVal) => {
   if (!newVal) {
@@ -2725,10 +2735,21 @@ watch(() => props.salas, () => {
   nextTick(() => updateDimensions());
 }, { immediate: true });
 
+watch(() => props.imageUrl, () => {
+  nextTick(() => updateDimensions());
+}, { immediate: true });
+
 const updateDimensions = () => {
   if (overlayRef.value) {
-    overlayWidth.value = overlayRef.value.clientWidth;
-    overlayHeight.value = overlayRef.value.clientHeight;
+    const newWidth = overlayRef.value.clientWidth;
+    const newHeight = overlayRef.value.clientHeight;
+    if (newWidth !== lastWidth.value || newHeight !== lastHeight.value) {
+      overlayWidth.value = newWidth;
+      overlayHeight.value = newHeight;
+      lastWidth.value = newWidth;
+      lastHeight.value = newHeight;
+      console.log('Overlay dimensions updated:', newWidth, newHeight);
+    }
   }
 };
 
@@ -2776,11 +2797,18 @@ const handleKeydown = (e) => {
 onMounted(() => {
   updateDimensions();
   window.addEventListener('keydown', handleKeydown);
-  window.addEventListener('resize', updateDimensions);
+  if (overlayRef.value) {
+    resizeObserver.value = new ResizeObserver(() => {
+      updateDimensions();
+    });
+    resizeObserver.value.observe(overlayRef.value);
+  }
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown);
-  window.removeEventListener('resize', updateDimensions);
+  if (resizeObserver.value) {
+    resizeObserver.value.disconnect();
+  }
 });
 
 const getSalaColor = (salaId) => {
@@ -2788,13 +2816,15 @@ const getSalaColor = (salaId) => {
   return sala ? sala.color : '#9CA3AF';
 };
 
-const startDrag = (point) => {
+const startDrag = (point, event) => {
   if (props.isReadOnly) return;
+  event.preventDefault();
   draggedPointId.value = point.id;
 };
 
 const onDrag = (event) => {
   if (props.isReadOnly || draggedPointId.value === null || !overlayRef.value) return;
+  event.preventDefault();
   const point = props.points.find(p => p.id === draggedPointId.value);
   if (!point) return;
   const overlayRect = overlayRef.value.getBoundingClientRect();
@@ -2819,24 +2849,30 @@ const handlePointClick = (point) => {
   if (props.isPlacementMode || props.isAreaDrawingMode) return;
   emit('point-click', point);
 };
+
+const handleImageError = () => {
+  console.error('Error loading image from Supabase:', props.imageUrl);
+  // Emitir evento para manejar en el padre si es necesario
+  emit('image-error');
+};
 </script>
 
 <template>
-  <div 
-    class="relative"
+  <div
+    class="relative w-full h-full"
     @mousemove="onDrag"
     @mouseup="stopDrag"
     @mouseleave="stopDrag"
   >
-    <div class="relative max-w-full max-h-full">
-      <img :src="imageUrl" @load="updateDimensions" class="block max-w-full max-h-full object-contain pointer-events-none" alt="Plano del centro">
-      <div
-        ref="overlayRef"
-        class="absolute inset-0"
-        :class="{ 'cursor-crosshair': isPlacementMode || isAreaDrawingMode }"
-        @click="handleMapClick"
-        @mousemove="handleMouseMove"
-      >
+    <img :src="imageUrl" @load="updateDimensions" @error="handleImageError" class="absolute inset-0 w-full h-full object-contain pointer-events-none" alt="Plano del centro">
+    <div
+      ref="overlayRef"
+      class="absolute inset-0"
+      :class="{ 'cursor-crosshair': isPlacementMode || isAreaDrawingMode }"
+      style="z-index: 20;"
+      @click="handleMapClick"
+      @mousemove="handleMouseMove"
+    >
         <svg class="absolute top-0 left-0 w-full h-full pointer-events-none">
           <template v-for="sala in salas" :key="`sala-area-${sala.id}`">
             <polygon
@@ -2884,7 +2920,7 @@ const handlePointClick = (point) => {
             top: (point.coordenada_y * 100) + '%',
             backgroundColor: point.color || getSalaColor(point.sala_id)
           }"
-          @mousedown.stop="startDrag(point)"
+          @mousedown.stop="startDrag(point, $event)"
           @click.stop="handlePointClick(point)"
         >
           {{ point.nomenclatura.split('-').pop() || '?' }}
@@ -2895,7 +2931,6 @@ const handlePointClick = (point) => {
             title="Borrar punto"
           >X</button>
         </div>
-      </div>
     </div>
   </div>
 </template>
@@ -2969,7 +3004,14 @@ const openEditModal = (centro) => {
 };
 
 const handleSaveCentro = async (centroData) => {
-  const dataToSave = { ...centroData };
+  // Filtrar solo los campos válidos de la tabla 'centros'
+  const validFields = ['id', 'nombre', 'url_imagen_plano', 'fecha_creacion', 'direccion', 'responsable_nombre', 'responsable_email', 'provincia', 'zona', 'url_logo_cliente'];
+  const dataToSave = {};
+  validFields.forEach(field => {
+    if (centroData[field] !== undefined) {
+      dataToSave[field] = centroData[field];
+    }
+  });
   let error;
   if (dataToSave.id) {
     const { error: updateError } = await supabase.from('centros').update(dataToSave).eq('id', dataToSave.id);
@@ -2988,29 +3030,39 @@ const handleSaveCentro = async (centroData) => {
 
 const fetchCentros = async () => {
   loading.value = true;
+  console.log("Fetching centros...");
   const { data, error } = await supabase
     .from('centros')
-    .select('*, url_logo_cliente, inspecciones(fecha_inspeccion)')
+    .select('*, url_logo_cliente')
     .order('nombre');
 
   if (error) {
     console.error("Error fetching centros:", error);
+    console.error("Error details:", error.message, error.details, error.hint);
     centros.value = [];
     loading.value = false;
     return;
   }
+  console.log("Centros fetched successfully:", data);
 
   if (data) {
-    centros.value = data.map(centro => {
-      const inspecciones = centro.inspecciones || [];
+    // Para cada centro, obtener el conteo de inspecciones y fechas
+    const centrosConInspecciones = await Promise.all(data.map(async (centro) => {
+      const { data: inspecciones, error: inspError } = await supabase
+        .from('inspecciones')
+        .select('fecha_inspeccion')
+        .eq('centro_id', centro.id);
+
+      let numero_informes = 0;
       let ultima_revision = null;
       let proxima_revision = null;
 
-      if (inspecciones.length > 0) {
+      if (!inspError && inspecciones && inspecciones.length > 0) {
+        numero_informes = inspecciones.length;
         const fechas = inspecciones.map(i => new Date(i.fecha_inspeccion)).sort((a, b) => b - a);
         const ultimaFecha = fechas[0];
         ultima_revision = ultimaFecha.toLocaleDateString('es-ES');
-        
+
         const proximaFecha = new Date(ultimaFecha);
         proximaFecha.setFullYear(proximaFecha.getFullYear() + 1);
         proxima_revision = proximaFecha.toLocaleDateString('es-ES');
@@ -3018,13 +3070,15 @@ const fetchCentros = async () => {
 
       return {
         ...centro,
-        numero_informes: inspecciones.length,
+        numero_informes,
         ultima_revision,
         proxima_revision
       };
-    });
+    }));
+
+    centros.value = centrosConInspecciones;
   }
-  
+
   loading.value = false;
 };
 
@@ -5354,7 +5408,7 @@ onMounted(async () => {
 --- INICIO DEL ARCHIVO: src/views/CentroConfigView.vue ---
 <!-- src/views/CentroConfigView.vue -->
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 import InteractiveMap from '../components/InteractiveMap.vue';
@@ -5376,6 +5430,8 @@ const fileInput = ref(null);
 
 const isDrawingMode = ref(false);
 const isPointEditingMode = ref(false);
+const isSavingArea = ref(false);
+const channel = ref(null);
 const activeSala = computed(() => salas.value.find(s => s.id === activeSalaId.value));
 
 const isNomenclatureModalOpen = ref(false);
@@ -5433,6 +5489,40 @@ onMounted(async () => {
       activeSalaId.value = salas.value[0].id;
   }
   loading.value = false;
+
+  // Suscripción en tiempo real
+  channel.value = supabase.channel(`version-${versionId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'salas', filter: `version_id=eq.${versionId}` }, (payload) => {
+      if (payload.eventType === 'INSERT') {
+        salas.value.push(payload.new);
+        salas.value.sort((a, b) => a.nombre.localeCompare(b.nombre));
+      } else if (payload.eventType === 'UPDATE') {
+        const index = salas.value.findIndex(s => s.id === payload.new.id);
+        if (index !== -1) salas.value[index] = payload.new;
+      } else if (payload.eventType === 'DELETE') {
+        salas.value = salas.value.filter(s => s.id !== payload.old.id);
+        if (activeSalaId.value === payload.old.id) {
+          activeSalaId.value = salas.value.length > 0 ? salas.value[0].id : null;
+        }
+      }
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'puntos_maestros', filter: `version_id=eq.${versionId}` }, (payload) => {
+      if (payload.eventType === 'INSERT') {
+        puntos.value.push(payload.new);
+      } else if (payload.eventType === 'UPDATE') {
+        const index = puntos.value.findIndex(p => p.id === payload.new.id);
+        if (index !== -1) puntos.value[index] = payload.new;
+      } else if (payload.eventType === 'DELETE') {
+        puntos.value = puntos.value.filter(p => p.id !== payload.old.id);
+      }
+    })
+    .subscribe();
+});
+
+onUnmounted(() => {
+  if (channel.value) {
+    channel.value.unsubscribe();
+  }
 });
 
 const togglePointEditingMode = () => {
@@ -5478,14 +5568,22 @@ const enterDrawingMode = () => {
 };
 
 const handleAreaDrawn = async (points) => {
+    console.log('Area drawn for sala', activeSalaId.value, 'points:', points);
     if (!activeSalaId.value) return;
-    const { error } = await supabase.from('salas').update({ area_puntos: points }).eq('id', activeSalaId.value);
-    if (error) {
-        alert('Error al guardar el área: ' + error.message);
-    } else {
+    isSavingArea.value = true;
+    try {
+        console.log('Updating sala', activeSalaId.value, 'with points', points);
+        const { error } = await supabase.from('salas').update({ area_puntos: points }).eq('id', activeSalaId.value);
+        if (error) throw error;
+        console.log('Area saved successfully');
         const sala = salas.value.find(s => s.id === activeSalaId.value);
         if (sala) sala.area_puntos = points;
         isDrawingMode.value = false;
+    } catch (error) {
+        console.error('Error saving area:', error);
+        alert('Error al guardar el área: ' + error.message);
+    } finally {
+        isSavingArea.value = false;
     }
 };
 
@@ -5653,7 +5751,7 @@ const saveSalaColor = async (sala) => {
           </div>
         </div>
         
-        <div class="flex-grow grid grid-cols-1 lg:grid-cols-4 gap-8">
+        <div class="flex-grow h-full grid grid-cols-1 lg:grid-cols-4 gap-8">
           <div class="lg:col-span-1 lg:sticky lg:top-8 self-start bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col">
             <div class="flex justify-between items-center mb-4">
                 <h2 class="text-xl font-bold text-slate-800">Salas</h2>
@@ -5678,15 +5776,15 @@ const saveSalaColor = async (sala) => {
                   </div>
                 </div>
                 <div v-if="activeSalaId === sala.id" class="pl-10 pt-1 pb-2 flex items-center space-x-4">
-                    <button @click="enterDrawingMode" :disabled="isPointEditingMode" class="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 disabled:text-slate-400 disabled:cursor-not-allowed">
+                    <button @click="enterDrawingMode" :disabled="isPointEditingMode || isSavingArea" class="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 disabled:text-slate-400 disabled:cursor-not-allowed">
                        <MapIcon class="h-4 w-4" /> <span>Definir Área</span>
-                    </button>
-                    <button v-if="sala.area_puntos" @click="clearArea" :disabled="isPointEditingMode" class="flex items-center gap-1.5 text-xs text-red-600 hover:text-red-800 disabled:text-slate-400 disabled:cursor-not-allowed">
-                       <XCircleIcon class="h-4 w-4" /> <span>Limpiar</span>
-                    </button>
-                    <button @click="deleteSala(sala.id)" :disabled="isPointEditingMode" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-red-600 disabled:text-slate-400 disabled:cursor-not-allowed">
-                       <TrashIcon class="h-4 w-4" /> <span>Borrar</span>
-                    </button>
+                     </button>
+                     <button v-if="sala.area_puntos" @click="clearArea" :disabled="isPointEditingMode || isSavingArea" class="flex items-center gap-1.5 text-xs text-red-600 hover:text-red-800 disabled:text-slate-400 disabled:cursor-not-allowed">
+                        <XCircleIcon class="h-4 w-4" /> <span>Limpiar</span>
+                     </button>
+                     <button @click="deleteSala(sala.id)" :disabled="isPointEditingMode || isSavingArea" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-red-600 disabled:text-slate-400 disabled:cursor-not-allowed">
+                        <TrashIcon class="h-4 w-4" /> <span>Borrar</span>
+                     </button>
                  </div>
               </li>
             </ul>
@@ -5703,15 +5801,16 @@ const saveSalaColor = async (sala) => {
               <InformationCircleIcon class="h-5 w-5 flex-shrink-0" />
               <span>{{ instructionText }}</span>
             </div>
-            <InteractiveMap 
-              :image-url="version.url_imagen_plano" 
-              :points="puntos" 
+            <InteractiveMap
+              class="h-full"
+              :image-url="version.url_imagen_plano"
+              :points="puntos"
               :salas="salas"
               :is-read-only="!isPointEditingMode"
               :is-placement-mode="isPointEditingMode"
               :is-area-drawing-mode="isDrawingMode"
               @add-point="handleMapClick"
-              @delete-point="handleDeletePoint" 
+              @delete-point="handleDeletePoint"
               @update-point-position="handleUpdatePosition"
               @area-drawn="handleAreaDrawn"
               @drawing-cancelled="cancelAllModes"
@@ -5747,6 +5846,8 @@ const saveSalaColor = async (sala) => {
     />
   </div>
 </template>
+
+
 --- FIN DEL ARCHIVO: src/views/CentroConfigView.vue ---
 
 --- INICIO DEL ARCHIVO: src/router/index.js ---

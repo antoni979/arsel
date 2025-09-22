@@ -25,25 +25,30 @@ watch(() => props.isOpen, (newVal) => {
 });
 
 const handleLogoSelected = async (event) => {
+  console.log("Starting logo upload...");
   const file = event.target.files[0];
   if (!file || !form.value.id) {
     if(!form.value.id) alert("Guarda primero el centro para poder asignarle un logo.");
     return;
   }
-  
+
   isUploadingLogo.value = true;
   const fileName = `cliente_${form.value.id}/${Date.now()}_${file.name}`;
-  
+  console.log("File name:", fileName);
+
   // Subir el nuevo logo
   const { error: uploadError } = await supabase.storage.from('logos-clientes').upload(fileName, file);
   if (uploadError) {
+    console.error("Upload error:", uploadError);
     alert("Error al subir el logo: " + uploadError.message);
     isUploadingLogo.value = false;
     return;
   }
+  console.log("Upload successful");
 
   // Obtener la URL pública
   const { data: { publicUrl } } = supabase.storage.from('logos-clientes').getPublicUrl(fileName);
+  console.log("Public URL:", publicUrl);
 
   // Actualizar el campo en la BBDD y en el formulario
   const { error: updateError } = await supabase
@@ -52,8 +57,10 @@ const handleLogoSelected = async (event) => {
     .eq('id', form.value.id);
 
   if (updateError) {
+    console.error("Update error:", updateError);
     alert("Error al guardar la URL del logo: " + updateError.message);
   } else {
+    console.log("Update successful");
     // Actualizamos el logo en el formulario para que se vea el cambio al instante
     form.value.url_logo_cliente = publicUrl;
   }

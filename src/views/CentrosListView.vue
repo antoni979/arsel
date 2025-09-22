@@ -61,7 +61,14 @@ const openEditModal = (centro) => {
 };
 
 const handleSaveCentro = async (centroData) => {
-  const dataToSave = { ...centroData };
+  // Filtrar solo los campos válidos de la tabla 'centros'
+  const validFields = ['id', 'nombre', 'url_imagen_plano', 'fecha_creacion', 'direccion', 'responsable_nombre', 'responsable_email', 'provincia', 'zona', 'url_logo_cliente'];
+  const dataToSave = {};
+  validFields.forEach(field => {
+    if (centroData[field] !== undefined) {
+      dataToSave[field] = centroData[field];
+    }
+  });
   let error;
   if (dataToSave.id) {
     const { error: updateError } = await supabase.from('centros').update(dataToSave).eq('id', dataToSave.id);
@@ -80,29 +87,39 @@ const handleSaveCentro = async (centroData) => {
 
 const fetchCentros = async () => {
   loading.value = true;
+  console.log("Fetching centros...");
   const { data, error } = await supabase
     .from('centros')
-    .select('*, url_logo_cliente, inspecciones(fecha_inspeccion)')
+    .select('*, url_logo_cliente')
     .order('nombre');
 
   if (error) {
     console.error("Error fetching centros:", error);
+    console.error("Error details:", error.message, error.details, error.hint);
     centros.value = [];
     loading.value = false;
     return;
   }
+  console.log("Centros fetched successfully:", data);
 
   if (data) {
-    centros.value = data.map(centro => {
-      const inspecciones = centro.inspecciones || [];
+    // Para cada centro, obtener el conteo de inspecciones y fechas
+    const centrosConInspecciones = await Promise.all(data.map(async (centro) => {
+      const { data: inspecciones, error: inspError } = await supabase
+        .from('inspecciones')
+        .select('fecha_inspeccion')
+        .eq('centro_id', centro.id);
+
+      let numero_informes = 0;
       let ultima_revision = null;
       let proxima_revision = null;
 
-      if (inspecciones.length > 0) {
+      if (!inspError && inspecciones && inspecciones.length > 0) {
+        numero_informes = inspecciones.length;
         const fechas = inspecciones.map(i => new Date(i.fecha_inspeccion)).sort((a, b) => b - a);
         const ultimaFecha = fechas[0];
         ultima_revision = ultimaFecha.toLocaleDateString('es-ES');
-        
+
         const proximaFecha = new Date(ultimaFecha);
         proximaFecha.setFullYear(proximaFecha.getFullYear() + 1);
         proxima_revision = proximaFecha.toLocaleDateString('es-ES');
@@ -110,13 +127,15 @@ const fetchCentros = async () => {
 
       return {
         ...centro,
-        numero_informes: inspecciones.length,
+        numero_informes,
         ultima_revision,
         proxima_revision
       };
-    });
+    }));
+
+    centros.value = centrosConInspecciones;
   }
-  
+
   loading.value = false;
 };
 
