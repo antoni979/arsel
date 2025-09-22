@@ -393,3 +393,4 @@ const saveSalaColor = async (sala) => {
     />
   </div>
 </template>
+
