@@ -1,6 +1,6 @@
 <!-- src/views/AdminView.vue -->
 <script setup>
-import { ref, onMounted, inject, computed } from 'vue';
+import { ref, onMounted, inject, computed, watch } from 'vue';
 import { supabase } from '../supabase';
 import { checklistItems } from '../utils/checklist';
 
@@ -47,6 +47,22 @@ const pointsWithFields = computed(() => {
     ...point,
     fields: fieldsMap.get(point.id) || []
   }));
+});
+
+const updateDefaults = () => {
+  if (selectedPoint.value) {
+    const index = defaults.value.findIndex(d => d.id === selectedPoint.value.id);
+    if (index !== -1) {
+      defaults.value[index].default_severity = selectedPoint.value.default_severity;
+    }
+  }
+};
+
+watch(() => selectedPoint.value?.default_severity, (newVal, oldVal) => {
+  if (newVal && newVal !== oldVal) {
+    updateDefaults();
+    saveDefaults();
+  }
 });
 
 const loadData = async () => {
@@ -158,11 +174,6 @@ const saveDefaults = async () => {
     showNotification('Error al guardar gravedades: ' + error.message, 'error');
   } else {
     showNotification('Gravedades guardadas correctamente.', 'success');
-    // Update selectedPoint if modal is open
-    if (selectedPoint.value) {
-      const updated = defaults.value.find(d => d.id === selectedPoint.value.id);
-      if (updated) selectedPoint.value.default_severity = updated.default_severity;
-    }
   }
   saving.value = false;
 };

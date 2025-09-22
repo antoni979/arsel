@@ -20,6 +20,18 @@ const centros = ref([]);
 const resumenInspecciones = ref([]);
 const router = useRouter();
 
+// Modal states
+const showModal = ref(false);
+const selectedStatus = ref(null);
+
+const statusLabels = {
+  centros: 'Centros',
+  en_progreso: 'En Progreso',
+  pendientes_envio: 'Pendientes de Envío',
+  pendientes_cierre: 'Pendientes de Cierre',
+  cerradas: 'Cerradas'
+};
+
 // ===== INICIO DE LA CORRECCIÓN: Función robusta para parsear fechas =====
 function parseDate(dateString) {
   if (!dateString) return null;
@@ -33,7 +45,7 @@ function parseDate(dateString) {
 onMounted(async () => {
   loading.value = true;
   const [centrosRes, resumenRes] = await Promise.all([
-    supabase.from('centros').select('id', { count: 'exact' }),
+    supabase.from('centros').select('id, nombre'),
     supabase.from('vista_resumen_inspecciones').select('*')
   ]);
   
@@ -136,6 +148,28 @@ const accionesPendientes = computed(() => {
         // Usamos la fecha procesada para ordenar
         .sort((a, b) => a.fecha_inspeccion_obj - b.fecha_inspeccion_obj);
 });
+
+const modalItems = computed(() => {
+  if (!selectedStatus.value) return [];
+  return resumenInspecciones.value.filter(i => {
+    switch(selectedStatus.value) {
+      case 'en_progreso': return i.estado === 'en_progreso';
+      case 'pendientes_envio': return i.estado === 'finalizada';
+      case 'pendientes_cierre': return i.estado === 'pendiente_subsanacion';
+      default: return false;
+    }
+  });
+});
+
+const openModal = (status) => {
+  selectedStatus.value = status;
+  showModal.value = true;
+};
+
+const closeModal = () => {
+  showModal.value = false;
+  selectedStatus.value = null;
+};
 </script>
 
 <template>
@@ -151,15 +185,15 @@ const accionesPendientes = computed(() => {
             <div class="bg-blue-100 p-3 rounded-lg"><BuildingStorefrontIcon class="h-6 w-6 text-blue-600" /></div>
             <div><p class="text-2xl font-bold text-slate-800">{{ totalCentros }}</p><p class="text-slate-500 text-sm font-semibold">Centros</p></div>
           </div>
-          <div class="bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-3">
+          <div @click="openModal('en_progreso')" class="cursor-pointer bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-3 hover:shadow-md transition-shadow">
             <div class="bg-yellow-100 p-3 rounded-lg"><ClockIcon class="h-6 w-6 text-yellow-600" /></div>
             <div><p class="text-2xl font-bold text-slate-800">{{ inspeccionesEnProgreso }}</p><p class="text-slate-500 text-sm font-semibold">En Progreso</p></div>
           </div>
-          <div class="bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-3">
+          <div @click="openModal('pendientes_envio')" class="cursor-pointer bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-3 hover:shadow-md transition-shadow">
             <div class="bg-purple-100 p-3 rounded-lg"><PaperAirplaneIcon class="h-6 w-6 text-purple-600" /></div>
             <div><p class="text-2xl font-bold text-slate-800">{{ inspeccionesPendientesEnvio }}</p><p class="text-slate-500 text-sm font-semibold">Pend. Envío</p></div>
           </div>
-          <div class="bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-3">
+          <div @click="openModal('pendientes_cierre')" class="cursor-pointer bg-gradient-to-br from-white to-slate-50 p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-3 hover:shadow-md transition-shadow">
             <div class="bg-orange-100 p-3 rounded-lg"><ArchiveBoxIcon class="h-6 w-6 text-orange-600" /></div>
             <div><p class="text-2xl font-bold text-slate-800">{{ inspeccionesPendientesCierre }}</p><p class="text-slate-500 text-sm font-semibold">Pend. Cierre</p></div>
           </div>
@@ -226,6 +260,44 @@ const accionesPendientes = computed(() => {
           </table>
         </div>
       </section>
+    </div>
+
+    <!-- Modal for status details -->
+    <div v-if="showModal" @click.self="closeModal" class="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center p-4 z-50">
+      <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div class="p-6">
+          <div class="flex justify-between items-center mb-6">
+            <h3 class="text-xl font-bold text-slate-800">{{ statusLabels[selectedStatus] }}</h3>
+            <button @click="closeModal" class="text-slate-400 hover:text-slate-600 text-2xl">&times;</button>
+          </div>
+
+          <div>
+            <div v-if="modalItems.length === 0" class="text-slate-500 text-center p-8">No hay inspecciones en este estado.</div>
+            <div v-else class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                  <tr>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Centro</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Fecha Inspección</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider hidden md:table-cell">Técnico</th>
+                    <th class="relative px-4 py-3"><span class="sr-only">Acción</span></th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200">
+                  <tr v-for="inspeccion in modalItems" :key="inspeccion.inspeccion_id" class="hover:bg-slate-50">
+                    <td class="px-4 py-4 whitespace-nowrap font-semibold text-slate-800 text-sm">{{ inspeccion.centro_nombre }}</td>
+                    <td class="px-4 py-4 whitespace-nowrap text-slate-600 text-sm">{{ inspeccion.fecha_inspeccion_obj.toLocaleDateString('es-ES') }}</td>
+                    <td class="px-4 py-4 whitespace-nowrap text-slate-600 hidden md:table-cell text-sm">{{ inspeccion.tecnico_nombre }}</td>
+                    <td class="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <router-link :to="`/centros/${inspeccion.centro_id}/historial`" class="font-semibold text-blue-600 hover:text-blue-800">Ver Detalles</router-link>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
