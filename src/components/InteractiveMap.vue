@@ -23,6 +23,7 @@ const lastWidth = ref(0);
 const lastHeight = ref(0);
 const resizeObserver = ref(null);
 const updateTimeout = ref(null);
+const imageRect = ref({ left: 0, top: 0, width: 0, height: 0 });
 
 watch(() => props.isAreaDrawingMode, (newVal) => {
   // NUEVO LOG: ¿El componente hijo recibe el cambio de la prop?
@@ -52,29 +53,44 @@ const updateDimensions = () => {
         lastWidth.value = newWidth;
         lastHeight.value = newHeight;
         console.log('Overlay dimensions updated:', newWidth, newHeight);
+
+        // Compute image rect
+        const img = overlayRef.value.previousElementSibling;
+        if (img && img.naturalWidth && img.naturalHeight) {
+          const scale = Math.min(overlayWidth.value / img.naturalWidth, overlayHeight.value / img.naturalHeight);
+          const dw = img.naturalWidth * scale;
+          const dh = img.naturalHeight * scale;
+          imageRect.value = {
+            left: (overlayWidth.value - dw) / 2,
+            top: (overlayHeight.value - dh) / 2,
+            width: dw,
+            height: dh
+          };
+          console.log('Image rect updated:', imageRect.value);
+        }
       }
     }
   }, 100); // Debounce 100ms
 };
 
 const toSvgPoints = (pointsArray) => {
-  if (!pointsArray || pointsArray.length === 0 || !overlayWidth.value || !overlayHeight.value) return "";
-  return pointsArray.map(p => `${p.x * overlayWidth.value},${p.y * overlayHeight.value}`).join(' ');
+  if (!pointsArray || pointsArray.length === 0 || !imageRect.value.width || !imageRect.value.height) return "";
+  return pointsArray.map(p => `${p.x * imageRect.value.width + imageRect.value.left},${p.y * imageRect.value.height + imageRect.value.top}`).join(' ');
 };
 
 const handleMapClick = (event) => {
   // NUEVO LOG: ¿Se detecta el clic en el mapa?
   console.log('[InteractiveMap] Se ha detectado un clic en el mapa.');
-  
-  if (props.isReadOnly || !overlayRef.value) {
-    console.log('[InteractiveMap] Clic ignorado. Razón:', { isReadOnly: props.isReadOnly, hasOverlay: !!overlayRef.value });
+
+  if (props.isReadOnly || !overlayRef.value || !imageRect.value.width || !imageRect.value.height) {
+    console.log('[InteractiveMap] Clic ignorado. Razón:', { isReadOnly: props.isReadOnly, hasOverlay: !!overlayRef.value, hasImageRect: !!imageRect.value.width });
     return;
   }
-  
+
   const overlayRect = overlayRef.value.getBoundingClientRect();
-  const x = (event.clientX - overlayRect.left) / overlayRect.width;
-  const y = (event.clientY - overlayRect.top) / overlayRect.height;
-  
+  const x = (event.clientX - overlayRect.left - imageRect.value.left) / imageRect.value.width;
+  const y = (event.clientY - overlayRect.top - imageRect.value.top) / imageRect.value.height;
+
   // NUEVO LOG: ¿Cuál es el estado del modo de dibujo DENTRO del manejador de clics?
   console.log('[InteractiveMap] Dentro de handleMapClick, isAreaDrawingMode es:', props.isAreaDrawingMode);
 
@@ -146,13 +162,13 @@ const startDrag = (point, event) => {
 };
 
 const onDrag = (event) => {
-  if (props.isReadOnly || draggedPointId.value === null || !overlayRef.value) return;
+  if (props.isReadOnly || draggedPointId.value === null || !overlayRef.value || !imageRect.value.width || !imageRect.value.height) return;
   event.preventDefault();
   const point = props.points.find(p => p.id === draggedPointId.value);
   if (!point) return;
   const overlayRect = overlayRef.value.getBoundingClientRect();
-  point.coordenada_x = (event.clientX - overlayRect.left) / overlayRect.width;
-  point.coordenada_y = (event.clientY - overlayRect.top) / overlayRect.height;
+  point.coordenada_x = (event.clientX - overlayRect.left - imageRect.value.left) / imageRect.value.width;
+  point.coordenada_y = (event.clientY - overlayRect.top - imageRect.value.top) / imageRect.value.height;
 };
 
 const stopDrag = () => {
@@ -212,8 +228,8 @@ const handleImageError = () => {
             />
             <line
               v-if="drawingPoints.length > 0"
-              :x1="drawingPoints[drawingPoints.length - 1].x * overlayWidth"
-              :y1="drawingPoints[drawingPoints.length - 1].y * overlayHeight"
+              :x1="drawingPoints[drawingPoints.length - 1].x * imageRect.width + imageRect.left"
+              :y1="drawingPoints[drawingPoints.length - 1].y * imageRect.height + imageRect.top"
               :x2="mousePosition.x"
               :y2="mousePosition.y"
               style="stroke: #3b82f6; stroke-width: 2px; stroke-dasharray: 4;"
@@ -221,8 +237,8 @@ const handleImageError = () => {
             <circle
               v-for="(point, index) in drawingPoints"
               :key="`drawing-point-${index}`"
-              :cx="point.x * overlayWidth"
-              :cy="point.y * overlayHeight"
+              :cx="point.x * imageRect.width + imageRect.left"
+              :cy="point.y * imageRect.height + imageRect.top"
               r="5"
               :class="index === 0 ? 'fill-green-500 stroke-white' : 'fill-blue-500 stroke-white'"
               style="stroke-width: 2px;"
@@ -231,21 +247,21 @@ const handleImageError = () => {
         </svg>
 
         <div
-          v-for="point in points"
-          :key="point.id"
-          class="absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 border-2 border-white rounded-full flex items-center justify-center text-white text-xs font-bold group shadow-lg pointer-events-auto"
-          :class="{ 
-            'cursor-grab active:cursor-grabbing': !isReadOnly, 
-            'cursor-pointer hover:scale-110 transition-transform': isReadOnly 
-          }"
-          :style="{ 
-            left: (point.coordenada_x * 100) + '%', 
-            top: (point.coordenada_y * 100) + '%',
-            backgroundColor: point.color || getSalaColor(point.sala_id)
-          }"
-          @mousedown.stop="startDrag(point, $event)"
-          @click.stop="handlePointClick(point)"
-        >
+           v-for="point in points"
+           :key="point.id"
+           class="absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 border-2 border-white rounded-full flex items-center justify-center text-white text-xs font-bold group shadow-lg pointer-events-auto"
+           :class="{
+             'cursor-grab active:cursor-grabbing': !isReadOnly,
+             'cursor-pointer hover:scale-110 transition-transform': isReadOnly
+           }"
+           :style="{
+             left: (point.coordenada_x * imageRect.width + imageRect.left) + 'px',
+             top: (point.coordenada_y * imageRect.height + imageRect.top) + 'px',
+             backgroundColor: point.color || getSalaColor(point.sala_id)
+           }"
+           @mousedown.stop="startDrag(point, $event)"
+           @click.stop="handlePointClick(point)"
+         >
           {{ point.nomenclatura.split('-').pop() || '?' }}
           <button 
             v-if="!isReadOnly && (point.estado === 'nuevo' || point.estado === undefined)"

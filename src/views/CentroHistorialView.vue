@@ -198,30 +198,64 @@ const reabrirInspeccion = async (inspeccion) => {
     }
 }
 
+// ======================= INICIO DE LA LÓGICA DE BORRADO DEFINITIVA =======================
 const handleDelete = async (inspeccionId) => {
   const confirmed = await showConfirm('Borrar Inspección', '¿Estás seguro de que quieres borrar esta inspección? Esta acción es permanente y eliminará todos los datos y fotos asociados.');
   if (!confirmed) return;
+
   try {
-    const { data: incidencias, error: getError } = await supabase.from('incidencias').select('url_foto_antes, url_foto_despues').eq('inspeccion_id', inspeccionId);
-    if (getError) throw getError;
+    // 1. Obtener la lista de incidencias para saber qué archivos borrar.
+    const { data: incidencias, error: getIncidenciasError } = await supabase
+      .from('incidencias')
+      .select('url_foto_antes, url_foto_despues')
+      .eq('inspeccion_id', inspeccionId);
+    if (getIncidenciasError) throw getIncidenciasError;
+
+    // 2. Preparar la lista de archivos a borrar del Storage.
     const filesToDelete = [];
-    if (incidencias && incidencias.length > 0) {
+    if (incidencias) {
       incidencias.forEach(inc => {
-        if (inc.url_foto_antes) { const filePath = inc.url_foto_antes.split('/incidencias/')[1]; if (filePath) filesToDelete.push(filePath); }
-        if (inc.url_foto_despues) { const filePath = inc.url_foto_despues.split('/incidencias/')[1]; if (filePath) filesToDelete.push(filePath); }
+        // Extraemos el path del archivo desde la URL completa.
+        if (inc.url_foto_antes) {
+          const path = inc.url_foto_antes.substring(inc.url_foto_antes.lastIndexOf('/incidencias/') + 1);
+          filesToDelete.push(path);
+        }
+        if (inc.url_foto_despues) {
+          const path = inc.url_foto_despues.substring(inc.url_foto_despues.lastIndexOf('/incidencias/') + 1);
+          filesToDelete.push(path);
+        }
       });
     }
+
+    // 3. Borrar los archivos del Storage si hay alguno.
     if (filesToDelete.length > 0) {
-      await supabase.storage.from('incidencias').remove(filesToDelete);
+      const { error: storageError } = await supabase.storage.from('incidencias').remove(filesToDelete);
+      if (storageError) {
+        // Advertimos del error pero continuamos, para no dejar datos huérfanos en la BBDD.
+        showNotification('Advertencia: No se pudieron borrar algunos archivos de imagen, pero se continuará con el borrado de datos.', 'warning');
+        console.error("Storage Error:", storageError);
+      }
     }
-    const { error: deleteError } = await supabase.from('inspecciones').delete().eq('id', inspeccionId);
-    if (deleteError) throw deleteError;
+
+    // 4. Borrar en cascada desde la base de datos (Supabase lo gestiona si está configurado en las FK, pero lo haremos explícito para más seguridad).
+    // Ya no es necesario borrar `incidencias` y `puntos_inspeccionados` primero si tienes ON DELETE CASCADE en la base de datos.
+    // Si no, este es el orden seguro:
+    await supabase.from('incidencias').delete().eq('inspeccion_id', inspeccionId);
+    await supabase.from('puntos_inspeccionados').delete().eq('inspeccion_id', inspeccionId);
+
+    // 5. Finalmente, borrar la inspección.
+    const { error: inspeccionError } = await supabase.from('inspecciones').delete().eq('id', inspeccionId);
+    if (inspeccionError) throw inspeccionError;
+
+    // 6. Actualizar la UI.
     inspecciones.value = inspecciones.value.filter(i => i.id !== inspeccionId);
     showNotification('Inspección borrada con éxito.', 'success');
+
   } catch (error) {
     showNotification('Ocurrió un error al borrar la inspección: ' + error.message, 'error');
   }
 };
+// ======================= FIN DE LA LÓGICA DE BORRADO DEFINITIVA =======================
 
 onMounted(fetchData);
 </script>
