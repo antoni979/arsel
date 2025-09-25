@@ -33,10 +33,53 @@ const availableYears = ref([]);
 const selectedYear = ref(null);
 const expandedInspectionId = ref(null);
 
-const toggleDetails = (inspeccionId) => {
+// Pagination state
+const pageSize = 20;
+const currentPage = ref(1);
+const totalInspecciones = ref(0);
+const hasMorePages = ref(false);
+const loadingMore = ref(false);
+
+// Caching
+const CACHE_KEY = `inspections_${centroId}`;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+const getCachedData = () => {
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) {
+      const { data, timestamp } = JSON.parse(cached);
+      if (Date.now() - timestamp < CACHE_DURATION) {
+        return data;
+      }
+    }
+  } catch (error) {
+    console.warn('Error reading cache:', error);
+  }
+  return null;
+};
+
+const setCachedData = (data) => {
+  try {
+    const cacheData = {
+      data,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
+  } catch (error) {
+    console.warn('Error writing cache:', error);
+  }
+};
+
+const toggleDetails = async (inspeccionId) => {
   if (expandedInspectionId.value === inspeccionId) {
     expandedInspectionId.value = null;
   } else {
+    // Load details if not already loaded
+    const inspeccion = inspecciones.value.find(i => i.id === inspeccionId);
+    if (inspeccion && (!inspeccion.details || inspeccion.details.length === 0)) {
+      await loadInspectionDetails(inspeccion);
+    }
     expandedInspectionId.value = inspeccionId;
   }
 };
@@ -60,80 +103,238 @@ const filteredInspecciones = computed(() => {
   });
 });
 
-const fetchData = async () => {
-  loading.value = true;
-  const { data: centroData } = await supabase.from('centros').select('nombre').eq('id', centroId).single();
-  centro.value = centroData;
-  
+// Performance monitoring
+const performanceMarks = ref([]);
+
+const markPerformance = (name) => {
+  if (window.performance && window.performance.mark) {
+    window.performance.mark(name);
+    performanceMarks.value.push(name);
+  }
+};
+
+const measurePerformance = (startMark, endMark) => {
+  if (window.performance && window.performance.measure) {
+    try {
+      window.performance.measure(`${startMark}-to-${endMark}`, startMark, endMark);
+      const measure = window.performance.getEntriesByName(`${startMark}-to-${endMark}`, 'measure')[0];
+      console.log(`Performance: ${startMark}-to-${endMark}: ${measure.duration.toFixed(2)}ms`);
+    } catch (error) {
+      console.warn('Performance measurement failed:', error);
+    }
+  }
+};
+
+const fetchData = async (page = 1, append = false, silent = false) => {
+  markPerformance(`fetchData-start-page-${page}`);
+  if (!append && !silent) {
+    loading.value = true;
+  } else if (append && !silent) {
+    loadingMore.value = true;
+  }
+
+  // Check cache for first page
+  if (page === 1 && !append) {
+    const cachedData = getCachedData();
+    if (cachedData) {
+      centro.value = cachedData.centro;
+      inspecciones.value = cachedData.inspecciones;
+      totalInspecciones.value = cachedData.totalInspecciones;
+      availableYears.value = cachedData.availableYears;
+      hasMorePages.value = cachedData.hasMorePages;
+      loading.value = false;
+      return;
+    }
+  }
+
+  // First, get center data and total count
+  const [centroRes, countRes] = await Promise.all([
+    supabase.from('centros').select('nombre').eq('id', centroId).single(),
+    supabase.from('inspecciones').select('id', { count: 'exact', head: true }).eq('centro_id', centroId)
+  ]);
+
+  centro.value = centroRes.data;
+  totalInspecciones.value = countRes.count || 0;
+
+  // Calculate pagination
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  // Fetch paginated inspections with optimized query (selective fields)
   const { data: inspeccionesData } = await supabase
     .from('inspecciones')
     .select(`
-      *,
-      versiones_plano(id, nombre),
-      puntos_inspeccionados(
-        id, nomenclatura, punto_maestro_id,
-        puntos_maestros(id, sala_id, salas(id, nombre)),
-        incidencias(gravedad)
-      )
+      id, fecha_inspeccion, estado, tecnico_nombre, centro_id,
+      fecha_envio_cliente, responsable_envio_cliente,
+      url_pdf_informe_inicial, url_pdf_informe_final,
+      versiones_plano(id, nombre)
     `)
     .eq('centro_id', centroId)
-    .order('fecha_inspeccion', { ascending: false });
+    .order('fecha_inspeccion', { ascending: false })
+    .range(from, to);
 
   if (!inspeccionesData) {
-    inspecciones.value = [];
+    if (!append) inspecciones.value = [];
     loading.value = false;
+    loadingMore.value = false;
     return;
   }
 
-  const detailedInspections = inspeccionesData.map(inspeccion => {
-    const puntos = inspeccion.puntos_inspeccionados || [];
-    const salasMap = new Map();
-    const salaCountsMap = new Map();
+  // Process inspections (simplified - details loaded on demand)
+  const processedInspections = inspeccionesData.map(inspeccion => ({
+    ...inspeccion,
+    details: [], // Will be loaded lazily
+    totalCounts: { verde: 0, ambar: 0, rojo: 0 } // Will be calculated lazily
+  }));
 
-    puntos.forEach(punto => {
-      const salaId = punto.puntos_maestros?.sala_id;
-      const salaNombre = punto.puntos_maestros?.salas?.nombre;
-      if (salaId && salaNombre) {
-        if (!salasMap.has(salaId)) {
-          salasMap.set(salaId, { id: salaId, nombre: salaNombre, puntos: [] });
-          salaCountsMap.set(salaId, { verde: 0, ambar: 0, rojo: 0 });
-        }
-        const counts = { verde: 0, ambar: 0, rojo: 0 };
-        (punto.incidencias || []).forEach(inc => {
-          if (counts[inc.gravedad] !== undefined) counts[inc.gravedad]++;
-        });
-        salasMap.get(salaId).puntos.push({ ...punto, counts });
-        const salaCounts = salaCountsMap.get(salaId);
-        salaCounts.verde += counts.verde;
-        salaCounts.ambar += counts.ambar;
-        salaCounts.rojo += counts.rojo;
-      }
-    });
+  if (append) {
+    inspecciones.value = [...inspecciones.value, ...processedInspections];
+  } else {
+    inspecciones.value = processedInspections;
+  }
 
-    const salasConPuntos = Array.from(salasMap.values()).map(sala => ({
-      ...sala,
-      puntos: sala.puntos.sort((a,b) => a.nomenclatura.localeCompare(b.nomenclatura, undefined, {numeric: true})),
-      counts: salaCountsMap.get(sala.id)
-    })).filter(s => s.puntos.length > 0);
+  // Check if there are more pages
+  hasMorePages.value = (page * pageSize) < totalInspecciones.value;
 
-    const totalCounts = salasConPuntos.reduce((acc, sala) => {
-      acc.verde += sala.counts.verde;
-      acc.ambar += sala.counts.ambar;
-      acc.rojo += sala.counts.rojo;
-      return acc;
-    }, { verde: 0, ambar: 0, rojo: 0 });
-
-    return { ...inspeccion, details: salasConPuntos, totalCounts };
-  });
-  
-  inspecciones.value = detailedInspections;
-
+  // Extract available years from current data
   if (inspecciones.value.length > 0) {
     const years = new Set(inspecciones.value.map(i => new Date(i.fecha_inspeccion).getFullYear()));
     availableYears.value = Array.from(years).sort((a, b) => b - a);
   }
 
-  loading.value = false;
+  // Cache the data for first page
+  if (page === 1 && !append) {
+    setCachedData({
+      centro: centro.value,
+      inspecciones: inspecciones.value,
+      totalInspecciones: totalInspecciones.value,
+      availableYears: availableYears.value,
+      hasMorePages: hasMorePages.value
+    });
+  }
+
+  if (!silent) {
+    loading.value = false;
+    loadingMore.value = false;
+  }
+
+  markPerformance(`fetchData-end-page-${page}`);
+  measurePerformance(`fetchData-start-page-${page}`, `fetchData-end-page-${page}`);
+};
+
+// Web Worker for processing inspection details
+const createProcessingWorker = () => {
+  const workerCode = `
+    self.onmessage = function(e) {
+      const { puntosData } = e.data;
+
+      const salasMap = new Map();
+      const salaCountsMap = new Map();
+
+      puntosData.forEach(punto => {
+        const salaId = punto.puntos_maestros?.sala_id;
+        const salaNombre = punto.puntos_maestros?.salas?.nombre;
+        if (salaId && salaNombre) {
+          if (!salasMap.has(salaId)) {
+            salasMap.set(salaId, { id: salaId, nombre: salaNombre, puntos: [] });
+            salaCountsMap.set(salaId, { verde: 0, ambar: 0, rojo: 0 });
+          }
+          const counts = { verde: 0, ambar: 0, rojo: 0 };
+          (punto.incidencias || []).forEach(inc => {
+            if (counts[inc.gravedad] !== undefined) counts[inc.gravedad]++;
+          });
+          salasMap.get(salaId).puntos.push({ ...punto, counts });
+          const salaCounts = salaCountsMap.get(salaId);
+          salaCounts.verde += counts.verde;
+          salaCounts.ambar += counts.ambar;
+          salaCounts.rojo += counts.rojo;
+        }
+      });
+
+      const salasConPuntos = Array.from(salasMap.values()).map(sala => ({
+        ...sala,
+        puntos: sala.puntos.sort((a,b) => a.nomenclatura.localeCompare(b.nomenclatura, undefined, {numeric: true})),
+        counts: salaCountsMap.get(sala.id)
+      })).filter(s => s.puntos.length > 0);
+
+      const totalCounts = salasConPuntos.reduce((acc, sala) => {
+        acc.verde += sala.counts.verde;
+        acc.ambar += sala.counts.ambar;
+        acc.rojo += sala.counts.rojo;
+        return acc;
+      }, { verde: 0, ambar: 0, rojo: 0 });
+
+      self.postMessage({ salasConPuntos, totalCounts });
+    };
+  `;
+
+  const blob = new Blob([workerCode], { type: 'application/javascript' });
+  return new Worker(URL.createObjectURL(blob));
+};
+
+// Load inspection details on demand
+const loadInspectionDetails = async (inspeccion) => {
+  if (inspeccion.details && inspeccion.details.length > 0) return; // Already loaded
+
+  const { data: puntosData } = await supabase
+    .from('puntos_inspeccionados')
+    .select(`
+      id, nomenclatura,
+      puntos_maestros!inner(id, sala_id, salas!inner(id, nombre)),
+      incidencias(gravedad)
+    `)
+    .eq('inspeccion_id', inspeccion.id);
+
+  if (!puntosData) return;
+
+  // Use Web Worker for processing
+  const worker = createProcessingWorker();
+  return new Promise((resolve) => {
+    worker.onmessage = (e) => {
+      const { salasConPuntos, totalCounts } = e.data;
+
+      // Update the inspection object
+      const index = inspecciones.value.findIndex(i => i.id === inspeccion.id);
+      if (index !== -1) {
+        inspecciones.value[index] = { ...inspeccion, details: salasConPuntos, totalCounts };
+      }
+
+      worker.terminate();
+      resolve();
+    };
+
+    worker.postMessage({ puntosData });
+  });
+};
+
+// Prefetch next page
+let prefetchPromise = null;
+
+const prefetchNextPage = () => {
+  if (hasMorePages.value && !prefetchPromise) {
+    prefetchPromise = fetchData(currentPage.value + 1, false, true); // silent fetch
+  }
+};
+
+// Load more inspections
+const loadMoreInspecciones = async () => {
+  if (!hasMorePages.value || loadingMore.value) return;
+
+  // If we have a prefetched page, use it
+  if (prefetchPromise) {
+    try {
+      await prefetchPromise;
+      prefetchPromise = null;
+    } catch (error) {
+      console.warn('Prefetch failed:', error);
+    }
+  }
+
+  currentPage.value++;
+  await fetchData(currentPage.value, true);
+
+  // Start prefetching the next page
+  prefetchNextPage();
 };
 
 const openSentModal = (inspeccion) => {
@@ -158,7 +359,8 @@ const handleMarkAsSent = async (formData) => {
       .eq('id', selectedInspeccion.value.id);
     if (error) throw error;
     
-    await fetchData();
+    // Refresh current page data
+    await fetchData(currentPage.value, false);
     showNotification('Registro de envío guardado con éxito.', 'success');
   } catch (error) {
     showNotification('Error al registrar el envío: ' + error.message, 'error');
@@ -189,7 +391,8 @@ const reabrirInspeccion = async (inspeccion) => {
             })
             .eq('id', inspeccion.id);
         if (error) throw error;
-        await fetchData();
+        // Refresh current page data
+        await fetchData(currentPage.value, false);
         showNotification('Inspección reabierta. Ahora puedes editarla de nuevo.', 'success');
     } catch (error) {
         showNotification('Error al reabrir la inspección: ' + error.message, 'error');
@@ -249,6 +452,7 @@ const handleDelete = async (inspeccionId) => {
 
     // 6. Actualizar la UI.
     inspecciones.value = inspecciones.value.filter(i => i.id !== inspeccionId);
+    totalInspecciones.value = Math.max(0, totalInspecciones.value - 1);
     showNotification('Inspección borrada con éxito.', 'success');
 
   } catch (error) {
@@ -257,7 +461,11 @@ const handleDelete = async (inspeccionId) => {
 };
 // ======================= FIN DE LA LÓGICA DE BORRADO DEFINITIVA =======================
 
-onMounted(fetchData);
+onMounted(async () => {
+  await fetchData(1, false);
+  // Start prefetching the next page
+  prefetchNextPage();
+});
 </script>
 
 <template>
@@ -293,6 +501,19 @@ onMounted(fetchData);
       <div class="space-y-4">
         <div v-if="filteredInspecciones.length === 0" class="p-8 text-center text-slate-500 bg-white rounded-xl shadow-sm border">
           No hay inspecciones para el año seleccionado.
+        </div>
+
+        <!-- Load More Button -->
+        <div v-if="hasMorePages && !loadingMore" class="text-center py-4">
+          <button @click="loadMoreInspecciones" class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-semibold">
+            Cargar más inspecciones
+          </button>
+        </div>
+        <div v-if="loadingMore" class="text-center py-4">
+          <div class="inline-flex items-center gap-2 text-slate-600">
+            <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+            Cargando más inspecciones...
+          </div>
         </div>
         
         <div v-for="inspeccion in filteredInspecciones" :key="inspeccion.id" class="bg-white rounded-xl shadow-sm border border-slate-200 transition-all">

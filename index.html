@@ -9,6 +9,11 @@
     <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-eval'; worker-src 'self' blob:; object-src 'self';">
     <!-- ===== FIN DE LA CORRECCIÓN ===== -->
 
+    <!-- Preload critical components for better performance -->
+    <link rel="modulepreload" href="/src/components/ChecklistModal.vue">
+    <link rel="modulepreload" href="/src/components/InteractiveMap.vue">
+    <link rel="modulepreload" href="/src/views/InspeccionDetailView.vue">
+
     <title>Arsel</title>
   </head>
   <body>
