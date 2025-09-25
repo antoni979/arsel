@@ -7,8 +7,8 @@ function drawInfoBadge(pdf, position, pointData, badgeSizeMM) {
     const { width: BADGE_WIDTH_MM, height: BADGE_HEIGHT_MM } = badgeSizeMM;
 
     // Los tamaños de fuente se ajustan proporcionalmente al tamaño de la tarjeta
-    const FONT_SIZE_HEADER = BADGE_HEIGHT_MM * 0.45;
-    const FONT_SIZE_STATE = BADGE_HEIGHT_MM * 0.35;
+    const FONT_SIZE_HEADER = BADGE_HEIGHT_MM * 0.42;
+    const FONT_SIZE_STATE = BADGE_HEIGHT_MM * 0.38;
     const FONT_SIZE_SEMAPHORE = BADGE_HEIGHT_MM * 0.45;
 
     let stateText = null;
@@ -20,14 +20,13 @@ function drawInfoBadge(pdf, position, pointData, badgeSizeMM) {
     const startX = position.x - BADGE_WIDTH_MM / 2;
     let currentY = position.y - BADGE_HEIGHT_MM / 2;
 
+    // Solid white background fill
     pdf.setFillColor(255, 255, 255);
-    pdf.setDrawColor(180, 180, 180);
-    pdf.setLineWidth(0.2);
-    pdf.roundedRect(startX, currentY, BADGE_WIDTH_MM, BADGE_HEIGHT_MM, 1, 1, 'FD');
-    
+    pdf.roundedRect(startX, currentY, BADGE_WIDTH_MM, BADGE_HEIGHT_MM, 1, 1, 'F');
+
     pdf.setFontSize(FONT_SIZE_HEADER).setFont(undefined, 'bold');
     pdf.setTextColor(50, 50, 50);
-    const headerText = `Punto ${pointData.nomenclatura.split('-').pop() || '?'}`;
+    const headerText = `${pointData.nomenclatura.split('-').pop() || '?'}`;
     
     const headerY = stateText ? currentY + BADGE_HEIGHT_MM * 0.22 : currentY + BADGE_HEIGHT_MM * 0.35;
     pdf.text(headerText, position.x, headerY, { align: 'center' });

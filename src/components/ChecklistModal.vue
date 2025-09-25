@@ -1,10 +1,10 @@
 <!-- src/components/ChecklistModal.vue -->
 <script setup>
-import { ref, watch, computed, nextTick } from 'vue';
+import { ref, watch, computed, nextTick, inject } from 'vue';
 import { supabase } from '../supabase';
 import { checklistItems } from '../utils/checklist';
-import { 
-  ArrowUpTrayIcon, CheckCircleIcon, XCircleIcon, PlusCircleIcon, TrashIcon, 
+import {
+  ArrowUpTrayIcon, CheckCircleIcon, XCircleIcon, PlusCircleIcon, TrashIcon,
   ArrowTrendingUpIcon, ArrowTrendingDownIcon, StopCircleIcon, ChevronUpIcon, ChevronDownIcon,
   PencilIcon, CheckIcon
 } from '@heroicons/vue/24/solid';
@@ -17,9 +17,12 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'save', 'update-nomenclatura']);
 
+const showNotification = inject('showNotification');
+
 const incidencias = ref([]);
 const loading = ref(false);
 const isUploading = ref(null);
+const dragOverIncidenceId = ref(null);
 const puntoInspeccionado = computed(() => props.punto);
 const customFields = ref([]);
 const customValues = ref({});
@@ -273,14 +276,52 @@ const toggleCollapse = (itemId) => {
   }
 };
 
+const onDragOver = (event, incidenceId) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = incidenceId;
+};
+
+const onDragLeave = (event) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = null;
+};
+
+const onDrop = (event, incidencia) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = null;
+  const files = event.dataTransfer.files;
+  if (files.length === 0) return;
+  if (files.length > 1) {
+    showNotification('Solo se permite subir una foto a la vez.', 'error');
+    return;
+  }
+  const file = files[0];
+  handleFileUpload(file, incidencia);
+};
+
 const handleFileChange = async (event, incidencia) => {
   const file = event.target.files[0];
   if (!file) return;
+  handleFileUpload(file, incidencia);
+};
+
+const handleFileUpload = async (file, incidencia) => {
+  // Validations
+  if (!file.type.startsWith('image/')) {
+    showNotification('Solo se permiten archivos de imagen.', 'error');
+    return;
+  }
+  const maxSize = 10 * 1024 * 1024; // 10MB
+  if (file.size > maxSize) {
+    showNotification('El archivo es demasiado grande. Máximo 10MB.', 'error');
+    return;
+  }
+
   isUploading.value = incidencia.id;
   const fileName = `inspeccion_${props.inspeccionId}/punto_${puntoInspeccionado.value.id}/${Date.now()}_${file.name}`;
   const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, file);
   if (uploadError) {
-    alert("Error al subir la foto: " + uploadError.message);
+    showNotification("Error al subir la foto: " + uploadError.message, 'error');
     isUploading.value = null;
     return;
   }
@@ -288,6 +329,7 @@ const handleFileChange = async (event, incidencia) => {
   incidencia.url_foto_antes = publicUrl;
   await saveIncidencia(incidencia);
   isUploading.value = null;
+  showNotification('Foto subida correctamente.', 'success');
 };
 
 const saveIncidencia = async (incidencia) => {
@@ -437,15 +479,22 @@ const handleClose = () => {
                     </div>
                     <div>
                       <label class="block text-xs font-medium text-slate-600 mb-1">Foto de la Incidencia</label>
-                      <div class="aspect-video bg-slate-200 rounded-md flex items-center justify-center overflow-hidden relative group">
+                      <div
+                        class="aspect-video bg-slate-200 rounded-md flex items-center justify-center overflow-hidden relative group transition-colors"
+                        :class="{ 'bg-blue-200 border-2 border-blue-400 border-dashed': dragOverIncidenceId === incidencia.id }"
+                        @dragover="onDragOver($event, incidencia.id)"
+                        @dragleave="onDragLeave"
+                        @drop="onDrop($event, incidencia)"
+                      >
                         <img v-if="incidencia.url_foto_antes" :src="incidencia.url_foto_antes" class="object-cover w-full h-full">
                         <div v-else class="text-center">
                           <p v-if="isUploading === incidencia.id" class="text-sm text-slate-600">Subiendo...</p>
+                          <p v-else-if="dragOverIncidenceId === incidencia.id" class="text-sm text-slate-600">Suelta la foto aquí</p>
                           <label v-else :for="'fileInput-' + incidencia.id" class="cursor-pointer flex items-center gap-2 px-3 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700"><ArrowUpTrayIcon class="h-4 w-4" />Subir Foto</label>
-                          <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-' + incidencia.id">
+                          <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-' + incidencia.id" accept="image/*">
                         </div>
                         <div v-if="incidencia.url_foto_antes" class="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                           <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-change-' + incidencia.id">
+                           <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-change-' + incidencia.id" accept="image/*">
                            <label :for="'fileInput-change-' + incidencia.id" class="cursor-pointer text-white text-sm font-semibold">Cambiar Foto</label>
                         </div>
                       </div>

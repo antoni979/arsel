@@ -1,12 +1,12 @@
 <!-- src/components/PlanoBadge.vue -->
 <template>
   <div
-    class="w-full h-full p-1 flex flex-col items-center bg-white rounded-lg shadow-lg border border-gray-300 cursor-move font-sans"
+    class="w-full h-full p-1 flex flex-col items-center rounded-lg shadow-lg cursor-move font-sans"
   >
     <!-- Cabecera con Punto y Estado -->
     <div class="text-center">
-      <div class="font-bold text-xs text-gray-800 leading-tight">Punto {{ pointNumber }}</div>
-      <div v-if="stateText" class="font-bold text-[9px] leading-tight text-blue-600 uppercase">
+      <div class="font-bold text-sm text-gray-800 leading-tight">{{ pointNumber }}</div>
+      <div v-if="stateText" class="font-bold text-[10px] leading-tight text-blue-600 uppercase break-words">
         {{ stateText }}
       </div>
     </div>
