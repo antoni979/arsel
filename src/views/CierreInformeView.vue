@@ -74,23 +74,96 @@ const handleFileUpload = async (file, incidencia) => {
   }
 
   isUploading.value = incidencia.id;
-  // Cambiamos el nombre de la carpeta para mantener consistencia
-  const fileName = `cierre_informe_${inspeccionId}/incidencia_${incidencia.id}/${Date.now()}_${file.name}`;
-  const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, file, { upsert: true });
-  if (uploadError) {
-    showNotification("Error al subir la foto: " + uploadError.message, 'error');
+
+  try {
+    // Compress image if it's large
+    let fileToUpload = file;
+    const originalSize = file.size;
+
+    if (file.size > 500 * 1024) { // Compress if larger than 500KB
+      showNotification('Comprimiendo imagen...', 'info');
+
+      // Use canvas API for compression
+      const compressedFile = await compressImage(file);
+      fileToUpload = compressedFile;
+
+      const compressionRatio = ((originalSize - compressedFile.size) / originalSize * 100).toFixed(1);
+      if (compressionRatio > 5) {
+        showNotification(`Imagen comprimida: ${compressionRatio}% de reducción`, 'success');
+      }
+    }
+
+    // Cambiamos el nombre de la carpeta para mantener consistencia
+    const fileName = `cierre_informe_${inspeccionId}/incidencia_${incidencia.id}/${Date.now()}_${file.name}`;
+    const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, fileToUpload, { upsert: true });
+    if (uploadError) {
+      showNotification("Error al subir la foto: " + uploadError.message, 'error');
+      isUploading.value = null;
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from('incidencias').getPublicUrl(fileName);
+    const { error: updateError } = await supabase.from('incidencias').update({ url_foto_despues: publicUrl }).eq('id', incidencia.id);
+    if (updateError) {
+      showNotification("Error al guardar la URL: " + updateError.message, 'error');
+    } else {
+      incidencia.url_foto_despues = publicUrl;
+      showNotification('Foto subida correctamente.', 'success');
+    }
     isUploading.value = null;
-    return;
+  } catch (error) {
+    console.error('Error processing image:', error);
+    showNotification('Error al procesar la imagen: ' + error.message, 'error');
+    isUploading.value = null;
   }
-  const { data: { publicUrl } } = supabase.storage.from('incidencias').getPublicUrl(fileName);
-  const { error: updateError } = await supabase.from('incidencias').update({ url_foto_despues: publicUrl }).eq('id', incidencia.id);
-  if (updateError) {
-    showNotification("Error al guardar la URL: " + updateError.message, 'error');
-  } else {
-    incidencia.url_foto_despues = publicUrl;
-    showNotification('Foto subida correctamente.', 'success');
-  }
-  isUploading.value = null;
+};
+
+// Compress image using Canvas API
+const compressImage = (file) => {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+
+    img.onload = () => {
+      // Calculate new dimensions (max 1024px on longest side for smaller files)
+      let { width, height } = img;
+      const maxDimension = 1024;
+
+      if (width > height) {
+        if (width > maxDimension) {
+          height = (height * maxDimension) / width;
+          width = maxDimension;
+        }
+      } else {
+        if (height > maxDimension) {
+          width = (width * maxDimension) / height;
+          height = maxDimension;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      // Draw and compress with lower quality for much smaller files
+      ctx.drawImage(img, 0, 0, width, height);
+
+      canvas.toBlob((blob) => {
+        if (blob) {
+          // Create a new file with the compressed blob
+          const compressedFile = new File([blob], file.name, {
+            type: 'image/jpeg',
+            lastModified: Date.now()
+          });
+          resolve(compressedFile);
+        } else {
+          reject(new Error('Failed to compress image'));
+        }
+      }, 'image/jpeg', 0.6); // 60% quality for smaller file sizes
+    };
+
+    img.onerror = () => reject(new Error('Failed to load image'));
+    img.src = URL.createObjectURL(file);
+  });
 };
 
 const deletePhoto = async (incidencia) => {
@@ -112,6 +185,7 @@ const deletePhoto = async (incidencia) => {
     const { error: storageError } = await supabase.storage.from('incidencias').remove([filePath]);
     if (storageError) {
       console.error('Storage deletion error:', storageError);
+      showNotification('Advertencia: Error al eliminar del almacenamiento, pero se actualizó la base de datos.', 'warning');
       // Continue with DB update even if storage deletion fails
     }
 

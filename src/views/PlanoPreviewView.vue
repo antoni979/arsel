@@ -6,7 +6,7 @@ import { fetchReportData } from '../utils/pdf/pdf-data';
 import { calculatePlanoLayout } from '../utils/plano-layout';
 import { generatePlanPdf } from '../utils/pdf';
 import PlanoBadge from '../components/PlanoBadge.vue';
-import { ArrowDownTrayIcon, ArrowUturnLeftIcon } from '@heroicons/vue/24/solid';
+import { ArrowDownTrayIcon, ArrowUturnLeftIcon, ArrowPathIcon } from '@heroicons/vue/24/solid';
 
 const route = useRoute();
 const router = useRouter();
@@ -17,6 +17,7 @@ const layoutReady = ref(false);
 const errorState = ref(null);
 const reportData = ref(null);
 const labels = ref([]);
+const dataVersion = ref(0); // Force reactivity updates
 const planoContainer = ref(null);
 const mapDimensions = ref({ x: 0, y: 0, width: 1, height: 1 });
 const isGenerating = ref(false);
@@ -27,7 +28,7 @@ const dragOffset = ref({ x: 0, y: 0 });
 // ===== CORRECCIÓN: Usamos el mismo valor base que usaremos en el PDF =====
 const BADGE_WIDTH_PX = 55; 
 
-onMounted(async () => {
+const loadData = async () => {
   reportData.value = await fetchReportData(inspeccionId, { optimizePlan: false });
 
   if (!reportData.value || !reportData.value.planoBase64) {
@@ -35,10 +36,35 @@ onMounted(async () => {
     loading.value = false;
     return;
   }
+
+  // Ensure incidence counts are available
+  if (!reportData.value.incidenceCounts) {
+    console.error('Incidence counts not available in reportData');
+    errorState.value = "Error: No se pudieron calcular los datos de incidencias.";
+    loading.value = false;
+    return;
+  }
+
+  console.log('Report data loaded successfully, incidence counts available:', reportData.value.incidenceCounts.size);
   loading.value = false;
   await nextTick();
   prepareLayout();
+};
+
+onMounted(async () => {
+  await loadData();
 });
+
+// Add method to refresh data (can be called externally if needed)
+const refreshData = async () => {
+  loading.value = true;
+  layoutReady.value = false;
+  dataVersion.value = 0; // Reset version on refresh
+  await loadData();
+};
+
+// Expose refresh method for external use
+defineExpose({ refreshData });
 
 const prepareLayout = () => {
   const containerEl = planoContainer.value;
@@ -69,17 +95,21 @@ const prepareLayout = () => {
     const allPoints = reportData.value.puntosInspeccionadosData.map(punto => {
       const maestro = reportData.value.puntosMaestrosData.find(pm => pm.id === punto.punto_maestro_id);
       if (!maestro) return null;
+      const counts = reportData.value.incidenceCounts.get(punto.id) || { verde: 0, ambar: 0, rojo: 0 };
+      console.log(`PlanoPreviewView - Point ${punto.id} (${maestro.nomenclatura}): counts =`, counts);
       return {
         ...punto,
         nomenclatura: maestro.nomenclatura,
         absX: mapDimensions.value.x + (punto.coordenada_x * mapDimensions.value.width),
         absY: mapDimensions.value.y + (punto.coordenada_y * mapDimensions.value.height),
-        counts: reportData.value.incidenceCounts.get(punto.id) || { verde: 0, ambar: 0, rojo: 0 }
+        counts: counts
       };
     }).filter(Boolean);
     
     labels.value = calculatePlanoLayout(allPoints, mapDimensions.value, BADGE_WIDTH_PX);
+    dataVersion.value++; // Force reactivity update
     layoutReady.value = true;
+    console.log('PlanoPreviewView layout ready, dataVersion:', dataVersion.value);
   };
   
   img.onerror = () => { errorState.value = "No se pudo cargar la imagen del plano."; }
@@ -140,6 +170,9 @@ const onMouseUp = () => {
         <button @click="router.go(-1)" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-white border border-slate-300 rounded-md hover:bg-slate-50">
           <ArrowUturnLeftIcon class="h-4 w-4" /> Volver
         </button>
+        <button @click="refreshData" :disabled="loading" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50">
+          <ArrowPathIcon class="h-4 w-4" /> Actualizar
+        </button>
         <button @click="handleGeneratePdf" :disabled="isGenerating || !layoutReady" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-slate-400">
           <ArrowDownTrayIcon class="h-4 w-4" />
           {{ isGenerating ? 'Generando...' : 'Generar PDF' }}
@@ -175,19 +208,20 @@ const onMouseUp = () => {
           </g>
         </svg>
         
-        <div 
-          v-for="label in labels" 
-          :key="'badge-' + label.pointData.id"
+        <div
+          v-for="label in labels"
+          :key="'badge-' + label.pointData.id + '-' + dataVersion"
+          v-show="layoutReady"
           @mousedown.prevent="onMouseDown(label, $event)"
           class="z-20 absolute"
-          :style="{ 
+          :style="{
             left: `${label.position.x - (label.size.width / 2)}px`,
             top: `${label.position.y - (label.size.height / 2)}px`,
             width: `${label.size.width}px`,
             height: `${label.size.height}px`,
           }"
         >
-           <PlanoBadge :pointData="label.pointData" />
+            <PlanoBadge :pointData="label.pointData" :key="label.pointData.id + '-' + dataVersion" />
         </div>
       </div>
     </main>

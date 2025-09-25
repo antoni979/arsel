@@ -299,7 +299,11 @@ const finalizarInspeccion = async () => {
             .update({ estado: 'finalizada', url_pdf_informe_inicial: publicUrl })
             .eq('id', inspeccionId);
         if (updateError) throw updateError;
-        
+
+        // Clear the cache for the center history to ensure the new PDF URL is visible
+        const CACHE_KEY = `inspections_${centro.value.id}`;
+        localStorage.removeItem(CACHE_KEY);
+
         showNotification('Inspección finalizada y archivada con éxito.');
         router.push(`/centros/${centro.value.id}/historial`);
 
@@ -361,8 +365,9 @@ const finalizarInspeccion = async () => {
         />
         
         <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full overflow-auto">
-          <InteractiveMap 
-            :image-url="version.url_imagen_plano" 
+          <InteractiveMap
+            :key="inspeccionId"
+            :image-url="version.url_imagen_plano"
             :points="puntosParaMostrar.filter(p => p.estado !== 'suprimido')"
             :salas="salas"
             :is-read-only="!canEditInspection || (!isPlacementMode && !isAreaDrawingMode)"

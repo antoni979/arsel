@@ -73,6 +73,12 @@ export async function fetchReportData(inspeccionId, options = {}) {
         }
     });
 
+    // Debug logging for incidence counts
+    console.log('[pdf-data.js] Incidence counts calculated:');
+    incidenceCounts.forEach((counts, pointId) => {
+        console.log(`Point ${pointId}: verde=${counts.verde}, ambar=${counts.ambar}, rojo=${counts.rojo}`);
+    });
+
     const result = {
       inspectionData,
       salasData: salasData || [],

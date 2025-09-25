@@ -36,7 +36,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 
 const props = defineProps({
   pointData: Object
@@ -52,9 +52,22 @@ const stateText = computed(() => {
   return null;
 });
 
-const semaphoreItems = computed(() => [
-  { label: 'verde', color: '#22C55E', count: props.pointData.counts.verde },
-  { label: 'ambar', color: '#F59E0B', count: props.pointData.counts.ambar },
-  { label: 'rojo', color: '#EF4444', count: props.pointData.counts.rojo },
-]);
+const semaphoreItems = computed(() => {
+  const counts = props.pointData?.counts || { verde: 0, ambar: 0, rojo: 0 };
+  console.log('PlanoBadge semaphore data for point', props.pointData?.nomenclatura, ':', counts);
+  return [
+    { label: 'verde', color: '#22C55E', count: counts.verde || 0 },
+    { label: 'ambar', color: '#F59E0B', count: counts.ambar || 0 },
+    { label: 'rojo', color: '#EF4444', count: counts.rojo || 0 },
+  ];
+});
+
+// Watch for changes in pointData to debug reactivity
+watch(() => props.pointData, (newData, oldData) => {
+  console.log('PlanoBadge pointData changed:', {
+    point: newData?.nomenclatura,
+    oldCounts: oldData?.counts,
+    newCounts: newData?.counts
+  });
+}, { deep: true, immediate: true });
 </script>

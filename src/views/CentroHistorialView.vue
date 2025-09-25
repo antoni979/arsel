@@ -1,6 +1,6 @@
 <!-- src/views/CentroHistorialView.vue -->
 <script setup>
-import { ref, onMounted, computed, inject } from 'vue';
+import { ref, onMounted, onUnmounted, computed, inject } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 import { 
@@ -28,6 +28,9 @@ const inspecciones = ref([]);
 const isProcessing = ref(null);
 const isSentModalOpen = ref(false);
 const selectedInspeccion = ref(null);
+
+// Real-time subscription
+let realtimeSubscription = null;
 
 const availableYears = ref([]);
 const selectedYear = ref(null);
@@ -391,6 +394,10 @@ const reabrirInspeccion = async (inspeccion) => {
             })
             .eq('id', inspeccion.id);
         if (error) throw error;
+
+        // Clear cache to ensure UI updates immediately
+        localStorage.removeItem(CACHE_KEY);
+
         // Refresh current page data
         await fetchData(currentPage.value, false);
         showNotification('Inspección reabierta. Ahora puedes editarla de nuevo.', 'success');
@@ -461,10 +468,47 @@ const handleDelete = async (inspeccionId) => {
 };
 // ======================= FIN DE LA LÓGICA DE BORRADO DEFINITIVA =======================
 
+const setupRealtimeSubscription = () => {
+  // Clean up existing subscription
+  if (realtimeSubscription) {
+    realtimeSubscription.unsubscribe();
+  }
+
+  // Set up real-time subscription for inspections in this center
+  realtimeSubscription = supabase
+    .channel(`inspections_${centroId}`)
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'inspecciones',
+      filter: `centro_id=eq.${centroId}`
+    }, (payload) => {
+      console.log('Real-time update received:', payload);
+
+      // Clear cache and refresh data when inspection changes
+      localStorage.removeItem(CACHE_KEY);
+      fetchData(currentPage.value, false, true); // Silent refresh
+    })
+    .subscribe();
+};
+
+const cleanupRealtimeSubscription = () => {
+  if (realtimeSubscription) {
+    realtimeSubscription.unsubscribe();
+    realtimeSubscription = null;
+  }
+};
+
 onMounted(async () => {
   await fetchData(1, false);
   // Start prefetching the next page
   prefetchNextPage();
+  // Set up real-time subscription after initial data load
+  setupRealtimeSubscription();
+});
+
+onUnmounted(() => {
+  cleanupRealtimeSubscription();
 });
 </script>
 

@@ -161,19 +161,29 @@ export async function buildChecklistAnnex(pdf, reportData) {
             const observacionesDelPunto = incidenciasData
                 .filter(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && (inc.observaciones || inc.custom_fields))
                 .map((obs) => {
-                    let customStr = '';
+                    let parts = [];
+
+                    // Add custom fields if they exist
                     if (obs.custom_fields) {
                         const customs = Object.entries(obs.custom_fields).map(([fieldId, value]) => {
                             const field = customFieldsMap.get(parseInt(fieldId));
-                            return field ? `${field.field_name}: ${value}` : '';
-                        }).filter(s => s).join(' / ');
-                        if (customs) customStr = customs;
+                            return field && value ? `${field.field_name}: ${value}` : '';
+                        }).filter(s => s);
+                        parts.push(...customs);
                     }
-                    const obsText = obs.observaciones && obs.observaciones.trim() ? obs.observaciones : '';
-                    const fullObs = [customStr, obsText].filter(s => s).join(' / ');
-                    return `Parámetro ${obs.item_checklist}: ${fullObs}`;
+
+                    // Add observations if they exist
+                    if (obs.observaciones && obs.observaciones.trim()) {
+                        parts.push(`Observaciones: ${obs.observaciones.trim()}`);
+                    }
+
+                    // Only create entry if there's content
+                    if (parts.length > 0) {
+                        return `Parámetro ${obs.item_checklist}: ${parts.join(' / ')}`;
+                    }
+                    return null;
                 })
-                .filter(obs => obs.split(': ')[1]) // Only include if there's content after :
+                .filter(obs => obs !== null) // Remove null entries
                 .join('\n');
             
             autoTable(pdf, {

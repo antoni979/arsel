@@ -149,7 +149,7 @@ const handlePlacaStatusChange = async (status) => {
     if (incidenciasPlaca.length === 0) {
       await addIncidencia(2, {
           gravedad: 'verde',
-          observaciones: 'FALTA PLACA. Se debe solicitar e instalar una nueva placa con las características validadas.',
+          observaciones: 'Falta ficha',
       });
     }
   }
@@ -226,13 +226,39 @@ const addIncidencia = async (itemId, defaults = {}) => {
 };
 
 const deleteIncidencia = async (incidenciaId) => {
+    const incidencia = incidencias.value.find(inc => inc.id === incidenciaId);
+    if (!incidencia) return;
+
+    // If the incidence has a photo, delete it from storage first
+    if (incidencia.url_foto_antes) {
+      try {
+        // Extract file path from Supabase URL
+        const url = new URL(incidencia.url_foto_antes);
+        const pathParts = url.pathname.split('/');
+        const bucketIndex = pathParts.findIndex(part => part === 'incidencias');
+        if (bucketIndex !== -1) {
+          const filePath = pathParts.slice(bucketIndex + 1).join('/');
+          const { error: storageError } = await supabase.storage.from('incidencias').remove([filePath]);
+          if (storageError) {
+            console.error('Error deleting photo from storage:', storageError);
+            // Continue with DB deletion even if storage deletion fails
+          }
+        }
+      } catch (error) {
+        console.error('Error processing photo URL for deletion:', error);
+        // Continue with DB deletion
+      }
+    }
+
+    // Delete from database
     const { error } = await supabase.from('incidencias').delete().eq('id', incidenciaId);
     if (!error) {
       incidencias.value = incidencias.value.filter(inc => inc.id !== incidenciaId);
       // Clean up custom values for deleted incidence
       delete customValues.value[incidenciaId];
+      showNotification('Incidencia eliminada correctamente.', 'success');
     } else {
-      alert("Error al borrar la incidencia: " + error.message);
+      showNotification("Error al borrar la incidencia: " + error.message, 'error');
     }
 }
 
@@ -311,18 +337,91 @@ const handleFileUpload = async (file, incidencia) => {
   }
 
   isUploading.value = incidencia.id;
-  const fileName = `inspeccion_${props.inspeccionId}/punto_${puntoInspeccionado.value.id}/${Date.now()}_${file.name}`;
-  const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, file);
-  if (uploadError) {
-    showNotification("Error al subir la foto: " + uploadError.message, 'error');
+
+  try {
+    // Compress image if it's large
+    let fileToUpload = file;
+    const originalSize = file.size;
+
+    if (file.size > 500 * 1024) { // Compress if larger than 500KB
+      showNotification('Comprimiendo imagen...', 'info');
+
+      // Use canvas API for compression
+      const compressedFile = await compressImage(file);
+      fileToUpload = compressedFile;
+
+      const compressionRatio = ((originalSize - compressedFile.size) / originalSize * 100).toFixed(1);
+      if (compressionRatio > 5) {
+        showNotification(`Imagen comprimida: ${compressionRatio}% de reducción`, 'success');
+      }
+    }
+
+    const fileName = `inspeccion_${props.inspeccionId}/punto_${puntoInspeccionado.value.id}/${Date.now()}_${file.name}`;
+    const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, fileToUpload);
+    if (uploadError) {
+      showNotification("Error al subir la foto: " + uploadError.message, 'error');
+      isUploading.value = null;
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from('incidencias').getPublicUrl(fileName);
+    incidencia.url_foto_antes = publicUrl;
+    await saveIncidencia(incidencia);
     isUploading.value = null;
-    return;
+    showNotification('Foto subida correctamente.', 'success');
+  } catch (error) {
+    console.error('Error processing image:', error);
+    showNotification('Error al procesar la imagen: ' + error.message, 'error');
+    isUploading.value = null;
   }
-  const { data: { publicUrl } } = supabase.storage.from('incidencias').getPublicUrl(fileName);
-  incidencia.url_foto_antes = publicUrl;
-  await saveIncidencia(incidencia);
-  isUploading.value = null;
-  showNotification('Foto subida correctamente.', 'success');
+};
+
+// Compress image using Canvas API
+const compressImage = (file) => {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+
+    img.onload = () => {
+      // Calculate new dimensions (max 1024px on longest side for smaller files)
+      let { width, height } = img;
+      const maxDimension = 1024;
+
+      if (width > height) {
+        if (width > maxDimension) {
+          height = (height * maxDimension) / width;
+          width = maxDimension;
+        }
+      } else {
+        if (height > maxDimension) {
+          width = (width * maxDimension) / height;
+          height = maxDimension;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      // Draw and compress with lower quality for much smaller files
+      ctx.drawImage(img, 0, 0, width, height);
+
+      canvas.toBlob((blob) => {
+        if (blob) {
+          // Create a new file with the compressed blob
+          const compressedFile = new File([blob], file.name, {
+            type: 'image/jpeg',
+            lastModified: Date.now()
+          });
+          resolve(compressedFile);
+        } else {
+          reject(new Error('Failed to compress image'));
+        }
+      }, 'image/jpeg', 0.6); // 60% quality for smaller file sizes
+    };
+
+    img.onerror = () => reject(new Error('Failed to load image'));
+    img.src = URL.createObjectURL(file);
+  });
 };
 
 const saveIncidencia = async (incidencia) => {
