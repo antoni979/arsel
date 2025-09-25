@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 import { checklistItems } from '../utils/checklist';
 import { generateTextReport } from '../utils/pdf';
-import { ArrowUpTrayIcon, CheckCircleIcon } from '@heroicons/vue/24/solid';
+import { ArrowUpTrayIcon, CheckCircleIcon, TrashIcon } from '@heroicons/vue/24/solid';
 
 const showNotification = inject('showNotification');
 const route = useRoute();
@@ -17,6 +17,7 @@ const isFinalizing = ref(false);
 const inspeccion = ref(null);
 const incidencias = ref([]);
 const isUploading = ref(null);
+const dragOverIncidenceId = ref(null);
 
 onMounted(async () => {
   loading.value = true;
@@ -31,9 +32,47 @@ const getItemText = (itemId) => {
   const item = checklistItems.find(i => i.id === itemId);
   return item ? `${item.id}. ${item.text}` : 'Item desconocido';
 };
+
+const onDragOver = (event, incidenceId) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = incidenceId;
+};
+
+const onDragLeave = (event) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = null;
+};
+
+const onDrop = (event, incidencia) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = null;
+  const files = event.dataTransfer.files;
+  if (files.length === 0) return;
+  if (files.length > 1) {
+    showNotification('Solo se permite subir una foto a la vez.', 'error');
+    return;
+  }
+  const file = files[0];
+  handleFileUpload(file, incidencia);
+};
 const handleFileChange = async (event, incidencia) => {
   const file = event.target.files[0];
   if (!file) return;
+  handleFileUpload(file, incidencia);
+};
+
+const handleFileUpload = async (file, incidencia) => {
+  // Validations
+  if (!file.type.startsWith('image/')) {
+    showNotification('Solo se permiten archivos de imagen.', 'error');
+    return;
+  }
+  const maxSize = 10 * 1024 * 1024; // 10MB
+  if (file.size > maxSize) {
+    showNotification('El archivo es demasiado grande. Máximo 10MB.', 'error');
+    return;
+  }
+
   isUploading.value = incidencia.id;
   // Cambiamos el nombre de la carpeta para mantener consistencia
   const fileName = `cierre_informe_${inspeccionId}/incidencia_${incidencia.id}/${Date.now()}_${file.name}`;
@@ -49,9 +88,49 @@ const handleFileChange = async (event, incidencia) => {
     showNotification("Error al guardar la URL: " + updateError.message, 'error');
   } else {
     incidencia.url_foto_despues = publicUrl;
+    showNotification('Foto subida correctamente.', 'success');
   }
   isUploading.value = null;
 };
+
+const deletePhoto = async (incidencia) => {
+  if (!incidencia.url_foto_despues) return;
+
+  if (!confirm('¿Estás seguro de que quieres eliminar esta foto de corrección?')) {
+    return;
+  }
+
+  try {
+    // Extract file path from URL
+    const url = new URL(incidencia.url_foto_despues);
+    const pathParts = url.pathname.split('/');
+    // Find the index after 'incidencias' bucket
+    const bucketIndex = pathParts.findIndex(part => part === 'incidencias');
+    const filePath = pathParts.slice(bucketIndex + 1).join('/');
+
+    // Delete from storage
+    const { error: storageError } = await supabase.storage.from('incidencias').remove([filePath]);
+    if (storageError) {
+      console.error('Storage deletion error:', storageError);
+      // Continue with DB update even if storage deletion fails
+    }
+
+    // Update database
+    const { error: dbError } = await supabase.from('incidencias').update({ url_foto_despues: null }).eq('id', incidencia.id);
+    if (dbError) {
+      showNotification('Error al actualizar la base de datos: ' + dbError.message, 'error');
+      return;
+    }
+
+    // Update local state
+    incidencia.url_foto_despues = null;
+    showNotification('Foto eliminada correctamente.', 'success');
+  } catch (error) {
+    console.error('Error deleting photo:', error);
+    showNotification('Error al eliminar la foto: ' + error.message, 'error');
+  }
+};
+
 const todasSubsanadas = computed(() => {
   if (incidencias.value.length === 0) return true;
   return incidencias.value.every(inc => !!inc.url_foto_despues);
@@ -155,20 +234,33 @@ const finalizarInforme = async () => {
               </div>
               <div>
                 <p class="text-sm font-semibold text-slate-600 mb-2">DESPUÉS (Evidencia de Corrección)</p>
-                <div class="aspect-video bg-slate-100 rounded-lg flex items-center justify-center overflow-hidden relative group">
+                <div
+                  class="aspect-video bg-slate-100 rounded-lg flex items-center justify-center overflow-hidden relative group transition-colors"
+                  :class="{ 'bg-blue-200 border-2 border-blue-400 border-dashed': dragOverIncidenceId === incidencia.id }"
+                  @dragover="onDragOver($event, incidencia.id)"
+                  @dragleave="onDragLeave"
+                  @drop="onDrop($event, incidencia)"
+                >
                   <img v-if="incidencia.url_foto_despues" :src="incidencia.url_foto_despues" class="w-full h-full object-contain">
                   <div v-else-if="isUploading === incidencia.id" class="text-center text-slate-600">Subiendo foto...</div>
                   <div v-else class="text-center">
-                    <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-' + incidencia.id" accept="image/*">
-                    <label :for="'fileInput-' + incidencia.id" class="cursor-pointer flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">
+                    <p v-if="dragOverIncidenceId === incidencia.id" class="text-sm text-slate-600">Suelta la foto aquí</p>
+                    <label v-else :for="'fileInput-' + incidencia.id" class="cursor-pointer flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">
                       <ArrowUpTrayIcon class="h-4 w-4" />
                       Subir Foto
                     </label>
+                    <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-' + incidencia.id" accept="image/*">
                   </div>
                    <div v-if="incidencia.url_foto_despues" class="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                     <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInputChange-' + incidencia.id" accept="image/*">
-                     <label :for="'fileInputChange-' + incidencia.id" class="cursor-pointer text-white font-semibold">Cambiar Foto</label>
-                  </div>
+                     <div class="flex gap-4">
+                       <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInputChange-' + incidencia.id" accept="image/*">
+                       <label :for="'fileInputChange-' + incidencia.id" class="cursor-pointer text-white font-semibold">Cambiar Foto</label>
+                       <button @click="deletePhoto(incidencia)" class="text-white font-semibold hover:text-red-300 flex items-center gap-1">
+                         <TrashIcon class="h-4 w-4" />
+                         Eliminar
+                       </button>
+                     </div>
+                   </div>
                 </div>
               </div>
             </div>
