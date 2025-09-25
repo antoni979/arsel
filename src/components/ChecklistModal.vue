@@ -195,15 +195,6 @@ const getCustomFieldsForItem = (itemId) => {
 const addIncidencia = async (itemId, defaults = {}) => {
   if (!puntoInspeccionado.value) return;
 
-  // Validate custom fields for this item
-  const itemFields = getCustomFieldsForItem(itemId);
-  for (const field of itemFields) {
-    if (field.required && !customValues.value[itemId]?.[field.id]) {
-      alert(`El campo "${field.field_name}" es obligatorio.`);
-      return;
-    }
-  }
-
   let defaultSeverity = defaults.gravedad || 'verde';
   if (!defaults.gravedad) {
     // Fetch default from DB
@@ -238,6 +229,8 @@ const deleteIncidencia = async (incidenciaId) => {
     const { error } = await supabase.from('incidencias').delete().eq('id', incidenciaId);
     if (!error) {
       incidencias.value = incidencias.value.filter(inc => inc.id !== incidenciaId);
+      // Clean up custom values for deleted incidence
+      delete customValues.value[incidenciaId];
     } else {
       alert("Error al borrar la incidencia: " + error.message);
     }
@@ -339,13 +332,36 @@ const saveIncidencia = async (incidencia) => {
 };
 
 const handleClose = () => {
+  // Check for required fields that are not filled
+  for (const item of checklistItems) {
+    const itemFields = getCustomFieldsForItem(item.id);
+    const itemIncidencias = getIncidenciasForItem(item.id).value;
+
+    // Only validate required fields if there are incidences for this item
+    if (itemIncidencias.length > 0) {
+      for (const field of itemFields) {
+        if (field.required) {
+          // Check if any incidence for this item has this required field filled
+          const hasFilledField = itemIncidencias.some(inc =>
+            customValues.value[inc.id]?.[field.id]
+          );
+
+          if (!hasFilledField) {
+            showNotification(`No se puede guardar sin completar los campos obligatorios. El campo "${field.field_name}" es obligatorio.`, 'error');
+            return;
+          }
+        }
+      }
+    }
+  }
+
   emit('save');
   emit('close');
 };
 </script>
 
 <template>
-  <div v-if="isOpen" @click.self="handleClose" class="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
+  <div v-if="isOpen" class="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
     <div class="bg-slate-50 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
       <header class="p-4 border-b bg-white rounded-t-lg flex justify-between items-center">
         <div class="flex items-center gap-2">
