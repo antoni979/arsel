@@ -12,6 +12,7 @@ import {
 } from '@heroicons/vue/24/outline';
 import { Line } from 'vue-chartjs';
 import { Chart as ChartJS, Title, Tooltip, Legend, LineElement, PointElement, CategoryScale, LinearScale } from 'chart.js';
+import SkeletonLoader from '../components/SkeletonLoader.vue';
 
 ChartJS.register(Title, Tooltip, Legend, LineElement, PointElement, CategoryScale, LinearScale);
 
@@ -176,7 +177,17 @@ const closeModal = () => {
   <div class="h-full overflow-y-auto p-4 sm:p-8 bg-slate-50">
     <h1 class="text-3xl md:text-4xl font-bold text-slate-800 mb-6">Cuadro de Mando</h1>
     
-    <div v-if="loading" class="text-center text-slate-500 py-16">Cargando datos del dashboard...</div>
+    <div v-if="loading" class="space-y-6">
+      <!-- Skeleton for Stats -->
+      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div v-for="i in 5" :key="i" class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 h-24"><SkeletonLoader/></div>
+      </div>
+      <!-- Skeleton for Main Content -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-96"><SkeletonLoader/></div>
+        <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-96"><SkeletonLoader/></div>
+      </div>
+    </div>
     
     <div v-else class="space-y-6">
       <section>

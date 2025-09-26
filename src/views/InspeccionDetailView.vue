@@ -8,6 +8,7 @@ import ChecklistModal from '../components/ChecklistModal.vue';
 import InspectionSidebar from '../components/InspectionSidebar.vue';
 import { CheckCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
 import { generateTextReport } from '../utils/pdf';
+import SkeletonLoader from '../components/SkeletonLoader.vue';
 
 const showNotification = inject('showNotification');
 const showConfirm = inject('showConfirm');
@@ -35,31 +36,52 @@ const canEditInspection = computed(() => {
   return inspeccion.value?.estado === 'en_progreso';
 });
 
-onMounted(async () => {
+// ===== INICIO DE LA CORRECCIÓN: Lógica de carga de datos unificada =====
+const loadAllData = async () => {
   loading.value = true;
-  const { data: inspectionData, error: inspectionError } = await supabase.from('inspecciones').select('*, centros(*), versiones_plano(*)').eq('id', inspeccionId).single();
-  if (inspectionError || !inspectionData || !inspectionData.versiones_plano) {
-      showNotification('Error: No se pudo cargar la inspección.', 'error');
-      loading.value = false; return;
+  
+  // 1. Obtener la inspección, su centro y su versión de plano
+  const { data: inspectionData, error: inspectionError } = await supabase
+    .from('inspecciones')
+    .select('*, centros(*), versiones_plano(*)')
+    .eq('id', inspeccionId)
+    .single();
+
+  if (inspectionError || !inspectionData) {
+    showNotification('Error crítico: No se pudo cargar la inspección.', 'error');
+    loading.value = false;
+    return;
   }
+  
   inspeccion.value = inspectionData;
   centro.value = inspectionData.centros;
   version.value = inspectionData.versiones_plano;
-  if (version.value) {
-    const [salasRes, puntosMaestrosRes] = await Promise.all([
-      supabase.from('salas').select('*').eq('version_id', version.value.id).order('nombre'),
-      supabase.from('puntos_maestros').select('*').eq('version_id', version.value.id)
-    ]);
-    salas.value = salasRes.data || [];
-    puntosMaestros.value = puntosMaestrosRes.data || [];
-    await initializeInspectionPoints();
+
+  if (!version.value) {
+      showNotification('Error: La inspección no tiene una versión de plano asociada.', 'error');
+      loading.value = false;
+      return;
   }
+  
+  // 2. Con la versión del plano, obtener las salas y los puntos maestros de ESA versión
+  const [salasRes, puntosMaestrosRes, puntosInspeccionadosRes] = await Promise.all([
+    supabase.from('salas').select('*').eq('version_id', version.value.id).order('nombre'),
+    supabase.from('puntos_maestros').select('*').eq('version_id', version.value.id),
+    supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId)
+  ]);
+  
+  salas.value = salasRes.data || [];
+  puntosMaestros.value = puntosMaestrosRes.data || [];
+  puntosInspeccionados.value = puntosInspeccionadosRes.data || [];
+
+  // 3. Inicializar puntos de inspección si es la primera vez que se abre
+  await initializeInspectionPoints();
+
+  // 4. Solo al final de todo, indicamos que la carga ha terminado
   loading.value = false;
-});
+};
 
 const initializeInspectionPoints = async () => {
-  const { data: existingPoints } = await supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId);
-  puntosInspeccionados.value = existingPoints || [];
   if (canEditInspection.value && puntosInspeccionados.value.length === 0 && puntosMaestros.value.length > 0) {
     const pointsToCreate = puntosMaestros.value.map(pm => ({
       inspeccion_id: inspeccionId, punto_maestro_id: pm.id, nomenclatura: pm.nomenclatura,
@@ -67,11 +89,19 @@ const initializeInspectionPoints = async () => {
       estado: 'existente', tiene_placa_caracteristicas: true
     }));
     if (pointsToCreate.length > 0) {
-      const { data: newPoints } = await supabase.from('puntos_inspeccionados').insert(pointsToCreate).select();
-      if (newPoints) puntosInspeccionados.value = newPoints;
+      const { data: newPoints, error } = await supabase.from('puntos_inspeccionados').insert(pointsToCreate).select();
+      if (newPoints) {
+        puntosInspeccionados.value = newPoints;
+      }
+      if(error) {
+        showNotification('Error al inicializar los puntos de la inspección.', 'error');
+      }
     }
   }
 };
+
+onMounted(loadAllData);
+// ===== FIN DE LA CORRECCIÓN =====
 
 const getSalaColor = (salaId) => salas.value.find(s => s.id === salaId)?.color || '#9CA3AF';
 
@@ -318,7 +348,20 @@ const finalizarInspeccion = async () => {
 
 <template>
   <div class="h-full flex flex-col">
-    <div v-if="loading" class="flex-1 flex items-center justify-center text-slate-500">Cargando...</div>
+    <div v-if="loading" class="flex-1 flex flex-col lg:flex-row overflow-hidden">
+      <!-- Skeleton for Sidebar -->
+      <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 p-4 space-y-4">
+        <SkeletonLoader class="h-10 w-full" />
+        <SkeletonLoader class="h-10 w-full" />
+        <div class="space-y-2 pt-4">
+          <SkeletonLoader v-for="i in 5" :key="i" class="h-12 w-full" />
+        </div>
+      </aside>
+      <!-- Skeleton for Main Content -->
+      <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full overflow-auto p-4">
+        <SkeletonLoader class="h-full w-full" />
+      </main>
+    </div>
     
     <div v-else-if="inspeccion && centro && version" class="flex-1 flex flex-col min-h-0">
       <header class="flex-shrink-0 px-4 md:px-8 pt-6 pb-4 bg-slate-100/80 backdrop-blur-sm border-b border-slate-200 z-10">
@@ -390,7 +433,7 @@ const finalizarInspeccion = async () => {
       :punto="selectedPunto"
       :inspeccion-id="inspeccionId" 
       @close="isModalOpen = false" 
-      @save="initializeInspectionPoints"
+      @save="loadAllData"
       @update-nomenclatura="handleUpdatePointNomenclatura"
     />
   </div>
