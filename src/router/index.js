@@ -9,6 +9,7 @@ import Login from '../components/Login.vue'
 const routes = [
   { path: '/', name: 'Login', component: Login, meta: { layout: 'Blank' } },
   { path: '/dashboard', name: 'Dashboard', component: () => import('../views/DashboardView.vue'), meta: { requiresAuth: true } },
+  { path: '/gestion', name: 'Gestion', component: () => import('../views/GestionView.vue'), meta: { requiresAuth: true } },
   { path: '/centros', name: 'CentrosList', component: () => import('../views/CentrosListView.vue'), meta: { requiresAuth: true } },
   { path: '/centros/:id/versiones', name: 'CentroVersions', component: () => import('../views/CentroVersionsView.vue'), meta: { requiresAuth: true } },
   { path: '/versiones/:id/configurar', name: 'VersionConfig', component: () => import('../views/CentroConfigView.vue'), meta: { requiresAuth: true } },
