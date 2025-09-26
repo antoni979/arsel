@@ -13,7 +13,9 @@
   "dependencies": {
     "@heroicons/vue": "^2.2.0",
     "@supabase/supabase-js": "^2.53.1",
+    "browser-image-compression": "^2.0.2",
     "chart.js": "^4.5.0",
+    "compressorjs": "^1.2.1",
     "html2canvas": "^1.4.1",
     "jspdf": "^3.0.1",
     "jspdf-autotable": "^5.0.2",
@@ -505,19 +507,29 @@ export async function buildChecklistAnnex(pdf, reportData) {
             const observacionesDelPunto = incidenciasData
                 .filter(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && (inc.observaciones || inc.custom_fields))
                 .map((obs) => {
-                    let customStr = '';
+                    let parts = [];
+
+                    // Add custom fields if they exist
                     if (obs.custom_fields) {
                         const customs = Object.entries(obs.custom_fields).map(([fieldId, value]) => {
                             const field = customFieldsMap.get(parseInt(fieldId));
-                            return field ? `${field.field_name}: ${value}` : '';
-                        }).filter(s => s).join(' / ');
-                        if (customs) customStr = customs;
+                            return field && value ? `${field.field_name}: ${value}` : '';
+                        }).filter(s => s);
+                        parts.push(...customs);
                     }
-                    const obsText = obs.observaciones && obs.observaciones.trim() ? obs.observaciones : '';
-                    const fullObs = [customStr, obsText].filter(s => s).join(' / ');
-                    return `Parámetro ${obs.item_checklist}: ${fullObs}`;
+
+                    // Add observations if they exist
+                    if (obs.observaciones && obs.observaciones.trim()) {
+                        parts.push(`Observaciones: ${obs.observaciones.trim()}`);
+                    }
+
+                    // Only create entry if there's content
+                    if (parts.length > 0) {
+                        return `Parámetro ${obs.item_checklist}: ${parts.join(' / ')}`;
+                    }
+                    return null;
                 })
-                .filter(obs => obs.split(': ')[1]) // Only include if there's content after :
+                .filter(obs => obs !== null) // Remove null entries
                 .join('\n');
             
             autoTable(pdf, {
@@ -563,8 +575,8 @@ function drawInfoBadge(pdf, position, pointData, badgeSizeMM) {
     const { width: BADGE_WIDTH_MM, height: BADGE_HEIGHT_MM } = badgeSizeMM;
 
     // Los tamaños de fuente se ajustan proporcionalmente al tamaño de la tarjeta
-    const FONT_SIZE_HEADER = BADGE_HEIGHT_MM * 0.45;
-    const FONT_SIZE_STATE = BADGE_HEIGHT_MM * 0.35;
+    const FONT_SIZE_HEADER = BADGE_HEIGHT_MM * 0.42;
+    const FONT_SIZE_STATE = BADGE_HEIGHT_MM * 0.38;
     const FONT_SIZE_SEMAPHORE = BADGE_HEIGHT_MM * 0.45;
 
     let stateText = null;
@@ -576,14 +588,13 @@ function drawInfoBadge(pdf, position, pointData, badgeSizeMM) {
     const startX = position.x - BADGE_WIDTH_MM / 2;
     let currentY = position.y - BADGE_HEIGHT_MM / 2;
 
+    // Solid white background fill
     pdf.setFillColor(255, 255, 255);
-    pdf.setDrawColor(180, 180, 180);
-    pdf.setLineWidth(0.2);
-    pdf.roundedRect(startX, currentY, BADGE_WIDTH_MM, BADGE_HEIGHT_MM, 1, 1, 'FD');
-    
+    pdf.roundedRect(startX, currentY, BADGE_WIDTH_MM, BADGE_HEIGHT_MM, 1, 1, 'F');
+
     pdf.setFontSize(FONT_SIZE_HEADER).setFont(undefined, 'bold');
     pdf.setTextColor(50, 50, 50);
-    const headerText = `Punto ${pointData.nomenclatura.split('-').pop() || '?'}`;
+    const headerText = `${pointData.nomenclatura.split('-').pop() || '?'}`;
     
     const headerY = stateText ? currentY + BADGE_HEIGHT_MM * 0.22 : currentY + BADGE_HEIGHT_MM * 0.35;
     pdf.text(headerText, position.x, headerY, { align: 'center' });
@@ -748,6 +759,7 @@ export async function buildTextPages(pdf, reportData) {
   const lineasSuprimidas = agruparPuntosPorPropiedad('estado', 'suprimido');
   const lineasNuevas = agruparPuntosPorPropiedad('estado', 'nuevo');
   const lineasDisminuidas = agruparPuntosPorPropiedad('detalle_modificacion', 'disminuido');
+  const lineasAumentadas = agruparPuntosPorPropiedad('detalle_modificacion', 'aumentado');
   const lineasConPlacaInvalida = agruparPuntosConPlacaInvalida();
   
   const getSalaYNumeroDeIncidencia = (incidencia) => {
@@ -826,13 +838,12 @@ export async function buildTextPages(pdf, reportData) {
   };
 
   const addSection = async (title, content) => {
-    if (!content && !title.toLowerCase().includes('nuevas montadas')) return;
     content = content || 'Ninguna';
-    
+
     const titleHeight = 8;
     const contentHeight = content.split('\n').length * 5 + 5;
     await checkPageBreak(titleHeight + contentHeight);
-    
+
     pdf.setFont('helvetica', 'normal').setFontSize(FONT_SIZES.body).text(title, MARGIN, currentY);
     currentY += titleHeight;
     pdf.setFont('helvetica', 'bold').text(content, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
@@ -885,6 +896,7 @@ export async function buildTextPages(pdf, reportData) {
 
   await addSection('Alineaciones sin placa de características o con placa no válida (por aumento de módulos/niveles):', lineasConPlacaInvalida);
   await addSection('Alineaciones con módulos DISMINUIDOS desde la inspección anterior:', lineasDisminuidas);
+  await addSection('Alineaciones con módulos AUMENTADOS desde la inspección anterior:', lineasAumentadas);
   await addSection('Alineaciones desmontadas desde la inspección anterior:', lineasSuprimidas);
   await addSection('Alineaciones nuevas montadas desde la inspección anterior:', lineasNuevas);
 
@@ -981,6 +993,12 @@ export async function fetchReportData(inspeccionId, options = {}) {
         if (counts && counts[inc.gravedad] !== undefined) {
             counts[inc.gravedad]++;
         }
+    });
+
+    // Debug logging for incidence counts
+    console.log('[pdf-data.js] Incidence counts calculated:');
+    incidenceCounts.forEach((counts, pointId) => {
+        console.log(`Point ${pointId}: verde=${counts.verde}, ambar=${counts.ambar}, rojo=${counts.rojo}`);
     });
 
     const result = {
@@ -1516,11 +1534,11 @@ function handleUpdateState(punto, newState) {
 --- INICIO DEL ARCHIVO: src/components/ChecklistModal.vue ---
 <!-- src/components/ChecklistModal.vue -->
 <script setup>
-import { ref, watch, computed, nextTick } from 'vue';
+import { ref, watch, computed, nextTick, inject } from 'vue';
 import { supabase } from '../supabase';
 import { checklistItems } from '../utils/checklist';
-import { 
-  ArrowUpTrayIcon, CheckCircleIcon, XCircleIcon, PlusCircleIcon, TrashIcon, 
+import {
+  ArrowUpTrayIcon, CheckCircleIcon, XCircleIcon, PlusCircleIcon, TrashIcon,
   ArrowTrendingUpIcon, ArrowTrendingDownIcon, StopCircleIcon, ChevronUpIcon, ChevronDownIcon,
   PencilIcon, CheckIcon
 } from '@heroicons/vue/24/solid';
@@ -1533,9 +1551,12 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'save', 'update-nomenclatura']);
 
+const showNotification = inject('showNotification');
+
 const incidencias = ref([]);
 const loading = ref(false);
 const isUploading = ref(null);
+const dragOverIncidenceId = ref(null);
 const puntoInspeccionado = computed(() => props.punto);
 const customFields = ref([]);
 const customValues = ref({});
@@ -1662,7 +1683,7 @@ const handlePlacaStatusChange = async (status) => {
     if (incidenciasPlaca.length === 0) {
       await addIncidencia(2, {
           gravedad: 'verde',
-          observaciones: 'FALTA PLACA. Se debe solicitar e instalar una nueva placa con las características validadas.',
+          observaciones: 'Falta ficha',
       });
     }
   }
@@ -1708,15 +1729,6 @@ const getCustomFieldsForItem = (itemId) => {
 const addIncidencia = async (itemId, defaults = {}) => {
   if (!puntoInspeccionado.value) return;
 
-  // Validate custom fields for this item
-  const itemFields = getCustomFieldsForItem(itemId);
-  for (const field of itemFields) {
-    if (field.required && !customValues.value[itemId]?.[field.id]) {
-      alert(`El campo "${field.field_name}" es obligatorio.`);
-      return;
-    }
-  }
-
   let defaultSeverity = defaults.gravedad || 'verde';
   if (!defaults.gravedad) {
     // Fetch default from DB
@@ -1748,11 +1760,39 @@ const addIncidencia = async (itemId, defaults = {}) => {
 };
 
 const deleteIncidencia = async (incidenciaId) => {
+    const incidencia = incidencias.value.find(inc => inc.id === incidenciaId);
+    if (!incidencia) return;
+
+    // If the incidence has a photo, delete it from storage first
+    if (incidencia.url_foto_antes) {
+      try {
+        // Extract file path from Supabase URL
+        const url = new URL(incidencia.url_foto_antes);
+        const pathParts = url.pathname.split('/');
+        const bucketIndex = pathParts.findIndex(part => part === 'incidencias');
+        if (bucketIndex !== -1) {
+          const filePath = pathParts.slice(bucketIndex + 1).join('/');
+          const { error: storageError } = await supabase.storage.from('incidencias').remove([filePath]);
+          if (storageError) {
+            console.error('Error deleting photo from storage:', storageError);
+            // Continue with DB deletion even if storage deletion fails
+          }
+        }
+      } catch (error) {
+        console.error('Error processing photo URL for deletion:', error);
+        // Continue with DB deletion
+      }
+    }
+
+    // Delete from database
     const { error } = await supabase.from('incidencias').delete().eq('id', incidenciaId);
     if (!error) {
       incidencias.value = incidencias.value.filter(inc => inc.id !== incidenciaId);
+      // Clean up custom values for deleted incidence
+      delete customValues.value[incidenciaId];
+      showNotification('Incidencia eliminada correctamente.', 'success');
     } else {
-      alert("Error al borrar la incidencia: " + error.message);
+      showNotification("Error al borrar la incidencia: " + error.message, 'error');
     }
 }
 
@@ -1789,21 +1829,133 @@ const toggleCollapse = (itemId) => {
   }
 };
 
+const onDragOver = (event, incidenceId) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = incidenceId;
+};
+
+const onDragLeave = (event) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = null;
+};
+
+const onDrop = (event, incidencia) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = null;
+  const files = event.dataTransfer.files;
+  if (files.length === 0) return;
+  if (files.length > 1) {
+    showNotification('Solo se permite subir una foto a la vez.', 'error');
+    return;
+  }
+  const file = files[0];
+  handleFileUpload(file, incidencia);
+};
+
 const handleFileChange = async (event, incidencia) => {
   const file = event.target.files[0];
   if (!file) return;
-  isUploading.value = incidencia.id;
-  const fileName = `inspeccion_${props.inspeccionId}/punto_${puntoInspeccionado.value.id}/${Date.now()}_${file.name}`;
-  const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, file);
-  if (uploadError) {
-    alert("Error al subir la foto: " + uploadError.message);
-    isUploading.value = null;
+  handleFileUpload(file, incidencia);
+};
+
+const handleFileUpload = async (file, incidencia) => {
+  // Validations
+  if (!file.type.startsWith('image/')) {
+    showNotification('Solo se permiten archivos de imagen.', 'error');
     return;
   }
-  const { data: { publicUrl } } = supabase.storage.from('incidencias').getPublicUrl(fileName);
-  incidencia.url_foto_antes = publicUrl;
-  await saveIncidencia(incidencia);
-  isUploading.value = null;
+  const maxSize = 10 * 1024 * 1024; // 10MB
+  if (file.size > maxSize) {
+    showNotification('El archivo es demasiado grande. Máximo 10MB.', 'error');
+    return;
+  }
+
+  isUploading.value = incidencia.id;
+
+  try {
+    // Compress image if it's large
+    let fileToUpload = file;
+    const originalSize = file.size;
+
+    if (file.size > 500 * 1024) { // Compress if larger than 500KB
+      showNotification('Comprimiendo imagen...', 'info');
+
+      // Use canvas API for compression
+      const compressedFile = await compressImage(file);
+      fileToUpload = compressedFile;
+
+      const compressionRatio = ((originalSize - compressedFile.size) / originalSize * 100).toFixed(1);
+      if (compressionRatio > 5) {
+        showNotification(`Imagen comprimida: ${compressionRatio}% de reducción`, 'success');
+      }
+    }
+
+    const fileName = `inspeccion_${props.inspeccionId}/punto_${puntoInspeccionado.value.id}/${Date.now()}_${file.name}`;
+    const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, fileToUpload);
+    if (uploadError) {
+      showNotification("Error al subir la foto: " + uploadError.message, 'error');
+      isUploading.value = null;
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from('incidencias').getPublicUrl(fileName);
+    incidencia.url_foto_antes = publicUrl;
+    await saveIncidencia(incidencia);
+    isUploading.value = null;
+    showNotification('Foto subida correctamente.', 'success');
+  } catch (error) {
+    console.error('Error processing image:', error);
+    showNotification('Error al procesar la imagen: ' + error.message, 'error');
+    isUploading.value = null;
+  }
+};
+
+// Compress image using Canvas API
+const compressImage = (file) => {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+
+    img.onload = () => {
+      // Calculate new dimensions (max 1024px on longest side for smaller files)
+      let { width, height } = img;
+      const maxDimension = 1024;
+
+      if (width > height) {
+        if (width > maxDimension) {
+          height = (height * maxDimension) / width;
+          width = maxDimension;
+        }
+      } else {
+        if (height > maxDimension) {
+          width = (width * maxDimension) / height;
+          height = maxDimension;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      // Draw and compress with lower quality for much smaller files
+      ctx.drawImage(img, 0, 0, width, height);
+
+      canvas.toBlob((blob) => {
+        if (blob) {
+          // Create a new file with the compressed blob
+          const compressedFile = new File([blob], file.name, {
+            type: 'image/jpeg',
+            lastModified: Date.now()
+          });
+          resolve(compressedFile);
+        } else {
+          reject(new Error('Failed to compress image'));
+        }
+      }, 'image/jpeg', 0.6); // 60% quality for smaller file sizes
+    };
+
+    img.onerror = () => reject(new Error('Failed to load image'));
+    img.src = URL.createObjectURL(file);
+  });
 };
 
 const saveIncidencia = async (incidencia) => {
@@ -1813,13 +1965,36 @@ const saveIncidencia = async (incidencia) => {
 };
 
 const handleClose = () => {
+  // Check for required fields that are not filled
+  for (const item of checklistItems) {
+    const itemFields = getCustomFieldsForItem(item.id);
+    const itemIncidencias = getIncidenciasForItem(item.id).value;
+
+    // Only validate required fields if there are incidences for this item
+    if (itemIncidencias.length > 0) {
+      for (const field of itemFields) {
+        if (field.required) {
+          // Check if any incidence for this item has this required field filled
+          const hasFilledField = itemIncidencias.some(inc =>
+            customValues.value[inc.id]?.[field.id]
+          );
+
+          if (!hasFilledField) {
+            showNotification(`No se puede guardar sin completar los campos obligatorios. El campo "${field.field_name}" es obligatorio.`, 'error');
+            return;
+          }
+        }
+      }
+    }
+  }
+
   emit('save');
   emit('close');
 };
 </script>
 
 <template>
-  <div v-if="isOpen" @click.self="handleClose" class="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
+  <div v-if="isOpen" class="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
     <div class="bg-slate-50 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
       <header class="p-4 border-b bg-white rounded-t-lg flex justify-between items-center">
         <div class="flex items-center gap-2">
@@ -1953,15 +2128,22 @@ const handleClose = () => {
                     </div>
                     <div>
                       <label class="block text-xs font-medium text-slate-600 mb-1">Foto de la Incidencia</label>
-                      <div class="aspect-video bg-slate-200 rounded-md flex items-center justify-center overflow-hidden relative group">
+                      <div
+                        class="aspect-video bg-slate-200 rounded-md flex items-center justify-center overflow-hidden relative group transition-colors"
+                        :class="{ 'bg-blue-200 border-2 border-blue-400 border-dashed': dragOverIncidenceId === incidencia.id }"
+                        @dragover="onDragOver($event, incidencia.id)"
+                        @dragleave="onDragLeave"
+                        @drop="onDrop($event, incidencia)"
+                      >
                         <img v-if="incidencia.url_foto_antes" :src="incidencia.url_foto_antes" class="object-cover w-full h-full">
                         <div v-else class="text-center">
                           <p v-if="isUploading === incidencia.id" class="text-sm text-slate-600">Subiendo...</p>
+                          <p v-else-if="dragOverIncidenceId === incidencia.id" class="text-sm text-slate-600">Suelta la foto aquí</p>
                           <label v-else :for="'fileInput-' + incidencia.id" class="cursor-pointer flex items-center gap-2 px-3 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700"><ArrowUpTrayIcon class="h-4 w-4" />Subir Foto</label>
-                          <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-' + incidencia.id">
+                          <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-' + incidencia.id" accept="image/*">
                         </div>
                         <div v-if="incidencia.url_foto_antes" class="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                           <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-change-' + incidencia.id">
+                           <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-change-' + incidencia.id" accept="image/*">
                            <label :for="'fileInput-change-' + incidencia.id" class="cursor-pointer text-white text-sm font-semibold">Cambiar Foto</label>
                         </div>
                       </div>
@@ -2582,12 +2764,12 @@ const handleSubmit = () => {
 <!-- src/components/PlanoBadge.vue -->
 <template>
   <div
-    class="w-full h-full p-1 flex flex-col items-center bg-white rounded-lg shadow-lg border border-gray-300 cursor-move font-sans"
+    class="w-full h-full p-1 flex flex-col items-center rounded-lg shadow-lg cursor-move font-sans"
   >
     <!-- Cabecera con Punto y Estado -->
     <div class="text-center">
-      <div class="font-bold text-xs text-gray-800 leading-tight">Punto {{ pointNumber }}</div>
-      <div v-if="stateText" class="font-bold text-[9px] leading-tight text-blue-600 uppercase">
+      <div class="font-bold text-sm text-gray-800 leading-tight">{{ pointNumber }}</div>
+      <div v-if="stateText" class="font-bold text-[10px] leading-tight text-blue-600 uppercase break-words">
         {{ stateText }}
       </div>
     </div>
@@ -2617,7 +2799,7 @@ const handleSubmit = () => {
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 
 const props = defineProps({
   pointData: Object
@@ -2633,11 +2815,24 @@ const stateText = computed(() => {
   return null;
 });
 
-const semaphoreItems = computed(() => [
-  { label: 'verde', color: '#22C55E', count: props.pointData.counts.verde },
-  { label: 'ambar', color: '#F59E0B', count: props.pointData.counts.ambar },
-  { label: 'rojo', color: '#EF4444', count: props.pointData.counts.rojo },
-]);
+const semaphoreItems = computed(() => {
+  const counts = props.pointData?.counts || { verde: 0, ambar: 0, rojo: 0 };
+  console.log('PlanoBadge semaphore data for point', props.pointData?.nomenclatura, ':', counts);
+  return [
+    { label: 'verde', color: '#22C55E', count: counts.verde || 0 },
+    { label: 'ambar', color: '#F59E0B', count: counts.ambar || 0 },
+    { label: 'rojo', color: '#EF4444', count: counts.rojo || 0 },
+  ];
+});
+
+// Watch for changes in pointData to debug reactivity
+watch(() => props.pointData, (newData, oldData) => {
+  console.log('PlanoBadge pointData changed:', {
+    point: newData?.nomenclatura,
+    oldCounts: oldData?.counts,
+    newCounts: newData?.counts
+  });
+}, { deep: true, immediate: true });
 </script>
 --- FIN DEL ARCHIVO: src/components/PlanoBadge.vue ---
 
@@ -2724,8 +2919,12 @@ const overlayHeight = ref(0);
 const lastWidth = ref(0);
 const lastHeight = ref(0);
 const resizeObserver = ref(null);
+const updateTimeout = ref(null);
+const imageRect = ref({ left: 0, top: 0, width: 0, height: 0 });
 
 watch(() => props.isAreaDrawingMode, (newVal) => {
+  // NUEVO LOG: ¿El componente hijo recibe el cambio de la prop?
+  console.log('[InteractiveMap] La prop isAreaDrawingMode ha cambiado a:', newVal);
   if (!newVal) {
     drawingPoints.value = [];
   }
@@ -2740,31 +2939,62 @@ watch(() => props.imageUrl, () => {
 }, { immediate: true });
 
 const updateDimensions = () => {
-  if (overlayRef.value) {
-    const newWidth = overlayRef.value.clientWidth;
-    const newHeight = overlayRef.value.clientHeight;
-    if (newWidth !== lastWidth.value || newHeight !== lastHeight.value) {
-      overlayWidth.value = newWidth;
-      overlayHeight.value = newHeight;
-      lastWidth.value = newWidth;
-      lastHeight.value = newHeight;
-      console.log('Overlay dimensions updated:', newWidth, newHeight);
+  if (updateTimeout.value) clearTimeout(updateTimeout.value);
+  updateTimeout.value = setTimeout(() => {
+    if (overlayRef.value) {
+      const newWidth = overlayRef.value.clientWidth;
+      const newHeight = overlayRef.value.clientHeight;
+      if (newWidth !== lastWidth.value || newHeight !== lastHeight.value) {
+        overlayWidth.value = newWidth;
+        overlayHeight.value = newHeight;
+        lastWidth.value = newWidth;
+        lastHeight.value = newHeight;
+        console.log('Overlay dimensions updated:', newWidth, newHeight);
+
+        // Compute image rect
+        const img = overlayRef.value.previousElementSibling;
+        if (img && img.naturalWidth && img.naturalHeight) {
+          const scale = Math.min(overlayWidth.value / img.naturalWidth, overlayHeight.value / img.naturalHeight);
+          const dw = img.naturalWidth * scale;
+          const dh = img.naturalHeight * scale;
+          imageRect.value = {
+            left: (overlayWidth.value - dw) / 2,
+            top: (overlayHeight.value - dh) / 2,
+            width: dw,
+            height: dh
+          };
+          console.log('Image rect updated:', imageRect.value);
+        }
+      }
     }
-  }
+  }, 100); // Debounce 100ms
 };
 
 const toSvgPoints = (pointsArray) => {
-  if (!pointsArray || pointsArray.length === 0 || !overlayWidth.value || !overlayHeight.value) return "";
-  return pointsArray.map(p => `${p.x * overlayWidth.value},${p.y * overlayHeight.value}`).join(' ');
+  if (!pointsArray || pointsArray.length === 0 || !imageRect.value.width || !imageRect.value.height) return "";
+  return pointsArray.map(p => `${p.x * imageRect.value.width + imageRect.value.left},${p.y * imageRect.value.height + imageRect.value.top}`).join(' ');
 };
 
 const handleMapClick = (event) => {
-  if (props.isReadOnly || !overlayRef.value) return;
+  // NUEVO LOG: ¿Se detecta el clic en el mapa?
+  console.log('[InteractiveMap] Se ha detectado un clic en el mapa.');
+
+  if (props.isReadOnly || !overlayRef.value || !imageRect.value.width || !imageRect.value.height) {
+    console.log('[InteractiveMap] Clic ignorado. Razón:', { isReadOnly: props.isReadOnly, hasOverlay: !!overlayRef.value, hasImageRect: !!imageRect.value.width });
+    return;
+  }
+
   const overlayRect = overlayRef.value.getBoundingClientRect();
-  const x = (event.clientX - overlayRect.left) / overlayRect.width;
-  const y = (event.clientY - overlayRect.top) / overlayRect.height;
-  
+  const x = (event.clientX - overlayRect.left - imageRect.value.left) / imageRect.value.width;
+  const y = (event.clientY - overlayRect.top - imageRect.value.top) / imageRect.value.height;
+
+  // NUEVO LOG: ¿Cuál es el estado del modo de dibujo DENTRO del manejador de clics?
+  console.log('[InteractiveMap] Dentro de handleMapClick, isAreaDrawingMode es:', props.isAreaDrawingMode);
+
   if (props.isAreaDrawingMode) {
+    // NUEVO LOG: ¡Hemos entrado en la lógica de dibujo!
+    console.log('[InteractiveMap] ¡MODO DIBUJO ACTIVO! Añadiendo punto en', { x, y });
+
     if (drawingPoints.value.length > 2) {
       const firstPoint = drawingPoints.value[0];
       const distance = Math.sqrt(Math.pow((x - firstPoint.x), 2) + Math.pow((y - firstPoint.y), 2));
@@ -2775,6 +3005,9 @@ const handleMapClick = (event) => {
       }
     }
     drawingPoints.value.push({ x, y });
+    // NUEVO LOG: ¿Cómo queda el array de puntos?
+    console.log('[InteractiveMap] Array de puntos de dibujo actualizado:', drawingPoints.value);
+
   } else if (props.isPlacementMode) {
     emit('add-point', { x, y });
   }
@@ -2809,6 +3042,9 @@ onUnmounted(() => {
   if (resizeObserver.value) {
     resizeObserver.value.disconnect();
   }
+  if (updateTimeout.value) {
+    clearTimeout(updateTimeout.value);
+  }
 });
 
 const getSalaColor = (salaId) => {
@@ -2823,13 +3059,13 @@ const startDrag = (point, event) => {
 };
 
 const onDrag = (event) => {
-  if (props.isReadOnly || draggedPointId.value === null || !overlayRef.value) return;
+  if (props.isReadOnly || draggedPointId.value === null || !overlayRef.value || !imageRect.value.width || !imageRect.value.height) return;
   event.preventDefault();
   const point = props.points.find(p => p.id === draggedPointId.value);
   if (!point) return;
   const overlayRect = overlayRef.value.getBoundingClientRect();
-  point.coordenada_x = (event.clientX - overlayRect.left) / overlayRect.width;
-  point.coordenada_y = (event.clientY - overlayRect.top) / overlayRect.height;
+  point.coordenada_x = (event.clientX - overlayRect.left - imageRect.value.left) / imageRect.value.width;
+  point.coordenada_y = (event.clientY - overlayRect.top - imageRect.value.top) / imageRect.value.height;
 };
 
 const stopDrag = () => {
@@ -2889,8 +3125,8 @@ const handleImageError = () => {
             />
             <line
               v-if="drawingPoints.length > 0"
-              :x1="drawingPoints[drawingPoints.length - 1].x * overlayWidth"
-              :y1="drawingPoints[drawingPoints.length - 1].y * overlayHeight"
+              :x1="drawingPoints[drawingPoints.length - 1].x * imageRect.width + imageRect.left"
+              :y1="drawingPoints[drawingPoints.length - 1].y * imageRect.height + imageRect.top"
               :x2="mousePosition.x"
               :y2="mousePosition.y"
               style="stroke: #3b82f6; stroke-width: 2px; stroke-dasharray: 4;"
@@ -2898,8 +3134,8 @@ const handleImageError = () => {
             <circle
               v-for="(point, index) in drawingPoints"
               :key="`drawing-point-${index}`"
-              :cx="point.x * overlayWidth"
-              :cy="point.y * overlayHeight"
+              :cx="point.x * imageRect.width + imageRect.left"
+              :cy="point.y * imageRect.height + imageRect.top"
               r="5"
               :class="index === 0 ? 'fill-green-500 stroke-white' : 'fill-blue-500 stroke-white'"
               style="stroke-width: 2px;"
@@ -2908,21 +3144,21 @@ const handleImageError = () => {
         </svg>
 
         <div
-          v-for="point in points"
-          :key="point.id"
-          class="absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 border-2 border-white rounded-full flex items-center justify-center text-white text-xs font-bold group shadow-lg pointer-events-auto"
-          :class="{ 
-            'cursor-grab active:cursor-grabbing': !isReadOnly, 
-            'cursor-pointer hover:scale-110 transition-transform': isReadOnly 
-          }"
-          :style="{ 
-            left: (point.coordenada_x * 100) + '%', 
-            top: (point.coordenada_y * 100) + '%',
-            backgroundColor: point.color || getSalaColor(point.sala_id)
-          }"
-          @mousedown.stop="startDrag(point, $event)"
-          @click.stop="handlePointClick(point)"
-        >
+           v-for="point in points"
+           :key="point.id"
+           class="absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 border-2 border-white rounded-full flex items-center justify-center text-white text-xs font-bold group shadow-lg pointer-events-auto"
+           :class="{
+             'cursor-grab active:cursor-grabbing': !isReadOnly,
+             'cursor-pointer hover:scale-110 transition-transform': isReadOnly
+           }"
+           :style="{
+             left: (point.coordenada_x * imageRect.width + imageRect.left) + 'px',
+             top: (point.coordenada_y * imageRect.height + imageRect.top) + 'px',
+             backgroundColor: point.color || getSalaColor(point.sala_id)
+           }"
+           @mousedown.stop="startDrag(point, $event)"
+           @click.stop="handlePointClick(point)"
+         >
           {{ point.nomenclatura.split('-').pop() || '?' }}
           <button 
             v-if="!isReadOnly && (point.estado === 'nuevo' || point.estado === undefined)"
@@ -3174,7 +3410,7 @@ onMounted(fetchCentros);
 --- INICIO DEL ARCHIVO: src/views/CentroHistorialView.vue ---
 <!-- src/views/CentroHistorialView.vue -->
 <script setup>
-import { ref, onMounted, computed, inject } from 'vue';
+import { ref, onMounted, onUnmounted, computed, inject } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 import { 
@@ -3203,14 +3439,60 @@ const isProcessing = ref(null);
 const isSentModalOpen = ref(false);
 const selectedInspeccion = ref(null);
 
+// Real-time subscription
+let realtimeSubscription = null;
+
 const availableYears = ref([]);
 const selectedYear = ref(null);
 const expandedInspectionId = ref(null);
 
-const toggleDetails = (inspeccionId) => {
+// Pagination state
+const pageSize = 20;
+const currentPage = ref(1);
+const totalInspecciones = ref(0);
+const hasMorePages = ref(false);
+const loadingMore = ref(false);
+
+// Caching
+const CACHE_KEY = `inspections_${centroId}`;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+const getCachedData = () => {
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) {
+      const { data, timestamp } = JSON.parse(cached);
+      if (Date.now() - timestamp < CACHE_DURATION) {
+        return data;
+      }
+    }
+  } catch (error) {
+    console.warn('Error reading cache:', error);
+  }
+  return null;
+};
+
+const setCachedData = (data) => {
+  try {
+    const cacheData = {
+      data,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
+  } catch (error) {
+    console.warn('Error writing cache:', error);
+  }
+};
+
+const toggleDetails = async (inspeccionId) => {
   if (expandedInspectionId.value === inspeccionId) {
     expandedInspectionId.value = null;
   } else {
+    // Load details if not already loaded
+    const inspeccion = inspecciones.value.find(i => i.id === inspeccionId);
+    if (inspeccion && (!inspeccion.details || inspeccion.details.length === 0)) {
+      await loadInspectionDetails(inspeccion);
+    }
     expandedInspectionId.value = inspeccionId;
   }
 };
@@ -3234,80 +3516,238 @@ const filteredInspecciones = computed(() => {
   });
 });
 
-const fetchData = async () => {
-  loading.value = true;
-  const { data: centroData } = await supabase.from('centros').select('nombre').eq('id', centroId).single();
-  centro.value = centroData;
-  
+// Performance monitoring
+const performanceMarks = ref([]);
+
+const markPerformance = (name) => {
+  if (window.performance && window.performance.mark) {
+    window.performance.mark(name);
+    performanceMarks.value.push(name);
+  }
+};
+
+const measurePerformance = (startMark, endMark) => {
+  if (window.performance && window.performance.measure) {
+    try {
+      window.performance.measure(`${startMark}-to-${endMark}`, startMark, endMark);
+      const measure = window.performance.getEntriesByName(`${startMark}-to-${endMark}`, 'measure')[0];
+      console.log(`Performance: ${startMark}-to-${endMark}: ${measure.duration.toFixed(2)}ms`);
+    } catch (error) {
+      console.warn('Performance measurement failed:', error);
+    }
+  }
+};
+
+const fetchData = async (page = 1, append = false, silent = false) => {
+  markPerformance(`fetchData-start-page-${page}`);
+  if (!append && !silent) {
+    loading.value = true;
+  } else if (append && !silent) {
+    loadingMore.value = true;
+  }
+
+  // Check cache for first page
+  if (page === 1 && !append) {
+    const cachedData = getCachedData();
+    if (cachedData) {
+      centro.value = cachedData.centro;
+      inspecciones.value = cachedData.inspecciones;
+      totalInspecciones.value = cachedData.totalInspecciones;
+      availableYears.value = cachedData.availableYears;
+      hasMorePages.value = cachedData.hasMorePages;
+      loading.value = false;
+      return;
+    }
+  }
+
+  // First, get center data and total count
+  const [centroRes, countRes] = await Promise.all([
+    supabase.from('centros').select('nombre').eq('id', centroId).single(),
+    supabase.from('inspecciones').select('id', { count: 'exact', head: true }).eq('centro_id', centroId)
+  ]);
+
+  centro.value = centroRes.data;
+  totalInspecciones.value = countRes.count || 0;
+
+  // Calculate pagination
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  // Fetch paginated inspections with optimized query (selective fields)
   const { data: inspeccionesData } = await supabase
     .from('inspecciones')
     .select(`
-      *,
-      versiones_plano(id, nombre),
-      puntos_inspeccionados(
-        id, nomenclatura, punto_maestro_id,
-        puntos_maestros(id, sala_id, salas(id, nombre)),
-        incidencias(gravedad)
-      )
+      id, fecha_inspeccion, estado, tecnico_nombre, centro_id,
+      fecha_envio_cliente, responsable_envio_cliente,
+      url_pdf_informe_inicial, url_pdf_informe_final,
+      versiones_plano(id, nombre)
     `)
     .eq('centro_id', centroId)
-    .order('fecha_inspeccion', { ascending: false });
+    .order('fecha_inspeccion', { ascending: false })
+    .range(from, to);
 
   if (!inspeccionesData) {
-    inspecciones.value = [];
+    if (!append) inspecciones.value = [];
     loading.value = false;
+    loadingMore.value = false;
     return;
   }
 
-  const detailedInspections = inspeccionesData.map(inspeccion => {
-    const puntos = inspeccion.puntos_inspeccionados || [];
-    const salasMap = new Map();
-    const salaCountsMap = new Map();
+  // Process inspections (simplified - details loaded on demand)
+  const processedInspections = inspeccionesData.map(inspeccion => ({
+    ...inspeccion,
+    details: [], // Will be loaded lazily
+    totalCounts: { verde: 0, ambar: 0, rojo: 0 } // Will be calculated lazily
+  }));
 
-    puntos.forEach(punto => {
-      const salaId = punto.puntos_maestros?.sala_id;
-      const salaNombre = punto.puntos_maestros?.salas?.nombre;
-      if (salaId && salaNombre) {
-        if (!salasMap.has(salaId)) {
-          salasMap.set(salaId, { id: salaId, nombre: salaNombre, puntos: [] });
-          salaCountsMap.set(salaId, { verde: 0, ambar: 0, rojo: 0 });
-        }
-        const counts = { verde: 0, ambar: 0, rojo: 0 };
-        (punto.incidencias || []).forEach(inc => {
-          if (counts[inc.gravedad] !== undefined) counts[inc.gravedad]++;
-        });
-        salasMap.get(salaId).puntos.push({ ...punto, counts });
-        const salaCounts = salaCountsMap.get(salaId);
-        salaCounts.verde += counts.verde;
-        salaCounts.ambar += counts.ambar;
-        salaCounts.rojo += counts.rojo;
-      }
-    });
+  if (append) {
+    inspecciones.value = [...inspecciones.value, ...processedInspections];
+  } else {
+    inspecciones.value = processedInspections;
+  }
 
-    const salasConPuntos = Array.from(salasMap.values()).map(sala => ({
-      ...sala,
-      puntos: sala.puntos.sort((a,b) => a.nomenclatura.localeCompare(b.nomenclatura, undefined, {numeric: true})),
-      counts: salaCountsMap.get(sala.id)
-    })).filter(s => s.puntos.length > 0);
+  // Check if there are more pages
+  hasMorePages.value = (page * pageSize) < totalInspecciones.value;
 
-    const totalCounts = salasConPuntos.reduce((acc, sala) => {
-      acc.verde += sala.counts.verde;
-      acc.ambar += sala.counts.ambar;
-      acc.rojo += sala.counts.rojo;
-      return acc;
-    }, { verde: 0, ambar: 0, rojo: 0 });
-
-    return { ...inspeccion, details: salasConPuntos, totalCounts };
-  });
-  
-  inspecciones.value = detailedInspections;
-
+  // Extract available years from current data
   if (inspecciones.value.length > 0) {
     const years = new Set(inspecciones.value.map(i => new Date(i.fecha_inspeccion).getFullYear()));
     availableYears.value = Array.from(years).sort((a, b) => b - a);
   }
 
-  loading.value = false;
+  // Cache the data for first page
+  if (page === 1 && !append) {
+    setCachedData({
+      centro: centro.value,
+      inspecciones: inspecciones.value,
+      totalInspecciones: totalInspecciones.value,
+      availableYears: availableYears.value,
+      hasMorePages: hasMorePages.value
+    });
+  }
+
+  if (!silent) {
+    loading.value = false;
+    loadingMore.value = false;
+  }
+
+  markPerformance(`fetchData-end-page-${page}`);
+  measurePerformance(`fetchData-start-page-${page}`, `fetchData-end-page-${page}`);
+};
+
+// Web Worker for processing inspection details
+const createProcessingWorker = () => {
+  const workerCode = `
+    self.onmessage = function(e) {
+      const { puntosData } = e.data;
+
+      const salasMap = new Map();
+      const salaCountsMap = new Map();
+
+      puntosData.forEach(punto => {
+        const salaId = punto.puntos_maestros?.sala_id;
+        const salaNombre = punto.puntos_maestros?.salas?.nombre;
+        if (salaId && salaNombre) {
+          if (!salasMap.has(salaId)) {
+            salasMap.set(salaId, { id: salaId, nombre: salaNombre, puntos: [] });
+            salaCountsMap.set(salaId, { verde: 0, ambar: 0, rojo: 0 });
+          }
+          const counts = { verde: 0, ambar: 0, rojo: 0 };
+          (punto.incidencias || []).forEach(inc => {
+            if (counts[inc.gravedad] !== undefined) counts[inc.gravedad]++;
+          });
+          salasMap.get(salaId).puntos.push({ ...punto, counts });
+          const salaCounts = salaCountsMap.get(salaId);
+          salaCounts.verde += counts.verde;
+          salaCounts.ambar += counts.ambar;
+          salaCounts.rojo += counts.rojo;
+        }
+      });
+
+      const salasConPuntos = Array.from(salasMap.values()).map(sala => ({
+        ...sala,
+        puntos: sala.puntos.sort((a,b) => a.nomenclatura.localeCompare(b.nomenclatura, undefined, {numeric: true})),
+        counts: salaCountsMap.get(sala.id)
+      })).filter(s => s.puntos.length > 0);
+
+      const totalCounts = salasConPuntos.reduce((acc, sala) => {
+        acc.verde += sala.counts.verde;
+        acc.ambar += sala.counts.ambar;
+        acc.rojo += sala.counts.rojo;
+        return acc;
+      }, { verde: 0, ambar: 0, rojo: 0 });
+
+      self.postMessage({ salasConPuntos, totalCounts });
+    };
+  `;
+
+  const blob = new Blob([workerCode], { type: 'application/javascript' });
+  return new Worker(URL.createObjectURL(blob));
+};
+
+// Load inspection details on demand
+const loadInspectionDetails = async (inspeccion) => {
+  if (inspeccion.details && inspeccion.details.length > 0) return; // Already loaded
+
+  const { data: puntosData } = await supabase
+    .from('puntos_inspeccionados')
+    .select(`
+      id, nomenclatura,
+      puntos_maestros!inner(id, sala_id, salas!inner(id, nombre)),
+      incidencias(gravedad)
+    `)
+    .eq('inspeccion_id', inspeccion.id);
+
+  if (!puntosData) return;
+
+  // Use Web Worker for processing
+  const worker = createProcessingWorker();
+  return new Promise((resolve) => {
+    worker.onmessage = (e) => {
+      const { salasConPuntos, totalCounts } = e.data;
+
+      // Update the inspection object
+      const index = inspecciones.value.findIndex(i => i.id === inspeccion.id);
+      if (index !== -1) {
+        inspecciones.value[index] = { ...inspeccion, details: salasConPuntos, totalCounts };
+      }
+
+      worker.terminate();
+      resolve();
+    };
+
+    worker.postMessage({ puntosData });
+  });
+};
+
+// Prefetch next page
+let prefetchPromise = null;
+
+const prefetchNextPage = () => {
+  if (hasMorePages.value && !prefetchPromise) {
+    prefetchPromise = fetchData(currentPage.value + 1, false, true); // silent fetch
+  }
+};
+
+// Load more inspections
+const loadMoreInspecciones = async () => {
+  if (!hasMorePages.value || loadingMore.value) return;
+
+  // If we have a prefetched page, use it
+  if (prefetchPromise) {
+    try {
+      await prefetchPromise;
+      prefetchPromise = null;
+    } catch (error) {
+      console.warn('Prefetch failed:', error);
+    }
+  }
+
+  currentPage.value++;
+  await fetchData(currentPage.value, true);
+
+  // Start prefetching the next page
+  prefetchNextPage();
 };
 
 const openSentModal = (inspeccion) => {
@@ -3332,7 +3772,8 @@ const handleMarkAsSent = async (formData) => {
       .eq('id', selectedInspeccion.value.id);
     if (error) throw error;
     
-    await fetchData();
+    // Refresh current page data
+    await fetchData(currentPage.value, false);
     showNotification('Registro de envío guardado con éxito.', 'success');
   } catch (error) {
     showNotification('Error al registrar el envío: ' + error.message, 'error');
@@ -3363,7 +3804,12 @@ const reabrirInspeccion = async (inspeccion) => {
             })
             .eq('id', inspeccion.id);
         if (error) throw error;
-        await fetchData();
+
+        // Clear cache to ensure UI updates immediately
+        localStorage.removeItem(CACHE_KEY);
+
+        // Refresh current page data
+        await fetchData(currentPage.value, false);
         showNotification('Inspección reabierta. Ahora puedes editarla de nuevo.', 'success');
     } catch (error) {
         showNotification('Error al reabrir la inspección: ' + error.message, 'error');
@@ -3372,32 +3818,108 @@ const reabrirInspeccion = async (inspeccion) => {
     }
 }
 
+// ======================= INICIO DE LA LÓGICA DE BORRADO DEFINITIVA =======================
 const handleDelete = async (inspeccionId) => {
   const confirmed = await showConfirm('Borrar Inspección', '¿Estás seguro de que quieres borrar esta inspección? Esta acción es permanente y eliminará todos los datos y fotos asociados.');
   if (!confirmed) return;
+
   try {
-    const { data: incidencias, error: getError } = await supabase.from('incidencias').select('url_foto_antes, url_foto_despues').eq('inspeccion_id', inspeccionId);
-    if (getError) throw getError;
+    // 1. Obtener la lista de incidencias para saber qué archivos borrar.
+    const { data: incidencias, error: getIncidenciasError } = await supabase
+      .from('incidencias')
+      .select('url_foto_antes, url_foto_despues')
+      .eq('inspeccion_id', inspeccionId);
+    if (getIncidenciasError) throw getIncidenciasError;
+
+    // 2. Preparar la lista de archivos a borrar del Storage.
     const filesToDelete = [];
-    if (incidencias && incidencias.length > 0) {
+    if (incidencias) {
       incidencias.forEach(inc => {
-        if (inc.url_foto_antes) { const filePath = inc.url_foto_antes.split('/incidencias/')[1]; if (filePath) filesToDelete.push(filePath); }
-        if (inc.url_foto_despues) { const filePath = inc.url_foto_despues.split('/incidencias/')[1]; if (filePath) filesToDelete.push(filePath); }
+        // Extraemos el path del archivo desde la URL completa.
+        if (inc.url_foto_antes) {
+          const path = inc.url_foto_antes.substring(inc.url_foto_antes.lastIndexOf('/incidencias/') + 1);
+          filesToDelete.push(path);
+        }
+        if (inc.url_foto_despues) {
+          const path = inc.url_foto_despues.substring(inc.url_foto_despues.lastIndexOf('/incidencias/') + 1);
+          filesToDelete.push(path);
+        }
       });
     }
+
+    // 3. Borrar los archivos del Storage si hay alguno.
     if (filesToDelete.length > 0) {
-      await supabase.storage.from('incidencias').remove(filesToDelete);
+      const { error: storageError } = await supabase.storage.from('incidencias').remove(filesToDelete);
+      if (storageError) {
+        // Advertimos del error pero continuamos, para no dejar datos huérfanos en la BBDD.
+        showNotification('Advertencia: No se pudieron borrar algunos archivos de imagen, pero se continuará con el borrado de datos.', 'warning');
+        console.error("Storage Error:", storageError);
+      }
     }
-    const { error: deleteError } = await supabase.from('inspecciones').delete().eq('id', inspeccionId);
-    if (deleteError) throw deleteError;
+
+    // 4. Borrar en cascada desde la base de datos (Supabase lo gestiona si está configurado en las FK, pero lo haremos explícito para más seguridad).
+    // Ya no es necesario borrar `incidencias` y `puntos_inspeccionados` primero si tienes ON DELETE CASCADE en la base de datos.
+    // Si no, este es el orden seguro:
+    await supabase.from('incidencias').delete().eq('inspeccion_id', inspeccionId);
+    await supabase.from('puntos_inspeccionados').delete().eq('inspeccion_id', inspeccionId);
+
+    // 5. Finalmente, borrar la inspección.
+    const { error: inspeccionError } = await supabase.from('inspecciones').delete().eq('id', inspeccionId);
+    if (inspeccionError) throw inspeccionError;
+
+    // 6. Actualizar la UI.
     inspecciones.value = inspecciones.value.filter(i => i.id !== inspeccionId);
+    totalInspecciones.value = Math.max(0, totalInspecciones.value - 1);
     showNotification('Inspección borrada con éxito.', 'success');
+
   } catch (error) {
     showNotification('Ocurrió un error al borrar la inspección: ' + error.message, 'error');
   }
 };
+// ======================= FIN DE LA LÓGICA DE BORRADO DEFINITIVA =======================
 
-onMounted(fetchData);
+const setupRealtimeSubscription = () => {
+  // Clean up existing subscription
+  if (realtimeSubscription) {
+    realtimeSubscription.unsubscribe();
+  }
+
+  // Set up real-time subscription for inspections in this center
+  realtimeSubscription = supabase
+    .channel(`inspections_${centroId}`)
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'inspecciones',
+      filter: `centro_id=eq.${centroId}`
+    }, (payload) => {
+      console.log('Real-time update received:', payload);
+
+      // Clear cache and refresh data when inspection changes
+      localStorage.removeItem(CACHE_KEY);
+      fetchData(currentPage.value, false, true); // Silent refresh
+    })
+    .subscribe();
+};
+
+const cleanupRealtimeSubscription = () => {
+  if (realtimeSubscription) {
+    realtimeSubscription.unsubscribe();
+    realtimeSubscription = null;
+  }
+};
+
+onMounted(async () => {
+  await fetchData(1, false);
+  // Start prefetching the next page
+  prefetchNextPage();
+  // Set up real-time subscription after initial data load
+  setupRealtimeSubscription();
+});
+
+onUnmounted(() => {
+  cleanupRealtimeSubscription();
+});
 </script>
 
 <template>
@@ -3433,6 +3955,19 @@ onMounted(fetchData);
       <div class="space-y-4">
         <div v-if="filteredInspecciones.length === 0" class="p-8 text-center text-slate-500 bg-white rounded-xl shadow-sm border">
           No hay inspecciones para el año seleccionado.
+        </div>
+
+        <!-- Load More Button -->
+        <div v-if="hasMorePages && !loadingMore" class="text-center py-4">
+          <button @click="loadMoreInspecciones" class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-semibold">
+            Cargar más inspecciones
+          </button>
+        </div>
+        <div v-if="loadingMore" class="text-center py-4">
+          <div class="inline-flex items-center gap-2 text-slate-600">
+            <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+            Cargando más inspecciones...
+          </div>
         </div>
         
         <div v-for="inspeccion in filteredInspecciones" :key="inspeccion.id" class="bg-white rounded-xl shadow-sm border border-slate-200 transition-all">
@@ -3544,7 +4079,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 import { checklistItems } from '../utils/checklist';
 import { generateTextReport } from '../utils/pdf';
-import { ArrowUpTrayIcon, CheckCircleIcon } from '@heroicons/vue/24/solid';
+import { ArrowUpTrayIcon, CheckCircleIcon, TrashIcon } from '@heroicons/vue/24/solid';
 
 const showNotification = inject('showNotification');
 const route = useRoute();
@@ -3556,6 +4091,7 @@ const isFinalizing = ref(false);
 const inspeccion = ref(null);
 const incidencias = ref([]);
 const isUploading = ref(null);
+const dragOverIncidenceId = ref(null);
 
 onMounted(async () => {
   loading.value = true;
@@ -3570,27 +4106,179 @@ const getItemText = (itemId) => {
   const item = checklistItems.find(i => i.id === itemId);
   return item ? `${item.id}. ${item.text}` : 'Item desconocido';
 };
+
+const onDragOver = (event, incidenceId) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = incidenceId;
+};
+
+const onDragLeave = (event) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = null;
+};
+
+const onDrop = (event, incidencia) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = null;
+  const files = event.dataTransfer.files;
+  if (files.length === 0) return;
+  if (files.length > 1) {
+    showNotification('Solo se permite subir una foto a la vez.', 'error');
+    return;
+  }
+  const file = files[0];
+  handleFileUpload(file, incidencia);
+};
 const handleFileChange = async (event, incidencia) => {
   const file = event.target.files[0];
   if (!file) return;
-  isUploading.value = incidencia.id;
-  // Cambiamos el nombre de la carpeta para mantener consistencia
-  const fileName = `cierre_informe_${inspeccionId}/incidencia_${incidencia.id}/${Date.now()}_${file.name}`;
-  const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, file, { upsert: true });
-  if (uploadError) {
-    showNotification("Error al subir la foto: " + uploadError.message, 'error');
-    isUploading.value = null;
+  handleFileUpload(file, incidencia);
+};
+
+const handleFileUpload = async (file, incidencia) => {
+  // Validations
+  if (!file.type.startsWith('image/')) {
+    showNotification('Solo se permiten archivos de imagen.', 'error');
     return;
   }
-  const { data: { publicUrl } } = supabase.storage.from('incidencias').getPublicUrl(fileName);
-  const { error: updateError } = await supabase.from('incidencias').update({ url_foto_despues: publicUrl }).eq('id', incidencia.id);
-  if (updateError) {
-    showNotification("Error al guardar la URL: " + updateError.message, 'error');
-  } else {
-    incidencia.url_foto_despues = publicUrl;
+  const maxSize = 10 * 1024 * 1024; // 10MB
+  if (file.size > maxSize) {
+    showNotification('El archivo es demasiado grande. Máximo 10MB.', 'error');
+    return;
   }
-  isUploading.value = null;
+
+  isUploading.value = incidencia.id;
+
+  try {
+    // Compress image if it's large
+    let fileToUpload = file;
+    const originalSize = file.size;
+
+    if (file.size > 500 * 1024) { // Compress if larger than 500KB
+      showNotification('Comprimiendo imagen...', 'info');
+
+      // Use canvas API for compression
+      const compressedFile = await compressImage(file);
+      fileToUpload = compressedFile;
+
+      const compressionRatio = ((originalSize - compressedFile.size) / originalSize * 100).toFixed(1);
+      if (compressionRatio > 5) {
+        showNotification(`Imagen comprimida: ${compressionRatio}% de reducción`, 'success');
+      }
+    }
+
+    // Cambiamos el nombre de la carpeta para mantener consistencia
+    const fileName = `cierre_informe_${inspeccionId}/incidencia_${incidencia.id}/${Date.now()}_${file.name}`;
+    const { error: uploadError } = await supabase.storage.from('incidencias').upload(fileName, fileToUpload, { upsert: true });
+    if (uploadError) {
+      showNotification("Error al subir la foto: " + uploadError.message, 'error');
+      isUploading.value = null;
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from('incidencias').getPublicUrl(fileName);
+    const { error: updateError } = await supabase.from('incidencias').update({ url_foto_despues: publicUrl }).eq('id', incidencia.id);
+    if (updateError) {
+      showNotification("Error al guardar la URL: " + updateError.message, 'error');
+    } else {
+      incidencia.url_foto_despues = publicUrl;
+      showNotification('Foto subida correctamente.', 'success');
+    }
+    isUploading.value = null;
+  } catch (error) {
+    console.error('Error processing image:', error);
+    showNotification('Error al procesar la imagen: ' + error.message, 'error');
+    isUploading.value = null;
+  }
 };
+
+// Compress image using Canvas API
+const compressImage = (file) => {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+
+    img.onload = () => {
+      // Calculate new dimensions (max 1024px on longest side for smaller files)
+      let { width, height } = img;
+      const maxDimension = 1024;
+
+      if (width > height) {
+        if (width > maxDimension) {
+          height = (height * maxDimension) / width;
+          width = maxDimension;
+        }
+      } else {
+        if (height > maxDimension) {
+          width = (width * maxDimension) / height;
+          height = maxDimension;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      // Draw and compress with lower quality for much smaller files
+      ctx.drawImage(img, 0, 0, width, height);
+
+      canvas.toBlob((blob) => {
+        if (blob) {
+          // Create a new file with the compressed blob
+          const compressedFile = new File([blob], file.name, {
+            type: 'image/jpeg',
+            lastModified: Date.now()
+          });
+          resolve(compressedFile);
+        } else {
+          reject(new Error('Failed to compress image'));
+        }
+      }, 'image/jpeg', 0.6); // 60% quality for smaller file sizes
+    };
+
+    img.onerror = () => reject(new Error('Failed to load image'));
+    img.src = URL.createObjectURL(file);
+  });
+};
+
+const deletePhoto = async (incidencia) => {
+  if (!incidencia.url_foto_despues) return;
+
+  if (!confirm('¿Estás seguro de que quieres eliminar esta foto de corrección?')) {
+    return;
+  }
+
+  try {
+    // Extract file path from URL
+    const url = new URL(incidencia.url_foto_despues);
+    const pathParts = url.pathname.split('/');
+    // Find the index after 'incidencias' bucket
+    const bucketIndex = pathParts.findIndex(part => part === 'incidencias');
+    const filePath = pathParts.slice(bucketIndex + 1).join('/');
+
+    // Delete from storage
+    const { error: storageError } = await supabase.storage.from('incidencias').remove([filePath]);
+    if (storageError) {
+      console.error('Storage deletion error:', storageError);
+      showNotification('Advertencia: Error al eliminar del almacenamiento, pero se actualizó la base de datos.', 'warning');
+      // Continue with DB update even if storage deletion fails
+    }
+
+    // Update database
+    const { error: dbError } = await supabase.from('incidencias').update({ url_foto_despues: null }).eq('id', incidencia.id);
+    if (dbError) {
+      showNotification('Error al actualizar la base de datos: ' + dbError.message, 'error');
+      return;
+    }
+
+    // Update local state
+    incidencia.url_foto_despues = null;
+    showNotification('Foto eliminada correctamente.', 'success');
+  } catch (error) {
+    console.error('Error deleting photo:', error);
+    showNotification('Error al eliminar la foto: ' + error.message, 'error');
+  }
+};
+
 const todasSubsanadas = computed(() => {
   if (incidencias.value.length === 0) return true;
   return incidencias.value.every(inc => !!inc.url_foto_despues);
@@ -3694,20 +4382,33 @@ const finalizarInforme = async () => {
               </div>
               <div>
                 <p class="text-sm font-semibold text-slate-600 mb-2">DESPUÉS (Evidencia de Corrección)</p>
-                <div class="aspect-video bg-slate-100 rounded-lg flex items-center justify-center overflow-hidden relative group">
+                <div
+                  class="aspect-video bg-slate-100 rounded-lg flex items-center justify-center overflow-hidden relative group transition-colors"
+                  :class="{ 'bg-blue-200 border-2 border-blue-400 border-dashed': dragOverIncidenceId === incidencia.id }"
+                  @dragover="onDragOver($event, incidencia.id)"
+                  @dragleave="onDragLeave"
+                  @drop="onDrop($event, incidencia)"
+                >
                   <img v-if="incidencia.url_foto_despues" :src="incidencia.url_foto_despues" class="w-full h-full object-contain">
                   <div v-else-if="isUploading === incidencia.id" class="text-center text-slate-600">Subiendo foto...</div>
                   <div v-else class="text-center">
-                    <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-' + incidencia.id" accept="image/*">
-                    <label :for="'fileInput-' + incidencia.id" class="cursor-pointer flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">
+                    <p v-if="dragOverIncidenceId === incidencia.id" class="text-sm text-slate-600">Suelta la foto aquí</p>
+                    <label v-else :for="'fileInput-' + incidencia.id" class="cursor-pointer flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">
                       <ArrowUpTrayIcon class="h-4 w-4" />
                       Subir Foto
                     </label>
+                    <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-' + incidencia.id" accept="image/*">
                   </div>
                    <div v-if="incidencia.url_foto_despues" class="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                     <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInputChange-' + incidencia.id" accept="image/*">
-                     <label :for="'fileInputChange-' + incidencia.id" class="cursor-pointer text-white font-semibold">Cambiar Foto</label>
-                  </div>
+                     <div class="flex gap-4">
+                       <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInputChange-' + incidencia.id" accept="image/*">
+                       <label :for="'fileInputChange-' + incidencia.id" class="cursor-pointer text-white font-semibold">Cambiar Foto</label>
+                       <button @click="deletePhoto(incidencia)" class="text-white font-semibold hover:text-red-300 flex items-center gap-1">
+                         <TrashIcon class="h-4 w-4" />
+                         Eliminar
+                       </button>
+                     </div>
+                   </div>
                 </div>
               </div>
             </div>
@@ -4021,7 +4722,11 @@ const finalizarInspeccion = async () => {
             .update({ estado: 'finalizada', url_pdf_informe_inicial: publicUrl })
             .eq('id', inspeccionId);
         if (updateError) throw updateError;
-        
+
+        // Clear the cache for the center history to ensure the new PDF URL is visible
+        const CACHE_KEY = `inspections_${centro.value.id}`;
+        localStorage.removeItem(CACHE_KEY);
+
         showNotification('Inspección finalizada y archivada con éxito.');
         router.push(`/centros/${centro.value.id}/historial`);
 
@@ -4083,8 +4788,9 @@ const finalizarInspeccion = async () => {
         />
         
         <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full overflow-auto">
-          <InteractiveMap 
-            :image-url="version.url_imagen_plano" 
+          <InteractiveMap
+            :key="inspeccionId"
+            :image-url="version.url_imagen_plano"
             :points="puntosParaMostrar.filter(p => p.estado !== 'suprimido')"
             :salas="salas"
             :is-read-only="!canEditInspection || (!isPlacementMode && !isAreaDrawingMode)"
@@ -5046,7 +5752,7 @@ import { fetchReportData } from '../utils/pdf/pdf-data';
 import { calculatePlanoLayout } from '../utils/plano-layout';
 import { generatePlanPdf } from '../utils/pdf';
 import PlanoBadge from '../components/PlanoBadge.vue';
-import { ArrowDownTrayIcon, ArrowUturnLeftIcon } from '@heroicons/vue/24/solid';
+import { ArrowDownTrayIcon, ArrowUturnLeftIcon, ArrowPathIcon } from '@heroicons/vue/24/solid';
 
 const route = useRoute();
 const router = useRouter();
@@ -5057,6 +5763,7 @@ const layoutReady = ref(false);
 const errorState = ref(null);
 const reportData = ref(null);
 const labels = ref([]);
+const dataVersion = ref(0); // Force reactivity updates
 const planoContainer = ref(null);
 const mapDimensions = ref({ x: 0, y: 0, width: 1, height: 1 });
 const isGenerating = ref(false);
@@ -5067,7 +5774,7 @@ const dragOffset = ref({ x: 0, y: 0 });
 // ===== CORRECCIÓN: Usamos el mismo valor base que usaremos en el PDF =====
 const BADGE_WIDTH_PX = 55; 
 
-onMounted(async () => {
+const loadData = async () => {
   reportData.value = await fetchReportData(inspeccionId, { optimizePlan: false });
 
   if (!reportData.value || !reportData.value.planoBase64) {
@@ -5075,10 +5782,35 @@ onMounted(async () => {
     loading.value = false;
     return;
   }
+
+  // Ensure incidence counts are available
+  if (!reportData.value.incidenceCounts) {
+    console.error('Incidence counts not available in reportData');
+    errorState.value = "Error: No se pudieron calcular los datos de incidencias.";
+    loading.value = false;
+    return;
+  }
+
+  console.log('Report data loaded successfully, incidence counts available:', reportData.value.incidenceCounts.size);
   loading.value = false;
   await nextTick();
   prepareLayout();
+};
+
+onMounted(async () => {
+  await loadData();
 });
+
+// Add method to refresh data (can be called externally if needed)
+const refreshData = async () => {
+  loading.value = true;
+  layoutReady.value = false;
+  dataVersion.value = 0; // Reset version on refresh
+  await loadData();
+};
+
+// Expose refresh method for external use
+defineExpose({ refreshData });
 
 const prepareLayout = () => {
   const containerEl = planoContainer.value;
@@ -5109,17 +5841,21 @@ const prepareLayout = () => {
     const allPoints = reportData.value.puntosInspeccionadosData.map(punto => {
       const maestro = reportData.value.puntosMaestrosData.find(pm => pm.id === punto.punto_maestro_id);
       if (!maestro) return null;
+      const counts = reportData.value.incidenceCounts.get(punto.id) || { verde: 0, ambar: 0, rojo: 0 };
+      console.log(`PlanoPreviewView - Point ${punto.id} (${maestro.nomenclatura}): counts =`, counts);
       return {
         ...punto,
         nomenclatura: maestro.nomenclatura,
         absX: mapDimensions.value.x + (punto.coordenada_x * mapDimensions.value.width),
         absY: mapDimensions.value.y + (punto.coordenada_y * mapDimensions.value.height),
-        counts: reportData.value.incidenceCounts.get(punto.id) || { verde: 0, ambar: 0, rojo: 0 }
+        counts: counts
       };
     }).filter(Boolean);
     
     labels.value = calculatePlanoLayout(allPoints, mapDimensions.value, BADGE_WIDTH_PX);
+    dataVersion.value++; // Force reactivity update
     layoutReady.value = true;
+    console.log('PlanoPreviewView layout ready, dataVersion:', dataVersion.value);
   };
   
   img.onerror = () => { errorState.value = "No se pudo cargar la imagen del plano."; }
@@ -5180,6 +5916,9 @@ const onMouseUp = () => {
         <button @click="router.go(-1)" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-white border border-slate-300 rounded-md hover:bg-slate-50">
           <ArrowUturnLeftIcon class="h-4 w-4" /> Volver
         </button>
+        <button @click="refreshData" :disabled="loading" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50">
+          <ArrowPathIcon class="h-4 w-4" /> Actualizar
+        </button>
         <button @click="handleGeneratePdf" :disabled="isGenerating || !layoutReady" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-slate-400">
           <ArrowDownTrayIcon class="h-4 w-4" />
           {{ isGenerating ? 'Generando...' : 'Generar PDF' }}
@@ -5215,19 +5954,20 @@ const onMouseUp = () => {
           </g>
         </svg>
         
-        <div 
-          v-for="label in labels" 
-          :key="'badge-' + label.pointData.id"
+        <div
+          v-for="label in labels"
+          :key="'badge-' + label.pointData.id + '-' + dataVersion"
+          v-show="layoutReady"
           @mousedown.prevent="onMouseDown(label, $event)"
           class="z-20 absolute"
-          :style="{ 
+          :style="{
             left: `${label.position.x - (label.size.width / 2)}px`,
             top: `${label.position.y - (label.size.height / 2)}px`,
             width: `${label.size.width}px`,
             height: `${label.size.height}px`,
           }"
         >
-           <PlanoBadge :pointData="label.pointData" />
+            <PlanoBadge :pointData="label.pointData" :key="label.pointData.id + '-' + dataVersion" />
         </div>
       </div>
     </main>
@@ -5562,7 +6302,10 @@ const onFileSelected = async (event) => {
 
 
 const enterDrawingMode = () => {
-  if (!activeSalaId.value) { alert("Selecciona una sala para poder definir su área."); return; }
+  if (!activeSalaId.value) { 
+    alert("Selecciona una sala para poder definir su área."); 
+    return; 
+  }
   isDrawingMode.value = true;
   isPointEditingMode.value = false;
 };
@@ -5797,16 +6540,17 @@ const saveSalaColor = async (sala) => {
           </div>
           
           <div class="lg:col-span-3 relative">
-            <div v-if="instructionText" class="sticky top-4 left-1/2 -translate-x-1/2 max-w-[90%] bg-blue-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-lg z-20 pointer-events-none flex items-center gap-2">
+            <div v-if="instructionText" class="bg-blue-600 text-white text-sm font-semibold py-2 px-4 flex items-center gap-2 mb-4">
               <InformationCircleIcon class="h-5 w-5 flex-shrink-0" />
               <span>{{ instructionText }}</span>
             </div>
+            <!-- ======================= INICIO DE LA CORRECCIÓN ======================= -->
             <InteractiveMap
               class="h-full"
               :image-url="version.url_imagen_plano"
               :points="puntos"
               :salas="salas"
-              :is-read-only="!isPointEditingMode"
+              :is-read-only="!isPointEditingMode && !isDrawingMode"
               :is-placement-mode="isPointEditingMode"
               :is-area-drawing-mode="isDrawingMode"
               @add-point="handleMapClick"
@@ -5815,6 +6559,7 @@ const saveSalaColor = async (sala) => {
               @area-drawn="handleAreaDrawn"
               @drawing-cancelled="cancelAllModes"
             />
+            <!-- ======================= FIN DE LA CORRECCIÓN ======================= -->
           </div>
         </div>
       </div>
@@ -5846,8 +6591,6 @@ const saveSalaColor = async (sala) => {
     />
   </div>
 </template>
-
-
 --- FIN DEL ARCHIVO: src/views/CentroConfigView.vue ---
 
 --- INICIO DEL ARCHIVO: src/router/index.js ---
