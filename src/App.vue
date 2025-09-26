@@ -1,25 +1,31 @@
 <!-- src/App.vue -->
 <script setup>
-import { computed, onMounted, onUpdated, provide } from 'vue'; // Importamos 'provide'
+import { computed, onMounted, onUpdated, provide } from 'vue';
 import { useRoute } from 'vue-router';
 import DefaultLayout from './layouts/DefaultLayout.vue';
 import BlankLayout from './layouts/BlankLayout.vue';
-import Notification from './components/Notification.vue'; // Importamos el componente
-import ConfirmModal from './components/ConfirmModal.vue'; // Importamos el componente de confirmación
-import { useNotification } from './utils/notification'; // Importamos el servicio
+import Notification from './components/Notification.vue';
+import ConfirmModal from './components/ConfirmModal.vue';
+import { useNotification } from './utils/notification';
+import { useRegisterSW } from 'virtual:pwa-register/vue';
+import ReloadPWA from './components/ReloadPWA.vue';
 
-// --- LOGS DE DEBUG ---
+// --- LÓGICA DE ACTUALIZACIÓN DE PWA ---
+const { offlineReady, needRefresh, updateServiceWorker } = useRegisterSW();
+
+const handleUpdateServiceWorker = async () => {
+  await updateServiceWorker();
+};
+// --- FIN LÓGICA PWA ---
+
 onMounted(() => console.log('[App.vue] Componente montado en el DOM.'));
 onUpdated(() => console.log('[App.vue] Componente actualizado (cambio de layout o ruta).'));
 
-// --- SISTEMA DE NOTIFICACIONES ---
 const { notificationShow, notificationMessage, notificationType, confirmShow, confirmTitle, confirmMessage, showNotification, showConfirm, confirmYes, confirmNo } = useNotification();
-// Hacemos que las funciones estén disponibles para todos los componentes hijos
 provide('showNotification', showNotification);
 provide('showConfirm', showConfirm);
 provide('confirmYes', confirmYes);
 provide('confirmNo', confirmNo);
-// --- FIN DEL SISTEMA DE NOTIFICACIONES ---
 
 const route = useRoute();
 const layout = computed(() => {
@@ -30,10 +36,15 @@ const layout = computed(() => {
 </script>
 
 <template>
-  <!-- El layout se renderiza como siempre -->
+  <!-- El nuevo notificador de PWA vivirá por encima de todo -->
+  <ReloadPWA 
+    :offline-ready="offlineReady" 
+    :need-refresh="needRefresh" 
+    @update-service-worker="handleUpdateServiceWorker" 
+  />
+  
   <component :is="layout" />
   
-  <!-- El componente de notificación vive por encima de todo -->
   <Notification
     :show="notificationShow"
     :message="notificationMessage"

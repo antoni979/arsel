@@ -5,13 +5,15 @@ import { supabase } from '../supabase';
 import { useRouter } from 'vue-router';
 import SkeletonLoader from '../components/SkeletonLoader.vue';
 import GrupoVisitaEditable from '../components/GrupoVisitaEditable.vue';
-import { ArrowPathIcon, MagnifyingGlassIcon } from '@heroicons/vue/24/solid';
+import { generateGestionReport } from '../utils/pdf/pdf-module-gestion';
+import { ArrowPathIcon, MagnifyingGlassIcon, ArrowDownTrayIcon } from '@heroicons/vue/24/solid';
 
 const showNotification = inject('showNotification');
 const router = useRouter();
 
 const loading = ref(true);
 const refreshing = ref(false);
+const isGeneratingPdf = ref(false);
 const resumenData = ref([]);
 const searchTerm = ref('');
 
@@ -75,6 +77,19 @@ const handleSaveGrupo = async ({ inspeccionId, newValue }) => {
   }
 };
 
+const handleDownloadPdf = async () => {
+  isGeneratingPdf.value = true;
+  showNotification('Generando PDF, por favor espera...', 'info');
+  try {
+    // Usamos los datos filtrados para que el PDF coincida con lo que ve el usuario
+    await generateGestionReport(filteredData.value);
+  } catch (error) {
+    showNotification('Hubo un error al generar el PDF.', 'error');
+  } finally {
+    isGeneratingPdf.value = false;
+  }
+};
+
 onMounted(async () => {
   loading.value = true;
   resumenData.value = await fetchData();
@@ -87,6 +102,7 @@ onMounted(async () => {
   <div class="p-4 md:p-8">
     <div class="flex flex-col md:flex-row justify-between md:items-center mb-6 gap-4">
       <h1 class="text-3xl md:text-4xl font-bold text-slate-800">Panel de Gestión Anual</h1>
+      
       <div class="flex items-center gap-x-2 w-full md:w-auto">
         <div class="relative flex-grow">
           <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
@@ -99,11 +115,16 @@ onMounted(async () => {
             class="block w-full rounded-md border-slate-300 py-2 pl-10 text-sm shadow-sm focus:border-blue-500 focus:ring-blue-500"
           >
         </div>
-        <button @click="refreshView" :disabled="refreshing" class="flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 shadow-sm flex-shrink-0 disabled:bg-slate-400">
+        <button @click="refreshView" :disabled="refreshing || isGeneratingPdf" class="flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 shadow-sm flex-shrink-0 disabled:bg-slate-400">
           <ArrowPathIcon class="h-5 w-5" :class="{'animate-spin': refreshing}" />
           <span class="hidden sm:inline">Actualizar</span>
         </button>
+        <button @click="handleDownloadPdf" :disabled="refreshing || isGeneratingPdf" class="flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm flex-shrink-0 disabled:bg-slate-400">
+          <ArrowDownTrayIcon class="h-5 w-5" />
+          <span class="hidden sm:inline">Descargar</span>
+        </button>
       </div>
+
     </div>
 
     <div v-if="loading" class="space-y-2">
