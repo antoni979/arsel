@@ -17,61 +17,67 @@ const overlayRef = ref(null);
 const draggedPointId = ref(null);
 const drawingPoints = ref([]);
 const mousePosition = ref({ x: 0, y: 0 });
-const overlayWidth = ref(0);
-const overlayHeight = ref(0);
-const lastWidth = ref(0);
-const lastHeight = ref(0);
-const resizeObserver = ref(null);
-const updateTimeout = ref(null);
 const imageRect = ref({ left: 0, top: 0, width: 0, height: 0 });
+const resizeObserver = ref(null);
 
-watch(() => props.isAreaDrawingMode, (newVal) => {
-  // NUEVO LOG: ¿El componente hijo recibe el cambio de la prop?
-  console.log('[InteractiveMap] La prop isAreaDrawingMode ha cambiado a:', newVal);
-  if (!newVal) {
-    drawingPoints.value = [];
-  }
-});
-
-watch(() => props.salas, () => {
-  nextTick(() => updateDimensions());
-}, { immediate: true });
-
-watch(() => props.imageUrl, () => {
-  nextTick(() => updateDimensions());
-}, { immediate: true });
+// ===== INICIO DE LA CORRECCIÓN: Lógica de carga de imagen robusta =====
+const imageLoaded = ref(false);
 
 const updateDimensions = () => {
-  if (updateTimeout.value) clearTimeout(updateTimeout.value);
-  updateTimeout.value = setTimeout(() => {
-    if (overlayRef.value) {
-      const newWidth = overlayRef.value.clientWidth;
-      const newHeight = overlayRef.value.clientHeight;
-      if (newWidth !== lastWidth.value || newHeight !== lastHeight.value) {
-        overlayWidth.value = newWidth;
-        overlayHeight.value = newHeight;
-        lastWidth.value = newWidth;
-        lastHeight.value = newHeight;
-        console.log('Overlay dimensions updated:', newWidth, newHeight);
+  if (!overlayRef.value || !imageLoaded.value) {
+    return;
+  }
+  const containerEl = overlayRef.value;
+  // Buscamos la imagen por su clase dentro del componente
+  const imgEl = containerEl.querySelector('img.plano-image');
 
-        // Compute image rect
-        const img = overlayRef.value.previousElementSibling;
-        if (img && img.naturalWidth && img.naturalHeight) {
-          const scale = Math.min(overlayWidth.value / img.naturalWidth, overlayHeight.value / img.naturalHeight);
-          const dw = img.naturalWidth * scale;
-          const dh = img.naturalHeight * scale;
-          imageRect.value = {
-            left: (overlayWidth.value - dw) / 2,
-            top: (overlayHeight.value - dh) / 2,
-            width: dw,
-            height: dh
-          };
-          console.log('Image rect updated:', imageRect.value);
-        }
-      }
-    }
-  }, 100); // Debounce 100ms
+  if (!imgEl || !imgEl.naturalWidth) return;
+
+  const containerRatio = containerEl.clientWidth / containerEl.clientHeight;
+  const imageRatio = imgEl.naturalWidth / imgEl.naturalHeight;
+  let imgW, imgH, imgX, imgY;
+
+  if (imageRatio > containerRatio) {
+    imgW = containerEl.clientWidth;
+    imgH = imgW / imageRatio;
+    imgX = 0;
+    imgY = (containerEl.clientHeight - imgH) / 2;
+  } else {
+    imgH = containerEl.clientHeight;
+    imgW = imgH * imageRatio;
+    imgY = 0;
+    imgX = (containerEl.clientWidth - imgW) / 2;
+  }
+
+  imageRect.value = {
+    left: imgX,
+    top: imgY,
+    width: imgW,
+    height: imgH
+  };
+  console.log('Image dimensions updated:', imageRect.value);
 };
+
+// Esta función se llamará cuando la imagen termine de cargar
+const onImageLoad = () => {
+  imageLoaded.value = true;
+  // Usamos nextTick para asegurar que el DOM está actualizado antes de medir
+  nextTick(() => {
+    updateDimensions();
+  });
+};
+
+const handleImageError = () => {
+  console.error('Error loading image from Supabase:', props.imageUrl);
+  emit('image-error');
+};
+
+// Si la URL de la imagen cambia, reseteamos el estado de carga
+watch(() => props.imageUrl, () => {
+  imageLoaded.value = false;
+});
+// ===== FIN DE LA CORRECCIÓN =====
+
 
 const toSvgPoints = (pointsArray) => {
   if (!pointsArray || pointsArray.length === 0 || !imageRect.value.width || !imageRect.value.height) return "";
@@ -79,11 +85,7 @@ const toSvgPoints = (pointsArray) => {
 };
 
 const handleMapClick = (event) => {
-  // NUEVO LOG: ¿Se detecta el clic en el mapa?
-  console.log('[InteractiveMap] Se ha detectado un clic en el mapa.');
-
   if (props.isReadOnly || !overlayRef.value || !imageRect.value.width || !imageRect.value.height) {
-    console.log('[InteractiveMap] Clic ignorado. Razón:', { isReadOnly: props.isReadOnly, hasOverlay: !!overlayRef.value, hasImageRect: !!imageRect.value.width });
     return;
   }
 
@@ -91,13 +93,7 @@ const handleMapClick = (event) => {
   const x = (event.clientX - overlayRect.left - imageRect.value.left) / imageRect.value.width;
   const y = (event.clientY - overlayRect.top - imageRect.value.top) / imageRect.value.height;
 
-  // NUEVO LOG: ¿Cuál es el estado del modo de dibujo DENTRO del manejador de clics?
-  console.log('[InteractiveMap] Dentro de handleMapClick, isAreaDrawingMode es:', props.isAreaDrawingMode);
-
   if (props.isAreaDrawingMode) {
-    // NUEVO LOG: ¡Hemos entrado en la lógica de dibujo!
-    console.log('[InteractiveMap] ¡MODO DIBUJO ACTIVO! Añadiendo punto en', { x, y });
-
     if (drawingPoints.value.length > 2) {
       const firstPoint = drawingPoints.value[0];
       const distance = Math.sqrt(Math.pow((x - firstPoint.x), 2) + Math.pow((y - firstPoint.y), 2));
@@ -108,9 +104,6 @@ const handleMapClick = (event) => {
       }
     }
     drawingPoints.value.push({ x, y });
-    // NUEVO LOG: ¿Cómo queda el array de puntos?
-    console.log('[InteractiveMap] Array de puntos de dibujo actualizado:', drawingPoints.value);
-
   } else if (props.isPlacementMode) {
     emit('add-point', { x, y });
   }
@@ -131,7 +124,6 @@ const handleKeydown = (e) => {
 };
 
 onMounted(() => {
-  updateDimensions();
   window.addEventListener('keydown', handleKeydown);
   if (overlayRef.value) {
     resizeObserver.value = new ResizeObserver(() => {
@@ -142,11 +134,8 @@ onMounted(() => {
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown);
-  if (resizeObserver.value) {
-    resizeObserver.value.disconnect();
-  }
-  if (updateTimeout.value) {
-    clearTimeout(updateTimeout.value);
+  if (resizeObserver.value && overlayRef.value) {
+    resizeObserver.value.unobserve(overlayRef.value);
   }
 });
 
@@ -188,12 +177,6 @@ const handlePointClick = (point) => {
   if (props.isPlacementMode || props.isAreaDrawingMode) return;
   emit('point-click', point);
 };
-
-const handleImageError = () => {
-  console.error('Error loading image from Supabase:', props.imageUrl);
-  // Emitir evento para manejar en el padre si es necesario
-  emit('image-error');
-};
 </script>
 
 <template>
@@ -203,7 +186,7 @@ const handleImageError = () => {
     @mouseup="stopDrag"
     @mouseleave="stopDrag"
   >
-    <img :src="imageUrl" @load="updateDimensions" @error="handleImageError" class="absolute inset-0 w-full h-full object-contain pointer-events-none" alt="Plano del centro">
+    <!-- ===== CORRECCIÓN: El overlay ahora contiene la imagen para controlar su carga ===== -->
     <div
       ref="overlayRef"
       class="absolute inset-0"
@@ -212,6 +195,16 @@ const handleImageError = () => {
       @click="handleMapClick"
       @mousemove="handleMouseMove"
     >
+      <img 
+        :src="imageUrl" 
+        @load="onImageLoad" 
+        @error="handleImageError" 
+        class="plano-image w-full h-full object-contain pointer-events-none" 
+        alt="Plano del centro"
+      >
+      
+      <!-- Mostramos el contenido SVG y los puntos solo cuando la imagen se ha cargado -->
+      <template v-if="imageLoaded">
         <svg class="absolute top-0 left-0 w-full h-full pointer-events-none">
           <template v-for="sala in salas" :key="`sala-area-${sala.id}`">
             <polygon
@@ -270,6 +263,7 @@ const handleImageError = () => {
             title="Borrar punto"
           >X</button>
         </div>
+      </template>
     </div>
   </div>
 </template>
