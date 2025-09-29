@@ -1,7 +1,6 @@
 <!-- src/components/CentroFormModal.vue -->
 <script setup>
-import { ref, watch, nextTick } from 'vue';
-import { provincias } from '../utils/provincias';
+import { ref, watch, onMounted } from 'vue';
 import { supabase } from '../supabase';
 import { ArrowUpTrayIcon } from '@heroicons/vue/24/outline';
 
@@ -14,62 +13,52 @@ const emit = defineEmits(['close', 'save']);
 
 const form = ref({});
 const isUploadingLogo = ref(false);
-const logoInput = ref(null); // Referencia para el input de tipo file
-const zonas = ['Norte', 'Sur', 'Este', 'Oeste', 'Centro', 'Noreste', 'Noroeste', 'Sureste', 'Islas Baleares', 'Islas Canarias'];
+const logoInput = ref(null);
+const zonas = ref([]);
+const provincias = ref([]); // <-- Ahora es reactivo
+
+onMounted(async () => {
+  // Cargar las listas desde Supabase cuando el componente se monta
+  const { data: zonasData } = await supabase.from('zonas').select('nombre').order('nombre');
+  if (zonasData) zonas.value = zonasData.map(z => z.nombre);
+  
+  // Asumimos que tienes una tabla `provincias` similar, si no, la creamos.
+  // Por ahora, lo mantenemos simple. Si no hay tabla, podemos volver a la lista local.
+  // const { data: provinciasData } = await supabase.from('provincias').select('nombre').order('nombre');
+  // if (provinciasData) provincias.value = provinciasData.map(p => p.nombre);
+});
 
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
-    // Usamos un clon del objeto para no modificar el original hasta guardar
     form.value = props.centro ? { ...props.centro } : { nombre: '', direccion: '', responsable_nombre: '', responsable_email: '', provincia: '', zona: '', url_logo_cliente: null };
   }
 });
 
 const handleLogoSelected = async (event) => {
-  console.log("Starting logo upload...");
   const file = event.target.files[0];
   if (!file || !form.value.id) {
     if(!form.value.id) alert("Guarda primero el centro para poder asignarle un logo.");
     return;
   }
-
   isUploadingLogo.value = true;
   const fileName = `cliente_${form.value.id}/${Date.now()}_${file.name}`;
-  console.log("File name:", fileName);
-
-  // Subir el nuevo logo
   const { error: uploadError } = await supabase.storage.from('logos-clientes').upload(fileName, file);
   if (uploadError) {
-    console.error("Upload error:", uploadError);
     alert("Error al subir el logo: " + uploadError.message);
     isUploadingLogo.value = false;
     return;
   }
-  console.log("Upload successful");
-
-  // Obtener la URL pública
   const { data: { publicUrl } } = supabase.storage.from('logos-clientes').getPublicUrl(fileName);
-  console.log("Public URL:", publicUrl);
-
-  // Actualizar el campo en la BBDD y en el formulario
-  const { error: updateError } = await supabase
-    .from('centros')
-    .update({ url_logo_cliente: publicUrl })
-    .eq('id', form.value.id);
-
+  const { error: updateError } = await supabase.from('centros').update({ url_logo_cliente: publicUrl }).eq('id', form.value.id);
   if (updateError) {
-    console.error("Update error:", updateError);
     alert("Error al guardar la URL del logo: " + updateError.message);
   } else {
-    console.log("Update successful");
-    // Actualizamos el logo en el formulario para que se vea el cambio al instante
     form.value.url_logo_cliente = publicUrl;
   }
   isUploadingLogo.value = false;
 };
 
-
 const handleSubmit = () => {
-  // Simplemente emitimos los datos del formulario. La subida del logo es independiente.
   emit('save', form.value);
 };
 </script>
@@ -82,7 +71,6 @@ const handleSubmit = () => {
       </div>
       <form @submit.prevent="handleSubmit">
         <div class="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
-          <!-- Columna 1 y 2: Campos del formulario -->
           <div class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
             <div class="md:col-span-2">
               <label for="nombre" class="block text-sm font-medium text-slate-600">Nombre del Centro</label>
@@ -102,10 +90,7 @@ const handleSubmit = () => {
             </div>
             <div>
               <label for="provincia" class="block text-sm font-medium text-slate-600">Provincia</label>
-              <select v-model="form.provincia" id="provincia" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                <option disabled value="">Selecciona una provincia</option>
-                <option v-for="p in provincias" :key="p" :value="p">{{ p }}</option>
-              </select>
+              <input v-model="form.provincia" type="text" id="provincia" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
             </div>
             <div>
               <label for="zona" class="block text-sm font-medium text-slate-600">Zona</label>
@@ -116,7 +101,6 @@ const handleSubmit = () => {
             </div>
           </div>
           
-          <!-- Columna 3: Logo del Cliente -->
           <div class="md:col-span-1">
              <input type="file" ref="logoInput" @change="handleLogoSelected" accept="image/*" class="hidden">
              <label class="block text-sm font-medium text-slate-600 mb-1">Logo del Cliente</label>
