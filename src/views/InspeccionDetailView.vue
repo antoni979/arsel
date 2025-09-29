@@ -36,11 +36,21 @@ const canEditInspection = computed(() => {
   return inspeccion.value?.estado === 'en_progreso';
 });
 
-// ===== INICIO DE LA CORRECCIÓN: Lógica de carga de datos unificada =====
+// ===== INICIO DE LA CORRECCIÓN: Lógica de recarga inteligente =====
+const refreshInspectedPoints = async () => {
+  // Esta función solo recarga los puntos inspeccionados, evitando el parpadeo.
+  const { data, error } = await supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId);
+  if (error) {
+    showNotification('Error al refrescar los datos de los puntos.', 'error');
+  } else {
+    puntosInspeccionados.value = data || [];
+  }
+};
+// ===== FIN DE LA CORRECCIÓN =====
+
 const loadAllData = async () => {
   loading.value = true;
   
-  // 1. Obtener la inspección, su centro y su versión de plano
   const { data: inspectionData, error: inspectionError } = await supabase
     .from('inspecciones')
     .select('*, centros(*), versiones_plano(*)')
@@ -63,7 +73,6 @@ const loadAllData = async () => {
       return;
   }
   
-  // 2. Con la versión del plano, obtener las salas y los puntos maestros de ESA versión
   const [salasRes, puntosMaestrosRes, puntosInspeccionadosRes] = await Promise.all([
     supabase.from('salas').select('*').eq('version_id', version.value.id).order('nombre'),
     supabase.from('puntos_maestros').select('*').eq('version_id', version.value.id),
@@ -74,10 +83,8 @@ const loadAllData = async () => {
   puntosMaestros.value = puntosMaestrosRes.data || [];
   puntosInspeccionados.value = puntosInspeccionadosRes.data || [];
 
-  // 3. Inicializar puntos de inspección si es la primera vez que se abre
   await initializeInspectionPoints();
 
-  // 4. Solo al final de todo, indicamos que la carga ha terminado
   loading.value = false;
 };
 
@@ -101,7 +108,6 @@ const initializeInspectionPoints = async () => {
 };
 
 onMounted(loadAllData);
-// ===== FIN DE LA CORRECCIÓN =====
 
 const getSalaColor = (salaId) => salas.value.find(s => s.id === salaId)?.color || '#9CA3AF';
 
@@ -330,7 +336,6 @@ const finalizarInspeccion = async () => {
             .eq('id', inspeccionId);
         if (updateError) throw updateError;
 
-        // Clear the cache for the center history to ensure the new PDF URL is visible
         const CACHE_KEY = `inspections_${centro.value.id}`;
         localStorage.removeItem(CACHE_KEY);
 
@@ -349,18 +354,30 @@ const finalizarInspeccion = async () => {
 <template>
   <div class="h-full flex flex-col">
     <div v-if="loading" class="flex-1 flex flex-col lg:flex-row overflow-hidden">
-      <!-- Skeleton for Sidebar -->
-      <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 p-4 space-y-4">
-        <SkeletonLoader class="h-10 w-full" />
-        <SkeletonLoader class="h-10 w-full" />
-        <div class="space-y-2 pt-4">
-          <SkeletonLoader v-for="i in 5" :key="i" class="h-12 w-full" />
-        </div>
-      </aside>
-      <!-- Skeleton for Main Content -->
-      <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full overflow-auto p-4">
-        <SkeletonLoader class="h-full w-full" />
-      </main>
+      <!-- Skeleton for Header -->
+      <header class="flex-shrink-0 px-4 md:px-8 pt-6 pb-4 bg-slate-100/80 border-b border-slate-200 z-10">
+         <div class="flex flex-col md:flex-row justify-between items-start gap-4">
+            <div class="flex-1 space-y-2">
+               <SkeletonLoader class="h-8 w-3/4" />
+               <SkeletonLoader class="h-5 w-1/2" />
+            </div>
+            <div class="w-full md:w-auto">
+               <SkeletonLoader class="h-10 w-48" />
+            </div>
+         </div>
+      </header>
+      <!-- Skeleton for Body -->
+      <div class="flex-1 flex flex-col lg:flex-row overflow-hidden">
+         <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 p-4 space-y-4">
+            <SkeletonLoader class="h-10 w-full" />
+            <div class="space-y-2 pt-4">
+               <SkeletonLoader v-for="i in 5" :key="i" class="h-12 w-full" />
+            </div>
+         </aside>
+         <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full p-4">
+            <SkeletonLoader class="h-full w-full" />
+         </main>
+      </div>
     </div>
     
     <div v-else-if="inspeccion && centro && version" class="flex-1 flex flex-col min-h-0">
@@ -409,6 +426,7 @@ const finalizarInspeccion = async () => {
         
         <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full overflow-auto">
           <InteractiveMap
+            v-if="!loading && version?.url_imagen_plano"
             :key="inspeccionId"
             :image-url="version.url_imagen_plano"
             :points="puntosParaMostrar.filter(p => p.estado !== 'suprimido')"
@@ -433,7 +451,7 @@ const finalizarInspeccion = async () => {
       :punto="selectedPunto"
       :inspeccion-id="inspeccionId" 
       @close="isModalOpen = false" 
-      @save="loadAllData"
+      @save="refreshInspectedPoints"
       @update-nomenclatura="handleUpdatePointNomenclatura"
     />
   </div>
