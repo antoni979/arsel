@@ -2,7 +2,7 @@
 
 import autoTable from 'jspdf-autotable';
 import { checklistItems } from '../checklist';
-import { MARGIN, FONT_SIZES, DOC_WIDTH } from './pdf-helpers';
+import { FONT_SIZES, DOC_WIDTH } from './pdf-helpers';
 import { getArselLogoUrl } from './pdf-helpers';
 import { supabase } from '../../supabase';
 
@@ -14,6 +14,7 @@ function getHighestSeverity(incidencias) {
 }
 
 export async function buildChecklistAnnex(pdf, reportData) {
+    const LOCAL_MARGIN = 15;
     const { inspectionData, salasData, puntosMaestrosData, puntosInspeccionadosData, incidenciasData } = reportData;
 
     if (!incidenciasData || incidenciasData.length === 0) {
@@ -48,7 +49,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
             font: 'helvetica',
             textColor: 0
         },
-        margin: { left: MARGIN, right: MARGIN }
+        margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
     });
 
     for (const sala of salasData) {
@@ -63,8 +64,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
         for (const puntoMaestro of puntosDeLaSala) {
             pdf.addPage();
 
-            // ===== INICIO DE LA CORRECCIÓN DEFINITIVA DE ANCHOS =====
-            const ANCHO_TOTAL = DOC_WIDTH - (MARGIN * 2); // Ancho total disponible: 210 - 30 = 180
+            const ANCHO_TOTAL = DOC_WIDTH - (LOCAL_MARGIN * 2);
 
             // Tabla 1: Título Naranja
             autoTable(pdf, {
@@ -81,13 +81,13 @@ export async function buildChecklistAnnex(pdf, reportData) {
                     lineWidth: 0.1,
                     minCellHeight: 8
                 },
-                margin: { left: MARGIN, right: MARGIN }
+                margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
             });
 
             // Tabla 2: Información del Centro
             autoTable(pdf, {
                 body: [[
-                    `HIPERMERCADO: ${inspectionData.centros.nombre.toUpperCase()}`,
+                    `CENTRO: ${inspectionData.centros.nombre.toUpperCase()}`,
                     `Reserva: ${sala.nombre.toUpperCase()}`,
                     `Alineación: ${puntoMaestro.nomenclatura.split('-').pop()}`
                 ]],
@@ -103,24 +103,25 @@ export async function buildChecklistAnnex(pdf, reportData) {
                     minCellHeight: 8
                 },
                 columnStyles: {
-                    0: { cellWidth: 108, halign: 'left' }, // Ancho ajustado
-                    1: { cellWidth: 42, halign: 'center' }, // Ancho ajustado
-                    2: { cellWidth: 30, halign: 'center' } // Ancho ajustado
+                    0: { cellWidth: 108, halign: 'left' },
+                    1: { cellWidth: 42, halign: 'center' },
+                    2: { cellWidth: 30, halign: 'center' }
                 },
-                margin: { left: MARGIN, right: MARGIN }
+                margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
             });
             
             const puntoInspeccionado = puntosInspeccionadosData.find(pi => pi.punto_maestro_id === puntoMaestro.id);
             const puntoInspeccionadoId = puntoInspeccionado ? puntoInspeccionado.id : null;
             
+            // ===== CAMBIO REALIZADO: Ajustamos los tamaños de fuente en la cabecera =====
             const head = [
                 [
-                    { content: 'Parámetro de control', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-                    { content: 'S', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-                    { content: 'I', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } }, 
-                    { content: 'RIESGO', colSpan: 3, styles: { halign: 'center' } }
+                    { content: 'Parámetro de control', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontSize: 14 } }, // Tamaño más grande
+                    { content: 'S', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontSize: 8 } }, // Un poco más grande
+                    { content: 'I', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontSize: 8 } }, // Un poco más grande
+                    { content: 'RIESGO', colSpan: 3, styles: { halign: 'center', fontSize: 8 } } // Un poco más grande
                 ],
-                ['V', 'A', 'R']
+                [{ content: 'V', styles: { fontSize: 8 } }, { content: 'A', styles: { fontSize: 8 } }, { content: 'R', styles: { fontSize: 8 } }] // Un poco más grande
             ];
             
             const body = checklistItems.map(item => {
@@ -142,12 +143,20 @@ export async function buildChecklistAnnex(pdf, reportData) {
             autoTable(pdf, {
                 head, body, 
                 startY: pdf.lastAutoTable.finalY,
-                margin: { left: MARGIN, right: MARGIN }, 
+                margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }, 
                 theme: 'grid',
-                headStyles: { fillColor: [220, 220, 220], textColor: 0, fontStyle: 'bold', halign: 'center', fontSize: 7, lineColor: 0, lineWidth: 0.1, font: 'helvetica' },
+                headStyles: { 
+                    fillColor: [220, 220, 220], 
+                    textColor: 0, 
+                    fontStyle: 'bold', 
+                    halign: 'center', 
+                    lineColor: 0, 
+                    lineWidth: 0.1, 
+                    font: 'helvetica' 
+                },
                 styles: { fontSize: 8, cellPadding: 1.5, overflow: 'linebreak', lineColor: 0, lineWidth: 0.1, font: 'helvetica', textColor: 0 },
                 columnStyles: {
-                    0: { cellWidth: 136 }, // 180 - 7 - 7 - 10 - 10 - 10 = 136
+                    0: { cellWidth: 136 },
                     1: { cellWidth: 7, halign: 'center' }, 
                     2: { cellWidth: 7, halign: 'center' }, 
                     3: { cellWidth: 10, halign: 'center' }, 
@@ -163,7 +172,6 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 .map((obs) => {
                     let parts = [];
 
-                    // Add custom fields if they exist
                     if (obs.custom_fields) {
                         const customs = Object.entries(obs.custom_fields).map(([fieldId, value]) => {
                             const field = customFieldsMap.get(parseInt(fieldId));
@@ -172,18 +180,16 @@ export async function buildChecklistAnnex(pdf, reportData) {
                         parts.push(...customs);
                     }
 
-                    // Add observations if they exist
                     if (obs.observaciones && obs.observaciones.trim()) {
                         parts.push(`Observaciones: ${obs.observaciones.trim()}`);
                     }
 
-                    // Only create entry if there's content
                     if (parts.length > 0) {
                         return `Parámetro ${obs.item_checklist}: ${parts.join(' / ')}`;
                     }
                     return null;
                 })
-                .filter(obs => obs !== null) // Remove null entries
+                .filter(obs => obs !== null)
                 .join('\n');
             
             autoTable(pdf, {
@@ -191,7 +197,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 startY: finalY,
                 theme: 'grid',
                 styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 20, font: 'helvetica', textColor: 0 },
-                margin: { left: MARGIN, right: MARGIN }
+                margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
             });
 
             const fechaInspeccion = new Date(inspectionData.fecha_inspeccion).toLocaleDateString('es-ES');
@@ -204,7 +210,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 theme: 'grid',
                 styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 15, valign: 'top', font: 'helvetica', textColor: 0 },
                 columnStyles: { 1: { halign: 'left' } },
-                margin: { left: MARGIN, right: MARGIN }
+                margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
             });
 
             autoTable(pdf, {
@@ -212,7 +218,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 startY: pdf.lastAutoTable.finalY,
                 theme: 'plain',
                 styles: { fontSize: 7, halign: 'left', font: 'helvetica', textColor: 0 },
-                margin: { left: MARGIN, right: MARGIN }
+                margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
             });
         }
     }

@@ -76,13 +76,15 @@ export async function buildInitialPhotoAnnex(pdf, reportData) {
       pdf.setFont('helvetica', 'normal');
     }
 
-    // --- CORRECCIÓN DE OPTIMIZACIÓN: Usa el default optimizado (1024px) ---
+    const photoWidth = DOC_WIDTH - (MARGIN * 2);
+    const photoHeight = photoWidth * (100 / 180);
+
     const fotoAntesBase64 = await loadImageAsBase64(incidencia.url_foto_antes);
     if(fotoAntesBase64) {
-      pdf.addImage(fotoAntesBase64, 'JPEG', MARGIN, currentY, 180, 100, undefined, 'MEDIUM');
+      pdf.addImage(fotoAntesBase64, 'JPEG', MARGIN, currentY, photoWidth, photoHeight, undefined, 'MEDIUM');
     }
 
-    let obsBlockY = currentY + 100 + 10;
+    let obsBlockY = currentY + photoHeight + 10;
     pdf.setFontSize(FONT_SIZES.body);
     let obsText = '';
     if (incidencia.custom_fields) {
@@ -94,18 +96,20 @@ export async function buildInitialPhotoAnnex(pdf, reportData) {
     }
     const obsNotes = incidencia.observaciones || '';
     if (obsNotes) obsText = obsText ? `${obsText} / ${obsNotes}` : obsNotes;
+    
+    // ===== CAMBIO 1: Ajustamos cómo se dibuja el bloque de observaciones =====
     const splitObs = pdf.splitTextToSize(obsText, DOC_WIDTH - (MARGIN * 2) - 4);
     const requiredTextHeight = splitObs.length * 5;
     const minBoxHeight = 20;
     const headerHeight = 8;
-    const boxHeight = Math.max(minBoxHeight, requiredTextHeight + headerHeight);
+    const boxHeight = Math.max(minBoxHeight, requiredTextHeight + headerHeight + 2); // +2 for padding
 
     pdf.setDrawColor(0);
     pdf.rect(MARGIN, obsBlockY, DOC_WIDTH - (MARGIN * 2), boxHeight);
     pdf.setFont('helvetica', 'bold');
     pdf.text('Observaciones:', MARGIN + 2, obsBlockY + 5);
     pdf.setFont('helvetica', 'normal');
-    pdf.text(splitObs, MARGIN + 2, obsBlockY + 10);
+    pdf.text(splitObs, MARGIN + 2, obsBlockY + 12); // Aumentamos el espacio vertical
   }
 }
 
@@ -149,7 +153,7 @@ export async function buildRemediationPhotoAnnex(pdf, reportData) {
     ]);
     
     const photoBoxY = 65;
-    const photoBoxSize = 85;
+    const photoBoxSize = (DOC_WIDTH - (MARGIN * 2) - 10) / 2;
     const photoPadding = 2;
 
     pdf.text('ANTES', MARGIN + (photoBoxSize / 2), 60, { align: 'center' });
@@ -158,10 +162,11 @@ export async function buildRemediationPhotoAnnex(pdf, reportData) {
       pdf.addImage(fotoAntesBase64, 'JPEG', MARGIN + photoPadding, photoBoxY + photoPadding, photoBoxSize - (photoPadding * 2), photoBoxSize - (photoPadding * 2), undefined, 'MEDIUM');
     }
     
-    pdf.text('DESPUÉS', DOC_WIDTH - MARGIN - (photoBoxSize / 2), 60, { align: 'center' });
-    pdf.rect(DOC_WIDTH / 2 + 5, photoBoxY, photoBoxSize, photoBoxSize);
+    const secondPhotoX = MARGIN + photoBoxSize + 10;
+    pdf.text('DESPUÉS', secondPhotoX + (photoBoxSize / 2), 60, { align: 'center' });
+    pdf.rect(secondPhotoX, photoBoxY, photoBoxSize, photoBoxSize);
     if (fotoDespuesBase64) {
-      pdf.addImage(fotoDespuesBase64, 'JPEG', (DOC_WIDTH / 2 + 5) + photoPadding, photoBoxY + photoPadding, photoBoxSize - (photoPadding * 2), photoBoxSize - (photoPadding * 2), undefined, 'MEDIUM');
+      pdf.addImage(fotoDespuesBase64, 'JPEG', secondPhotoX + photoPadding, photoBoxY + photoPadding, photoBoxSize - (photoPadding * 2), photoBoxSize - (photoPadding * 2), undefined, 'MEDIUM');
     }
     
     let obsBlockY = 160;
@@ -176,17 +181,19 @@ export async function buildRemediationPhotoAnnex(pdf, reportData) {
     }
     const obsNotes = incidencia.observaciones || '';
     if (obsNotes) obsText = obsText ? `${obsText} / ${obsNotes}` : obsNotes;
+
+    // ===== CAMBIO 1: Ajustamos cómo se dibuja el bloque de observaciones =====
     const splitObs = pdf.splitTextToSize(obsText, DOC_WIDTH - (MARGIN * 2) - 4);
     const requiredTextHeight = splitObs.length * 5;
     const minBoxHeight = 20;
     const headerHeight = 8;
-    const boxHeight = Math.max(minBoxHeight, requiredTextHeight + headerHeight);
+    const boxHeight = Math.max(minBoxHeight, requiredTextHeight + headerHeight + 2); // +2 for padding
 
     pdf.setDrawColor(0);
     pdf.rect(MARGIN, obsBlockY, DOC_WIDTH - (MARGIN * 2), boxHeight);
     pdf.setFont('helvetica', 'bold');
     pdf.text('Observaciones:', MARGIN + 2, obsBlockY + 5);
     pdf.setFont('helvetica', 'normal');
-    pdf.text(splitObs, MARGIN + 2, obsBlockY + 10);
+    pdf.text(splitObs, MARGIN + 2, obsBlockY + 12); // Aumentamos el espacio vertical
   }
 }

@@ -4,6 +4,8 @@ import { buildTextPages } from './pdf-module-text';
 import { buildInitialPhotoAnnex, buildRemediationPhotoAnnex } from './pdf-module-photos';
 import { buildChecklistAnnex } from './pdf-module-checklist';
 import { buildSummaryAnnex } from './pdf-module-summary';
+// ===== CAMBIO 2: Importamos las helpers necesarias =====
+import { drawHeader, FONT_SIZES, DOC_WIDTH } from './pdf-helpers';
 
 function sanitizeFileName(name) {
   let sanitized = name.replace(/\s+/g, '_');
@@ -33,6 +35,16 @@ export async function generateTextReport(inspeccionId, reportType = 'initial', o
     
     console.log("Construyendo anexo de checklist...");
     await buildChecklistAnnex(pdf, reportData);
+
+    // ===== CAMBIO 2: Añadimos la página final del Anexo 03 =====
+    console.log("Añadiendo página de Anexo de Planos...");
+    pdf.addPage();
+    await drawHeader(pdf, reportData.inspectionData);
+    pdf.setFontSize(FONT_SIZES.annexTitle);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('ANEXO 03:', DOC_WIDTH / 2, 145, { align: 'center' });
+    pdf.text('PLANOS', DOC_WIDTH / 2, 155, { align: 'center' });
+    // =========================================================
     
     const { inspectionData } = reportData;
     const reportTypeName = reportType === 'initial' ? 'Informe_Inicial' : 'Informe_Cierre';

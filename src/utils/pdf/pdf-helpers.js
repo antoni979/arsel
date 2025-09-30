@@ -1,7 +1,7 @@
 // src/utils/pdf/pdf-helpers.js
 
 // --- CONSTANTES ---
-export const MARGIN = 15;
+export const MARGIN = 25;
 export const DOC_WIDTH = 210;
 export const DOC_WIDTH_LANDSCAPE = 297;
 export const FONT_SIZES = { annexTitle: 22, title: 16, h1: 14, h2: 12, body: 11, small: 8 };
@@ -36,7 +36,6 @@ export async function loadImageAsBase64(url, options = {}) {
     const blob = await response.blob();
 
     return new Promise((resolve, reject) => {
-      // --- INICIO DEL CAMBIO: Si no se debe optimizar, devolvemos el original ---
       if (!optimize) {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result);
@@ -44,7 +43,6 @@ export async function loadImageAsBase64(url, options = {}) {
         reader.readAsDataURL(blob);
         return;
       }
-      // --- FIN DEL CAMBIO ---
 
       const img = new Image();
       const objectUrl = URL.createObjectURL(blob);
@@ -98,48 +96,67 @@ export async function loadImageAsBase64(url, options = {}) {
 
 // --- CABECERA PRINCIPAL (REUTILIZABLE EN TODO EL PDF) ---
 export async function drawHeader(pdf, inspectionData, arselLogoUrl = null) {
-  const finalArselLogoUrl = arselLogoUrl || ARSEL_LOGO_URL;
+  const finalArselLogoUrl = arselLogoUrl || FALLBACK_LOGO_URL;
 
+  // ===== CAMBIO REALIZADO: Desactivamos la optimización para los logos =====
   const [clientLogoBase64, arselLogoBase64] = await Promise.all([
-    // Los logos siempre los optimizamos a un tamaño pequeño
-    loadImageAsBase64(inspectionData.centros.url_logo_cliente, { maxWidth: 300, maxHeight: 300 }),
-    loadImageAsBase64(finalArselLogoUrl, { maxWidth: 300, maxHeight: 300 })
+    loadImageAsBase64(inspectionData.centros.url_logo_cliente, { optimize: false }),
+    loadImageAsBase64(finalArselLogoUrl, { optimize: false })
   ]);
 
-  // (El resto de la función drawHeader no cambia)
   const pageSize = pdf.internal.pageSize;
   const pageWidth = pageSize.getWidth();
-
-  const headerY = MARGIN - 8;
-  const headerHeight = 20;
-  const contentWidth = pageWidth - (MARGIN * 2); 
-  const cell1Width = 40;
-  const cell3Width = 40;
+  
+  const HEADER_MARGIN = 15;
+  const headerY = 10;
+  const headerHeight = 22;
+  const contentWidth = pageWidth - (HEADER_MARGIN * 2); 
+  
+  const cell1Width = 38;
+  const cell3Width = 32;
   const cell2Width = contentWidth - cell1Width - cell3Width;
+  const textCenter = HEADER_MARGIN + cell1Width + (cell2Width / 2);
 
-  pdf.rect(MARGIN, headerY, contentWidth, headerHeight);
-  pdf.line(MARGIN, headerY + 8, pageWidth - MARGIN, headerY + 8);
-  pdf.line(MARGIN + cell1Width, headerY + 8, MARGIN + cell1Width, headerY + headerHeight);
-  pdf.line(MARGIN + cell1Width + cell2Width, headerY + 8, MARGIN + cell1Width + cell2Width, headerY + headerHeight);
+  // Dibujar el contorno y las líneas
+  pdf.rect(HEADER_MARGIN, headerY, contentWidth, headerHeight);
+  pdf.line(HEADER_MARGIN, headerY + 8, pageWidth - HEADER_MARGIN, headerY + 8);
+  pdf.line(HEADER_MARGIN + cell1Width, headerY + 8, HEADER_MARGIN + cell1Width, headerY + headerHeight);
+  pdf.line(HEADER_MARGIN + cell1Width + cell2Width, headerY + 8, HEADER_MARGIN + cell1Width + cell2Width, headerY + headerHeight);
 
+  // Título del Centro
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(FONT_SIZES.h2);
-  pdf.text(`HIPERMERCADO ${inspectionData.centros.nombre.toUpperCase()}`, pageWidth / 2, headerY + 5.5, { align: 'center' });
+  pdf.text(`${inspectionData.centros.nombre.toUpperCase()}`, pageWidth / 2, headerY + 5.5, { align: 'center' });
 
+  const logoY = headerY + 8 + ((headerHeight - 8) - 9) / 2;
+  
+  // Logo Cliente (Celda 1)
   if (clientLogoBase64) {
-    pdf.addImage(clientLogoBase64, 'JPEG', MARGIN + 2, headerY + 9.5, cell1Width - 4, 9, undefined, 'MEDIUM');
+    pdf.addImage(clientLogoBase64, 'JPEG', HEADER_MARGIN + 2, logoY, cell1Width - 4, 9, undefined, 'MEDIUM');
   }
 
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(FONT_SIZES.small);
-  const titleText = 'INFORME VISITA INSPECCIÓN DEL SISTEMA DE ALMACENAJE PARA CARGAS PALETIZADAS Y MANUALES';
-  pdf.text(titleText, MARGIN + cell1Width + (cell2Width / 2), headerY + 12.5, {
-    maxWidth: cell2Width - 4,
-    align: 'center',
-    lineHeightFactor: 1.2
-  });
+  // Subtítulo del Informe (Celda 2)
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(10); 
+
+  const titleLines = [
+    "INFORME VISITA INSPECCIÓN DEL SISTEMA DE",
+    "ALMACENAJE PARA CARGAS PALETIZADAS Y MANUALES"
+  ];
   
+  const cellBottomY = headerY + headerHeight;
+  const cellTopY = headerY + 8;
+  const cellMiddleY = cellTopY + (cellBottomY - cellTopY) / 2;
+  
+  const lineSpacing = 4.5; 
+  
+  const startY = cellMiddleY - (lineSpacing / 2);
+
+  pdf.text(titleLines[0], textCenter, startY, { align: 'center', baseline: 'middle' });
+  pdf.text(titleLines[1], textCenter, startY + lineSpacing, { align: 'center', baseline: 'middle' });
+  
+  // Logo Arsel (Celda 3)
   if (arselLogoBase64) {
-    pdf.addImage(arselLogoBase64, 'JPEG', MARGIN + cell1Width + cell2Width + 2, headerY + 9.5, cell3Width - 4, 9, undefined, 'MEDIUM');
+    pdf.addImage(arselLogoBase64, 'JPEG', HEADER_MARGIN + cell1Width + cell2Width + 2, logoY, cell3Width - 4, 9, undefined, 'MEDIUM');
   }
 }

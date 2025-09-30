@@ -98,20 +98,20 @@ export async function buildTextPages(pdf, reportData) {
   let currentY = TOP_MARGIN;
   
   pdf.setFont('helvetica', 'bold');
-  const titulo = `INFORME VISITA INSPECCIÓN DEL SISTEMA DE ALMACENAJE PARA CARGAS PALETIZADAS Y MANUALES DEL Hipermercado ${inspectionData.centros.nombre.toUpperCase()}`;
-  pdf.setFontSize(FONT_SIZES.h2);
+  const titulo = `INFORME VISITA INSPECCIÓN DEL SISTEMA DE ALMACENAJE PARA CARGAS PALETIZADAS Y MANUALES DEL CENTRO ${inspectionData.centros.nombre.toUpperCase()}`;
+  pdf.setFontSize(FONT_SIZES.title);
   const tituloLines = pdf.splitTextToSize(titulo, CONTENT_WIDTH);
   pdf.text(tituloLines, DOC_WIDTH / 2, currentY, { align: 'center' });
-  currentY += (tituloLines.length * 7) + 15;
+  currentY += (tituloLines.length * 9) + 15;
 
-  pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'bold'); 
+  pdf.setFontSize(FONT_SIZES.h1).setFont('helvetica', 'bold'); 
   pdf.text('1. OBJETO', MARGIN, currentY); 
   currentY += 8; 
   pdf.setFontSize(FONT_SIZES.body).setFont('helvetica', 'normal'); 
   pdf.text(`Con motivo de la visita programada para la inspección del sistema de almacenaje para cargas paletizadas y manuales del ${inspectionData.centros.nombre}, se redacta el presente informe que recoge de forma somera el resultado de la visita.`, MARGIN, currentY, { maxWidth: CONTENT_WIDTH, align: 'justify', lineHeightFactor: 1.5 }); 
-  currentY += 25;
+  currentY += 40;
 
-  pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'bold'); 
+  pdf.setFontSize(FONT_SIZES.h1).setFont('helvetica', 'bold'); 
   pdf.text('2. ANTECEDENTES', MARGIN, currentY); 
   currentY += 8; 
   pdf.setFontSize(FONT_SIZES.body).setFont('helvetica', 'normal'); 
@@ -148,7 +148,7 @@ export async function buildTextPages(pdf, reportData) {
     currentY += contentHeight;
   };
 
-  pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'bold'); 
+  pdf.setFontSize(FONT_SIZES.h1).setFont('helvetica', 'bold'); 
   pdf.text('3. RESULTADO DE LA VISITA', MARGIN, currentY); 
   currentY += 8; 
   pdf.setFontSize(FONT_SIZES.body).setFont('helvetica', 'normal'); 
@@ -158,23 +158,23 @@ export async function buildTextPages(pdf, reportData) {
   if (textoVerdeAmbar) {
     const introText = 'Se han detectado anomalías de riesgo verde y/o ámbar, tal y como se refleja en los listados de inspección elaborados durante la visita en:';
     pdf.text(introText, MARGIN, currentY, { maxWidth: CONTENT_WIDTH, align: 'justify', lineHeightFactor: 1.5 });
-    // ===== INICIO DE LA CORRECCIÓN: Calculamos el alto del texto anterior para añadir espacio =====
     const introTextHeight = pdf.splitTextToSize(introText, CONTENT_WIDTH).length * 5 * 1.5;
     currentY += introTextHeight;
-    // ===== FIN DE LA CORRECCIÓN =====
   }
 
   if (textoVerdeAmbar) {
-    pdf.setFont('helvetica', 'bold').setFontSize(FONT_SIZES.body).text(textoVerdeAmbar, MARGIN, currentY, { lineHeightFactor: 1.5 });
+    pdf.setFont('helvetica', 'bold').setFontSize(FONT_SIZES.body);
+    pdf.text(textoVerdeAmbar, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
     currentY += (textoVerdeAmbar.split('\n').length * 5) + 5;
   }
   
   pdf.setFont('helvetica', 'normal').setFontSize(FONT_SIZES.body);
   
   const textoPostVerdeAmbar = 'Estas anomalías, si bien no comprometen de forma inmediata la estabilidad ni seguridad del sistema, deben subsanarse lo antes posible para evitar que puedan derivar en un riesgo mayor. (Se adjuntan listados de chequeo y reportaje fotográfico de la visita).';
-  await checkPageBreak((pdf.splitTextToSize(textoPostVerdeAmbar, CONTENT_WIDTH).length * 5 * 1.5) + 15);
+  await checkPageBreak((pdf.splitTextToSize(textoPostVerdeAmbar, CONTENT_WIDTH).length * 5 * 1.5) + 5); // Reducimos el espacio extra
   pdf.text(textoPostVerdeAmbar, MARGIN, currentY, { maxWidth: CONTENT_WIDTH, align: 'justify', lineHeightFactor: 1.5 });
-  currentY += (pdf.splitTextToSize(textoPostVerdeAmbar, CONTENT_WIDTH).length * 5 * 1.5) + 15;
+  // ===== CAMBIO 1: Reducimos el espacio después de este párrafo =====
+  currentY += (pdf.splitTextToSize(textoPostVerdeAmbar, CONTENT_WIDTH).length * 5 * 1.5) + 5;
 
   if(textoRojo) {
     const textoPreRojo = 'Puntualmente, se han detectado anomalías de riesgo rojo en:';
@@ -182,7 +182,7 @@ export async function buildTextPages(pdf, reportData) {
     pdf.text(textoPreRojo, MARGIN, currentY, { align: 'justify' }); 
     currentY += 8;
     pdf.setFont('helvetica', 'bold');
-    pdf.text(textoRojo, MARGIN, currentY, { lineHeightFactor: 1.5 });
+    pdf.text(textoRojo, MARGIN + 5, currentY, { lineHeightFactor: 1.5 });
     currentY += (textoRojo.split('\n').length * 5) + 5;
     
     pdf.setFont('helvetica', 'normal');
@@ -192,7 +192,8 @@ export async function buildTextPages(pdf, reportData) {
     currentY += (pdf.splitTextToSize(textoRiesgoRojo, CONTENT_WIDTH).length * 5 * 1.5) + 15;
   }
 
-  await addSection('Alineaciones sin placa de características o con placa no válida (por aumento de módulos/niveles):', lineasConPlacaInvalida);
+  // ===== CAMBIO 2 y 3: Cambiamos "placa" por "ficha" y eliminamos el paréntesis =====
+  await addSection('Alineaciones sin ficha de características o con ficha no válida:', lineasConPlacaInvalida);
   await addSection('Alineaciones con módulos DISMINUIDOS desde la inspección anterior:', lineasDisminuidas);
   await addSection('Alineaciones con módulos AUMENTADOS desde la inspección anterior:', lineasAumentadas);
   await addSection('Alineaciones desmontadas desde la inspección anterior:', lineasSuprimidas);
@@ -203,13 +204,13 @@ export async function buildTextPages(pdf, reportData) {
   pdf.text('Para cerrar el proceso de inspección completo, el centro subsanará las deficiencias de menor grado detectadas en los próximos días, comunicando la resolución de las mismas mediante correo electrónico a ARSEL Ingeniería y al Técnico de Prevención Regional.', MARGIN, currentY, { maxWidth: CONTENT_WIDTH, align: 'justify', lineHeightFactor: 1.5 }); 
   currentY += 40;
   pdf.text('Informe realizado por:', MARGIN, currentY);
-  currentY += 15;
+  currentY += 8;
   const signatureLogoUrl = await getArselLogoUrl('signature_logo');
   const finalLogoUrl = signatureLogoUrl || arselLogoUrl;
   const arselLogoBase64 = await loadImageAsBase64(finalLogoUrl);
   if (arselLogoBase64) {
-      pdf.addImage(arselLogoBase64, 'PNG', MARGIN, currentY, 35, 15, undefined, 'MEDIUM');
-      currentY += 18;
+      pdf.addImage(arselLogoBase64, 'PNG', MARGIN, currentY, 45, 20, undefined, 'MEDIUM');
+      currentY += 23;
   }
   pdf.setFont('helvetica', 'bold').text('ARSEL INGENIERIA', MARGIN, currentY);
   currentY += 5;
