@@ -2,12 +2,10 @@
 
 import { MARGIN } from './pdf-helpers';
 
-// ===== INICIO DE LA CORRECCIÓN: La función ahora recibe el tamaño en mm =====
 function drawInfoBadge(pdf, position, pointData, badgeSizeMM) {
     const { width: BADGE_WIDTH_MM, height: BADGE_HEIGHT_MM } = badgeSizeMM;
 
-    // Los tamaños de fuente se ajustan proporcionalmente al tamaño de la tarjeta
-    const FONT_SIZE_HEADER = BADGE_HEIGHT_MM * 0.42;
+    const FONT_SIZE_HEADER = BADGE_HEIGHT_MM * 0.70;
     const FONT_SIZE_STATE = BADGE_HEIGHT_MM * 0.38;
     const FONT_SIZE_SEMAPHORE = BADGE_HEIGHT_MM * 0.45;
 
@@ -20,7 +18,6 @@ function drawInfoBadge(pdf, position, pointData, badgeSizeMM) {
     const startX = position.x - BADGE_WIDTH_MM / 2;
     let currentY = position.y - BADGE_HEIGHT_MM / 2;
 
-    // Solid white background fill
     pdf.setFillColor(255, 255, 255);
     pdf.roundedRect(startX, currentY, BADGE_WIDTH_MM, BADGE_HEIGHT_MM, 1, 1, 'F');
 
@@ -37,7 +34,7 @@ function drawInfoBadge(pdf, position, pointData, badgeSizeMM) {
         pdf.text(stateText, position.x, headerY + BADGE_HEIGHT_MM * 0.2, { align: 'center' });
     }
     
-    currentY += BADGE_HEIGHT_MM * 0.5; // Línea a la mitad de la altura
+    currentY += BADGE_HEIGHT_MM * 0.5;
     pdf.setDrawColor(220, 220, 220);
     pdf.line(startX + 1, currentY, startX + BADGE_WIDTH_MM - 1, currentY);
     currentY += 0.5;
@@ -61,7 +58,6 @@ function drawInfoBadge(pdf, position, pointData, badgeSizeMM) {
         pdf.text(String(item.count), circleX, circleY, { align: 'center', baseline: 'middle' });
     });
 }
-// ===== FIN DE LA CORRECCIÓN =====
 
 function drawLeaderLine(pdf, from, to) {
     pdf.setDrawColor(150, 150, 150);
@@ -69,7 +65,7 @@ function drawLeaderLine(pdf, from, to) {
     pdf.line(from.x, from.y, to.x, to.y);
 }
 
-export async function buildSummaryAnnex(pdf, reportData, finalLabels, previewDimensions) {
+export async function buildSummaryAnnex(pdf, reportData, finalLabels, originalDimensions) {
     const { planoBase64 } = reportData;
 
     const PAGE_WIDTH_MM = pdf.internal.pageSize.getWidth();
@@ -77,39 +73,33 @@ export async function buildSummaryAnnex(pdf, reportData, finalLabels, previewDim
     
     const pageBounds = { x: MARGIN, y: MARGIN, width: PAGE_WIDTH_MM - MARGIN * 2, height: PAGE_HEIGHT_MM - MARGIN * 2 };
 
-    const imgProps = pdf.getImageProperties(planoBase64);
     const pageAspectRatio = pageBounds.width / pageBounds.height;
-    const imageAspectRatio = imgProps.width / imgProps.height;
+    const imageAspectRatio = originalDimensions.width / originalDimensions.height;
 
-    let imgWidth, imgHeight, planoStartX, planoStartY;
+    let imgWidthMM, imgHeightMM, planoStartX, planoStartY;
     if (imageAspectRatio > pageAspectRatio) {
-        imgWidth = pageBounds.width;
-        imgHeight = imgWidth / imageAspectRatio;
+        imgWidthMM = pageBounds.width;
+        imgHeightMM = imgWidthMM / imageAspectRatio;
         planoStartX = pageBounds.x;
-        planoStartY = pageBounds.y + (pageBounds.height - imgHeight) / 2;
+        planoStartY = pageBounds.y + (pageBounds.height - imgHeightMM) / 2;
     } else {
-        imgHeight = pageBounds.height;
-        imgWidth = imgHeight * imageAspectRatio;
+        imgHeightMM = pageBounds.height;
+        imgWidthMM = imgHeightMM * imageAspectRatio;
         planoStartY = pageBounds.y;
-        planoStartX = pageBounds.x + (pageBounds.width - imgWidth) / 2;
+        planoStartX = pageBounds.x + (pageBounds.width - imgWidthMM) / 2;
     }
 
-    pdf.addImage(planoBase64, 'JPEG', planoStartX, planoStartY, imgWidth, imgHeight, undefined, 'FAST');
+    pdf.addImage(planoBase64, 'JPEG', planoStartX, planoStartY, imgWidthMM, imgHeightMM, undefined, 'FAST');
     
-    // ===== INICIO DE LA CORRECCIÓN: Usamos un único factor de escala =====
-    // Usamos el del ancho para mantener la proporción de los elementos cuadrados/circulares
-    const scale = imgWidth / previewDimensions.width;
-
     const labelsInMM = finalLabels.map(label => {
-        const pointPdfX = planoStartX + (label.pointData.absX * scale);
-        const pointPdfY = planoStartY + (label.pointData.absY * scale);
-        const labelPdfX = planoStartX + (label.position.x * scale);
-        const labelPdfY = planoStartY + (label.position.y * scale);
+        const pointPdfX = planoStartX + (label.pointData.relativeX * imgWidthMM);
+        const pointPdfY = planoStartY + (label.pointData.relativeY * imgHeightMM);
+        const labelPdfX = planoStartX + (label.position.x * imgWidthMM);
+        const labelPdfY = planoStartY + (label.position.y * imgHeightMM);
         
-        // Convertimos el tamaño de la tarjeta de píxeles a milímetros
         const badgeSizeMM = {
-            width: label.size.width * scale,
-            height: label.size.height * scale
+            width: label.size.width * imgWidthMM,
+            height: label.size.height * imgHeightMM
         };
 
         return {
@@ -119,7 +109,6 @@ export async function buildSummaryAnnex(pdf, reportData, finalLabels, previewDim
             badgeSizeMM: badgeSizeMM
         };
     });
-    // ===== FIN DE LA CORRECCIÓN =====
 
     labelsInMM.forEach(label => {
         drawLeaderLine(pdf, label.pointPosition, label.labelPosition);

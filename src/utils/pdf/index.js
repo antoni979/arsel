@@ -1,5 +1,3 @@
-// src/utils/pdf/index.js
-
 import jsPDF from 'jspdf';
 import { fetchReportData } from './pdf-data';
 import { buildTextPages } from './pdf-module-text';
@@ -15,8 +13,6 @@ function sanitizeFileName(name) {
 }
 
 export async function generateTextReport(inspeccionId, reportType = 'initial', outputType = 'download') {
-    // Esta función no genera el plano, por lo que puede seguir en A4 si se desea.
-    // La mantenemos en A4 ya que es un formato estándar para informes de texto.
   try {
     console.log(`Iniciando generación de Informe de Texto (output: ${outputType})...`);
     const reportData = await fetchReportData(inspeccionId, { optimizePlan: true }); 
@@ -61,7 +57,7 @@ export async function generateTextReport(inspeccionId, reportType = 'initial', o
 }
 
 
-export async function generatePlanPdf(inspeccionId, finalLabels, previewDimensions) {
+export async function generatePlanPdf(inspeccionId, finalLabels, originalDimensions) {
   try {
     console.log("Iniciando generación de PDF del Plano en formato A3...");
     const reportData = await fetchReportData(inspeccionId, { optimizePlan: false }); 
@@ -70,12 +66,10 @@ export async function generatePlanPdf(inspeccionId, finalLabels, previewDimensio
         throw new Error("No se pudo cargar la imagen del plano para esta inspección.");
     }
 
-    // ===== INICIO DE LA CORRECCIÓN: Cambiamos 'a4' por 'a3' =====
     const pdf = new jsPDF('l', 'mm', 'a3');
-    // ===== FIN DE LA CORRECCIÓN =====
     
     console.log("Construyendo anexo de resumen visual con posiciones ajustadas...");
-    await buildSummaryAnnex(pdf, reportData, finalLabels, previewDimensions);
+    await buildSummaryAnnex(pdf, reportData, finalLabels, originalDimensions);
     
     const { inspectionData } = reportData;
     

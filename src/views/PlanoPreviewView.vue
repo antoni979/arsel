@@ -17,7 +17,6 @@ const layoutReady = ref(false);
 const errorState = ref(null);
 const reportData = ref(null);
 const labels = ref([]);
-const dataVersion = ref(0); // Force reactivity updates
 const planoContainer = ref(null);
 const mapDimensions = ref({ x: 0, y: 0, width: 1, height: 1 });
 const isGenerating = ref(false);
@@ -25,8 +24,8 @@ const isGenerating = ref(false);
 const draggedLabel = ref(null);
 const dragOffset = ref({ x: 0, y: 0 });
 
-// ===== CORRECCIÓN: Usamos el mismo valor base que usaremos en el PDF =====
-const BADGE_WIDTH_PX = 55; 
+const BADGE_WIDTH_RATIO = 0.04; // El ancho del badge será el 4% del ancho del plano
+const BADGE_ASPECT_RATIO = 45 / 55; // Altura / Ancho
 
 const loadData = async () => {
   reportData.value = await fetchReportData(inspeccionId, { optimizePlan: false });
@@ -36,35 +35,12 @@ const loadData = async () => {
     loading.value = false;
     return;
   }
-
-  // Ensure incidence counts are available
-  if (!reportData.value.incidenceCounts) {
-    console.error('Incidence counts not available in reportData');
-    errorState.value = "Error: No se pudieron calcular los datos de incidencias.";
-    loading.value = false;
-    return;
-  }
-
-  console.log('Report data loaded successfully, incidence counts available:', reportData.value.incidenceCounts.size);
   loading.value = false;
   await nextTick();
   prepareLayout();
 };
 
-onMounted(async () => {
-  await loadData();
-});
-
-// Add method to refresh data (can be called externally if needed)
-const refreshData = async () => {
-  loading.value = true;
-  layoutReady.value = false;
-  dataVersion.value = 0; // Reset version on refresh
-  await loadData();
-};
-
-// Expose refresh method for external use
-defineExpose({ refreshData });
+onMounted(loadData);
 
 const prepareLayout = () => {
   const containerEl = planoContainer.value;
@@ -74,7 +50,7 @@ const prepareLayout = () => {
   }
   
   const img = new Image();
-  img.onload = async () => {
+  img.onload = () => {
     const containerRatio = containerEl.clientWidth / containerEl.clientHeight;
     const imageRatio = img.width / img.height;
     let imgW, imgH, imgX, imgY;
@@ -95,21 +71,19 @@ const prepareLayout = () => {
     const allPoints = reportData.value.puntosInspeccionadosData.map(punto => {
       const maestro = reportData.value.puntosMaestrosData.find(pm => pm.id === punto.punto_maestro_id);
       if (!maestro) return null;
-      const counts = reportData.value.incidenceCounts.get(punto.id) || { verde: 0, ambar: 0, rojo: 0 };
-      console.log(`PlanoPreviewView - Point ${punto.id} (${maestro.nomenclatura}): counts =`, counts);
       return {
         ...punto,
         nomenclatura: maestro.nomenclatura,
-        absX: mapDimensions.value.x + (punto.coordenada_x * mapDimensions.value.width),
-        absY: mapDimensions.value.y + (punto.coordenada_y * mapDimensions.value.height),
-        counts: counts
+        // Coordenadas relativas (0 a 1) respecto al plano
+        relativeX: punto.coordenada_x,
+        relativeY: punto.coordenada_y,
+        counts: reportData.value.incidenceCounts.get(punto.id) || { verde: 0, ambar: 0, rojo: 0 }
       };
     }).filter(Boolean);
     
-    labels.value = calculatePlanoLayout(allPoints, mapDimensions.value, BADGE_WIDTH_PX);
-    dataVersion.value++; // Force reactivity update
+    // El layout ahora trabaja con coordenadas relativas
+    labels.value = calculatePlanoLayout(allPoints, { width: img.width, height: img.height }, BADGE_WIDTH_RATIO);
     layoutReady.value = true;
-    console.log('PlanoPreviewView layout ready, dataVersion:', dataVersion.value);
   };
   
   img.onerror = () => { errorState.value = "No se pudo cargar la imagen del plano."; }
@@ -119,11 +93,16 @@ const prepareLayout = () => {
 const handleGeneratePdf = async () => {
     isGenerating.value = true;
     try {
-        const previewDimensions = {
-            width: planoContainer.value.clientWidth,
-            height: planoContainer.value.clientHeight
-        };
-        await generatePlanPdf(inspeccionId, labels.value, previewDimensions);
+      const img = new Image();
+      img.src = reportData.value.planoBase64;
+      await new Promise(resolve => img.onload = resolve);
+
+      const originalDimensions = {
+          width: img.width,
+          height: img.height
+      };
+      // Pasamos las etiquetas con coordenadas relativas y las dimensiones originales
+      await generatePlanPdf(inspeccionId, labels.value, originalDimensions);
     } catch (error) {
         console.error("Error al generar el PDF del plano:", error);
         alert("Hubo un error al generar el plano. Revisa la consola.");
@@ -135,9 +114,15 @@ const handleGeneratePdf = async () => {
 const onMouseDown = (label, event) => {
   draggedLabel.value = label;
   const containerRect = planoContainer.value.getBoundingClientRect();
+  const badgeWidthPx = mapDimensions.value.width * BADGE_WIDTH_RATIO;
+  const badgeHeightPx = badgeWidthPx * BADGE_ASPECT_RATIO;
+  
+  const currentLeftPx = label.position.x * mapDimensions.value.width + mapDimensions.value.x - (badgeWidthPx / 2);
+  const currentTopPx = label.position.y * mapDimensions.value.height + mapDimensions.value.y - (badgeHeightPx / 2);
+  
   dragOffset.value = {
-    x: event.clientX - containerRect.left - label.position.x,
-    y: event.clientY - containerRect.top - label.position.y
+    x: event.clientX - containerRect.left - currentLeftPx,
+    y: event.clientY - containerRect.top - currentTopPx
   };
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
@@ -146,10 +131,14 @@ const onMouseDown = (label, event) => {
 const onMouseMove = (event) => {
   if (!draggedLabel.value) return;
   const containerRect = planoContainer.value.getBoundingClientRect();
-  const newX = event.clientX - containerRect.left - dragOffset.value.x;
-  const newY = event.clientY - containerRect.top - dragOffset.value.y;
-  draggedLabel.value.position.x = newX;
-  draggedLabel.value.position.y = newY;
+  const badgeWidthPx = mapDimensions.value.width * BADGE_WIDTH_RATIO;
+  const badgeHeightPx = badgeWidthPx * BADGE_ASPECT_RATIO;
+
+  const newLeftPx = event.clientX - containerRect.left - dragOffset.value.x;
+  const newTopPx = event.clientY - containerRect.top - dragOffset.value.y;
+  
+  draggedLabel.value.position.x = (newLeftPx + (badgeWidthPx / 2) - mapDimensions.value.x) / mapDimensions.value.width;
+  draggedLabel.value.position.y = (newTopPx + (badgeHeightPx / 2) - mapDimensions.value.y) / mapDimensions.value.height;
 };
 
 const onMouseUp = () => {
@@ -170,7 +159,7 @@ const onMouseUp = () => {
         <button @click="router.go(-1)" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-white border border-slate-300 rounded-md hover:bg-slate-50">
           <ArrowUturnLeftIcon class="h-4 w-4" /> Volver
         </button>
-        <button @click="refreshData" :disabled="loading" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50">
+        <button @click="prepareLayout" :disabled="loading" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50">
           <ArrowPathIcon class="h-4 w-4" /> Actualizar
         </button>
         <button @click="handleGeneratePdf" :disabled="isGenerating || !layoutReady" class="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-slate-400">
@@ -198,10 +187,10 @@ const onMouseUp = () => {
         <svg class="absolute top-0 left-0 w-full h-full pointer-events-none z-10">
           <g v-for="label in labels" :key="'line-' + label.pointData.id">
             <line
-              :x1="label.pointData.absX"
-              :y1="label.pointData.absY"
-              :x2="label.position.x"
-              :y2="label.position.y"
+              :x1="label.pointData.relativeX * mapDimensions.width + mapDimensions.x"
+              :y1="label.pointData.relativeY * mapDimensions.height + mapDimensions.y"
+              :x2="label.position.x * mapDimensions.width + mapDimensions.x"
+              :y2="label.position.y * mapDimensions.height + mapDimensions.y"
               stroke="#94a3b8"
               stroke-width="1"
             />
@@ -210,18 +199,18 @@ const onMouseUp = () => {
         
         <div
           v-for="label in labels"
-          :key="'badge-' + label.pointData.id + '-' + dataVersion"
+          :key="'badge-' + label.pointData.id"
           v-show="layoutReady"
           @mousedown.prevent="onMouseDown(label, $event)"
           class="z-20 absolute"
           :style="{
-            left: `${label.position.x - (label.size.width / 2)}px`,
-            top: `${label.position.y - (label.size.height / 2)}px`,
-            width: `${label.size.width}px`,
-            height: `${label.size.height}px`,
+            width: `${mapDimensions.width * BADGE_WIDTH_RATIO}px`,
+            height: `${mapDimensions.width * BADGE_WIDTH_RATIO * BADGE_ASPECT_RATIO}px`,
+            left: `${label.position.x * mapDimensions.width + mapDimensions.x - (mapDimensions.width * BADGE_WIDTH_RATIO / 2)}px`,
+            top: `${label.position.y * mapDimensions.height + mapDimensions.y - (mapDimensions.width * BADGE_WIDTH_RATIO * BADGE_ASPECT_RATIO / 2)}px`,
           }"
         >
-            <PlanoBadge :pointData="label.pointData" :key="label.pointData.id + '-' + dataVersion" />
+            <PlanoBadge :pointData="label.pointData" />
         </div>
       </div>
     </main>

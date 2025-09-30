@@ -1,18 +1,25 @@
 // src/utils/plano-layout.js
 
-export function calculatePlanoLayout(allPointsData, mapDimensions, badgeWidth) {
+export function calculatePlanoLayout(allPointsData, mapDimensions, badgeWidthRatio) {
+    const BADGE_ASPECT_RATIO = 45 / 55;
+    const badgeSize = {
+        width: mapDimensions.width * badgeWidthRatio,
+        height: mapDimensions.width * badgeWidthRatio * BADGE_ASPECT_RATIO
+    };
+
     const placedObstacles = allPointsData.map(p => ({
-        x: p.absX - 5, y: p.absY - 5,
-        width: 10, height: 10
+        x: p.relativeX * mapDimensions.width, 
+        y: p.relativeY * mapDimensions.height,
+        width: 1, height: 1 // Los puntos son obstáculos pequeños
     }));
 
     const labelsToDraw = [];
-    const mapCenterX = mapDimensions.x + mapDimensions.width / 2;
-    const mapCenterY = mapDimensions.y + mapDimensions.height / 2;
+    const mapCenterX = mapDimensions.width / 2;
+    const mapCenterY = mapDimensions.height / 2;
     
     const sortedPoints = [...allPointsData].sort((a, b) => {
-        const distA = Math.sqrt(Math.pow(a.absX - mapCenterX, 2) + Math.pow(a.absY - mapCenterY, 2));
-        const distB = Math.sqrt(Math.pow(b.absX - mapCenterX, 2) + Math.pow(b.absY - mapCenterY, 2));
+        const distA = Math.sqrt(Math.pow((a.relativeX * mapDimensions.width) - mapCenterX, 2) + Math.pow((a.relativeY * mapDimensions.height) - mapCenterY, 2));
+        const distB = Math.sqrt(Math.pow((b.relativeX * mapDimensions.width) - mapCenterX, 2) + Math.pow((b.relativeY * mapDimensions.height) - mapCenterY, 2));
         return distA - distB;
     });
 
@@ -21,26 +28,36 @@ export function calculatePlanoLayout(allPointsData, mapDimensions, badgeWidth) {
             (point.counts.verde > 0 || point.counts.ambar > 0 || point.counts.rojo > 0);
         if (!needsBadge) continue;
 
-        // ===== INICIO DE LA CORRECCIÓN: Usamos un tamaño base consistente =====
-        let badgeHeight = 45; // Altura fija en píxeles
-        const badgeSize = { width: badgeWidth, height: badgeHeight };
-        // ===== FIN DE LA CORRECCIÓN =====
+        const pointAbs = {
+            x: point.relativeX * mapDimensions.width,
+            y: point.relativeY * mapDimensions.height
+        };
         
-        const finalPosition = findNonOverlappingPosition(point, badgeSize, placedObstacles, mapDimensions);
-        const badgeRect = { x: finalPosition.x - badgeSize.width / 2, y: finalPosition.y - badgeSize.height / 2, ...badgeSize };
-
+        const finalPositionAbs = findNonOverlappingPosition(pointAbs, badgeSize, placedObstacles, mapDimensions);
+        
+        const badgeRect = { 
+            x: finalPositionAbs.x - badgeSize.width / 2, 
+            y: finalPositionAbs.y - badgeSize.height / 2, 
+            ...badgeSize 
+        };
         placedObstacles.push(badgeRect);
         
         labelsToDraw.push({
             pointData: point,
-            position: { x: finalPosition.x, y: finalPosition.y },
-            size: badgeSize
+            position: { // Posición RELATIVA (0-1)
+                x: finalPositionAbs.x / mapDimensions.width,
+                y: finalPositionAbs.y / mapDimensions.height
+            },
+            size: { // Tamaño RELATIVO (0-1)
+                width: badgeSize.width / mapDimensions.width,
+                height: badgeSize.height / mapDimensions.height
+            }
         });
     }
     return labelsToDraw;
 }
 
-function findNonOverlappingPosition(point, badgeSize, obstacles, pageBounds) {
+function findNonOverlappingPosition(pointAbs, badgeSize, obstacles, pageBounds) {
     const isOverlapping = (rect1, rect2) => {
         const margin = 5; 
         return !(rect1.x > rect2.x + rect2.width + margin ||
@@ -49,10 +66,10 @@ function findNonOverlappingPosition(point, badgeSize, obstacles, pageBounds) {
             rect1.y + rect1.height + margin < rect2.y);
     };
     const isWithinBounds = (rect) => (
-        rect.x >= pageBounds.x &&
-        rect.y >= pageBounds.y &&
-        rect.x + rect.width <= pageBounds.x + pageBounds.width &&
-        rect.y + rect.height <= pageBounds.y + pageBounds.height
+        rect.x >= 0 &&
+        rect.y >= 0 &&
+        rect.x + rect.width <= pageBounds.width &&
+        rect.y + rect.height <= pageBounds.height
     );
     const checkPosition = (pos) => {
         const candidateRect = {
@@ -70,11 +87,11 @@ function findNonOverlappingPosition(point, badgeSize, obstacles, pageBounds) {
         { x: (badgeSize.width / 2 + 10), y: 0 },   { x: -(badgeSize.width / 2 + 10), y: 0 }
     ];
     for (const offset of preferredOffsets) {
-        const position = checkPosition({ x: point.absX + offset.x, y: point.absY + offset.y });
+        const position = checkPosition({ x: pointAbs.x + offset.x, y: pointAbs.y + offset.y });
         if (position) return position;
     }
 
-    let x = point.absX, y = point.absY, dx = 0, dy = -1, stepSize = 10, stepsInSegment = 1, turnCounter = 0;
+    let x = pointAbs.x, y = pointAbs.y, dx = 0, dy = -1, stepSize = 10, stepsInSegment = 1, turnCounter = 0;
     for (let i = 0; i < 1000; i++) {
         for (let j = 0; j < Math.floor(stepsInSegment); j++) {
             x += dx * stepSize;
@@ -86,5 +103,5 @@ function findNonOverlappingPosition(point, badgeSize, obstacles, pageBounds) {
         turnCounter++;
         if (turnCounter % 2 === 0) stepsInSegment += 0.5;
     }
-    return { x: point.absX, y: point.absY - (badgeSize.height / 2 + 10) };
+    return { x: pointAbs.x, y: pointAbs.y - (badgeSize.height / 2 + 10) };
 }
