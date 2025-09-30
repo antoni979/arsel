@@ -101,76 +101,61 @@ const reabrirInspeccion = async (inspeccion) => {
   }
 }
 
+// ===== INICIO DE LA CORRECCIÓN: Lógica de borrado en dos pasos desde el frontend =====
 const handleDelete = async (inspeccionId) => {
   const confirmed = await showConfirm('Borrar Inspección', '¿Estás seguro de que quieres borrar esta inspección? Esta acción es permanente y eliminará todos los datos y archivos asociados.');
   if (!confirmed) return;
 
+  isProcessing.value = inspeccionId;
+  showNotification('Borrando archivos, por favor espera...', 'info');
+
   try {
-    const { data: inspeccion, error: getInspeccionError } = await supabase
-      .from('inspecciones')
-      .select('url_pdf_informe_inicial, url_pdf_informe_final')
-      .eq('id', inspeccionId)
-      .single();
-    if (getInspeccionError) throw getInspeccionError;
-
-    const pdfPathsToDelete = [];
-    if (inspeccion.url_pdf_informe_inicial) {
-      const path = extractPathFromUrl(inspeccion.url_pdf_informe_inicial, 'informes-archivados');
-      if (path) pdfPathsToDelete.push(path);
-    }
-    if (inspeccion.url_pdf_informe_final) {
-      const path = extractPathFromUrl(inspeccion.url_pdf_informe_final, 'informes-archivados');
-      if (path) pdfPathsToDelete.push(path);
-    }
-    
-    const { data: incidencias, error: getIncidenciasError } = await supabase.from('incidencias').select('url_foto_antes, url_foto_despues').eq('inspeccion_id', inspeccionId);
-    if (getIncidenciasError) throw getIncidenciasError;
-
-    const photoPathsToDelete = [];
-    if (incidencias) {
-      incidencias.forEach(inc => {
-        const pathAntes = extractPathFromUrl(inc.url_foto_antes, 'incidencias');
-        if (pathAntes) photoPathsToDelete.push(pathAntes);
-        const pathDespues = extractPathFromUrl(inc.url_foto_despues, 'incidencias');
-        if (pathDespues) photoPathsToDelete.push(pathDespues);
-      });
-    }
-
-    const deletePromises = [];
-    if (pdfPathsToDelete.length > 0) {
-      deletePromises.push(supabase.storage.from('informes-archivados').remove(pdfPathsToDelete));
-    }
-    if (photoPathsToDelete.length > 0) {
-      deletePromises.push(supabase.storage.from('incidencias').remove(photoPathsToDelete));
-    }
-    
-    const results = await Promise.allSettled(deletePromises);
-    results.forEach(result => {
-        if (result.status === 'rejected') {
-            showNotification('Advertencia: No se pudieron borrar algunos archivos de imagen/PDF, pero se continuará con el borrado de datos.', 'warning');
-            console.error("Storage Error:", result.reason);
-        }
+    // PASO 1: Llamar a la Edge Function para borrar los archivos del Storage.
+    const { error: functionError } = await supabase.functions.invoke('delete-inspection-files', {
+      body: { inspeccion_id: inspeccionId },
     });
 
-    const { error: inspeccionError } = await supabase.from('inspecciones').delete().eq('id', inspeccionId);
-    if (inspeccionError) throw inspeccionError;
+    if (functionError) {
+      // Incluso si falla el borrado de archivos, preguntamos si se quiere continuar.
+      const continueDelete = await showConfirm(
+        'Error de borrado de archivos',
+        `No se pudieron borrar los archivos del almacenamiento: ${functionError.message}. ¿Quieres continuar y borrar los datos de la base de datos de todas formas?`
+      );
+      if (!continueDelete) {
+        isProcessing.value = null;
+        return;
+      }
+    }
+    
+    showNotification('Archivos borrados. Borrando datos de la base de datos...', 'info');
 
+    // PASO 2: Si el borrado de archivos fue exitoso (o el usuario decidió continuar),
+    // llamar a la función SQL para borrar los registros de la base de datos.
+    const { error: rpcError } = await supabase.rpc('delete_inspection_data', {
+      inspeccion_id_param: inspeccionId
+    });
+
+    if (rpcError) throw rpcError;
+
+    // PASO 3: Actualizar la UI.
     removeInspectionFromList(inspeccionId);
-    showNotification('Inspección y todos sus archivos asociados borrados con éxito.', 'success');
+    showNotification('Inspección borrada con éxito.', 'success');
 
   } catch (error) {
     showNotification('Ocurrió un error al borrar la inspección: ' + error.message, 'error');
+  } finally {
+    isProcessing.value = null;
   }
 };
+// ===== FIN DE LA CORRECCIÓN =====
 
-// ===== INICIO DE LA CORRECCIÓN: Función para actualizar la fecha en la lista =====
+
 const handleDateUpdated = ({ id, newDate }) => {
   const inspeccion = inspecciones.value.find(i => i.id === id);
   if (inspeccion) {
     inspeccion.fecha_inspeccion = newDate;
   }
 };
-// ===== FIN DE LA CORRECCIÓN =====
 </script>
 
 <template>
