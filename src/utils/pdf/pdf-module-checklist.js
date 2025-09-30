@@ -162,8 +162,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
 
             let finalY = pdf.lastAutoTable.finalY;
 
-            // ===== INICIO DE LA LÓGICA CORREGIDA =====
-            const OBSERVACIONES_THRESHOLD_COUNT = 12; // Umbral de NÚMERO de incidencias
+            const OBSERVACIONES_THRESHOLD_COUNT = 12;
 
             const observacionesArray = incidenciasData
                 .filter(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && (inc.observaciones || inc.custom_fields))
@@ -200,18 +199,11 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 pdf.addPage();
                 await drawHeader(pdf, inspectionData, arselLogoUrl);
 
+                // ===== CAMBIO REALIZADO: Eliminamos el título y subimos la tabla =====
                 autoTable(pdf, {
-                    body: [[`ANEXO DE OBSERVACIONES\nALINEACIÓN: ${puntoMaestro.nomenclatura}`]],
-                    startY: 40,
-                    theme: 'plain',
-                    styles: { fontSize: FONT_SIZES.h1, fontStyle: 'bold', halign: 'center', font: 'helvetica', textColor: 0 },
-                    margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
-                });
-
-                autoTable(pdf, {
-                    head: [['Observaciones Detalladas']],
+                    head: [[`Observaciones Detalladas de la Alineación: ${puntoMaestro.nomenclatura}`]],
                     body: observacionesArray.map(obs => [obs.text]),
-                    startY: pdf.lastAutoTable.finalY + 10,
+                    startY: 40, // Subimos la tabla para que empiece justo después del header
                     theme: 'grid',
                     headStyles: { fillColor: [220, 220, 220], textColor: 0, fontStyle: 'bold' },
                     styles: { fontSize: FONT_SIZES.small, font: 'helvetica', textColor: 0 },
@@ -229,7 +221,6 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 });
                 finalY = pdf.lastAutoTable.finalY;
             }
-            // ===== FIN DE LA LÓGICA CORREGIDA =====
 
             const fechaInspeccion = new Date(inspectionData.fecha_inspeccion).toLocaleDateString('es-ES');
             autoTable(pdf, {
