@@ -5,7 +5,8 @@ import { supabase } from '../supabase';
 import { useRouter } from 'vue-router';
 import SkeletonLoader from '../components/SkeletonLoader.vue';
 import GrupoVisitaEditable from '../components/GrupoVisitaEditable.vue';
-import { generateGestionReport } from '../utils/pdf/pdf-module-gestion';
+// ===== CAMBIO 1: Importamos la nueva función para generar Excel =====
+import { generateGestionExcel } from '../utils/excel/excel-module-gestion';
 import { ArrowPathIcon, MagnifyingGlassIcon, ArrowDownTrayIcon } from '@heroicons/vue/24/solid';
 
 const showNotification = inject('showNotification');
@@ -13,7 +14,7 @@ const router = useRouter();
 
 const loading = ref(true);
 const refreshing = ref(false);
-const isGeneratingPdf = ref(false);
+const isGeneratingExcel = ref(false); // Renombramos la variable de estado
 const resumenData = ref([]);
 const searchTerm = ref('');
 
@@ -77,16 +78,16 @@ const handleSaveGrupo = async ({ inspeccionId, newValue }) => {
   }
 };
 
-const handleDownloadPdf = async () => {
-  isGeneratingPdf.value = true;
-  showNotification('Generando PDF, por favor espera...', 'info');
+// ===== CAMBIO 2: La función ahora llama al generador de Excel =====
+const handleDownloadExcel = async () => {
+  isGeneratingExcel.value = true;
+  showNotification('Generando archivo XLSX, por favor espera...', 'info');
   try {
-    // Usamos los datos filtrados para que el PDF coincida con lo que ve el usuario
-    await generateGestionReport(filteredData.value);
+    await generateGestionExcel(filteredData.value);
   } catch (error) {
-    showNotification('Hubo un error al generar el PDF.', 'error');
+    showNotification('Hubo un error al generar el archivo Excel.', 'error');
   } finally {
-    isGeneratingPdf.value = false;
+    isGeneratingExcel.value = false;
   }
 };
 
@@ -115,13 +116,14 @@ onMounted(async () => {
             class="block w-full rounded-md border-slate-300 py-2 pl-10 text-sm shadow-sm focus:border-blue-500 focus:ring-blue-500"
           >
         </div>
-        <button @click="refreshView" :disabled="refreshing || isGeneratingPdf" class="flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 shadow-sm flex-shrink-0 disabled:bg-slate-400">
+        <button @click="refreshView" :disabled="refreshing || isGeneratingExcel" class="flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 shadow-sm flex-shrink-0 disabled:bg-slate-400">
           <ArrowPathIcon class="h-5 w-5" :class="{'animate-spin': refreshing}" />
           <span class="hidden sm:inline">Actualizar</span>
         </button>
-        <button @click="handleDownloadPdf" :disabled="refreshing || isGeneratingPdf" class="flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm flex-shrink-0 disabled:bg-slate-400">
+        <!-- ===== CAMBIO 3: El botón ahora llama a la función de Excel y tiene un texto más claro ===== -->
+        <button @click="handleDownloadExcel" :disabled="refreshing || isGeneratingExcel" class="flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm flex-shrink-0 disabled:bg-slate-400">
           <ArrowDownTrayIcon class="h-5 w-5" />
-          <span class="hidden sm:inline">Descargar</span>
+          <span class="hidden sm:inline">Descargar XLSX</span>
         </button>
       </div>
 
