@@ -40,6 +40,37 @@ const filteredInspecciones = computed(() => {
   });
 });
 
+// ===== INICIO DE LA LÓGICA DE BORRADO DE ARCHIVOS B2 =====
+const deleteB2Files = async (urls) => {
+  const fileUrls = urls.filter(url => url && url.includes('backblazeb2.com'));
+  if (fileUrls.length === 0) {
+    return true; // No hay nada que borrar
+  }
+
+  showNotification(`Borrando ${fileUrls.length} informe(s) de B2...`, 'info');
+
+  const deletePromises = fileUrls.map(fileUrl => 
+    supabase.functions.invoke('delete-b2-file', {
+      body: { fileUrl },
+    })
+  );
+
+  const results = await Promise.all(deletePromises);
+  const failedDeletes = results.filter(res => res.error);
+
+  if (failedDeletes.length > 0) {
+    console.error('Errores al borrar archivos de B2:', failedDeletes);
+    showNotification(`Error al borrar ${failedDeletes.length} archivo(s) de B2. Revisa la consola.`, 'error');
+    // Devolvemos `false` si queremos detener el proceso, o `true` si queremos continuar de todos modos.
+    // En este caso, continuaremos para que la base de datos se actualice.
+  } else {
+    showNotification('Informe(s) borrado(s) de B2 con éxito.', 'success');
+  }
+  
+  return true;
+};
+// ===== FIN DE LA LÓGICA DE BORRADO DE ARCHIVOS B2 =====
+
 const openSentModal = (inspeccion) => {
   selectedInspeccion.value = inspeccion;
   isSentModalOpen.value = true;
@@ -75,10 +106,16 @@ const handleMarkAsSent = async (formData) => {
 };
 
 const reabrirInspeccion = async (inspeccion) => {
-  const confirmed = await showConfirm('Reabrir Inspección', `¿Estás seguro de que quieres reabrir la inspección del ${new Date(inspeccion.fecha_inspeccion).toLocaleDateString()}? El PDF archivado será invalidado y deberás volver a finalizarla.`);
+  const confirmed = await showConfirm('Reabrir Inspección', `¿Estás seguro de que quieres reabrir la inspección del ${new Date(inspeccion.fecha_inspeccion).toLocaleDateString()}? El PDF archivado será invalidado y eliminado de B2.`);
   if (!confirmed) return;
+  
   isProcessing.value = inspeccion.id;
+  
   try {
+    // 1. Borrar archivos de B2
+    await deleteB2Files([inspeccion.url_pdf_informe_inicial, inspeccion.url_pdf_informe_final]);
+
+    // 2. Actualizar la base de datos
     const { data, error } = await supabase
       .from('inspecciones')
       .update({
@@ -101,43 +138,36 @@ const reabrirInspeccion = async (inspeccion) => {
   }
 }
 
-// ===== INICIO DE LA CORRECCIÓN: Lógica de borrado en dos pasos desde el frontend =====
 const handleDelete = async (inspeccionId) => {
-  const confirmed = await showConfirm('Borrar Inspección', '¿Estás seguro de que quieres borrar esta inspección? Esta acción es permanente y eliminará todos los datos y archivos asociados.');
+  const confirmed = await showConfirm('Borrar Inspección', '¿Estás seguro? Esta acción es permanente y eliminará todos los datos y archivos asociados.');
   if (!confirmed) return;
 
   isProcessing.value = inspeccionId;
-  showNotification('Borrando archivos, por favor espera...', 'info');
-
+  
   try {
-    // PASO 1: Llamar a la Edge Function para borrar los archivos del Storage.
+    const inspeccion = inspecciones.value.find(i => i.id === inspeccionId);
+    if (!inspeccion) throw new Error("No se encontró la inspección para borrar sus archivos.");
+
+    // 1. Borrar archivos de B2 (informes)
+    await deleteB2Files([inspeccion.url_pdf_informe_inicial, inspeccion.url_pdf_informe_final]);
+
+    // 2. Borrar archivos de Supabase Storage (fotos)
+    showNotification('Borrando fotos, por favor espera...', 'info');
     const { error: functionError } = await supabase.functions.invoke('delete-inspection-files', {
       body: { inspeccion_id: inspeccionId },
     });
-
     if (functionError) {
-      // Incluso si falla el borrado de archivos, preguntamos si se quiere continuar.
-      const continueDelete = await showConfirm(
-        'Error de borrado de archivos',
-        `No se pudieron borrar los archivos del almacenamiento: ${functionError.message}. ¿Quieres continuar y borrar los datos de la base de datos de todas formas?`
-      );
-      if (!continueDelete) {
-        isProcessing.value = null;
-        return;
-      }
+      const continueDelete = await showConfirm('Error', `No se pudieron borrar las fotos: ${functionError.message}. ¿Continuar borrando los datos?`);
+      if (!continueDelete) { isProcessing.value = null; return; }
     }
     
-    showNotification('Archivos borrados. Borrando datos de la base de datos...', 'info');
-
-    // PASO 2: Si el borrado de archivos fue exitoso (o el usuario decidió continuar),
-    // llamar a la función SQL para borrar los registros de la base de datos.
+    // 3. Borrar datos de la base de datos
+    showNotification('Borrando datos de la base de datos...', 'info');
     const { error: rpcError } = await supabase.rpc('delete_inspection_data', {
       inspeccion_id_param: inspeccionId
     });
-
     if (rpcError) throw rpcError;
 
-    // PASO 3: Actualizar la UI.
     removeInspectionFromList(inspeccionId);
     showNotification('Inspección borrada con éxito.', 'success');
 
@@ -147,7 +177,6 @@ const handleDelete = async (inspeccionId) => {
     isProcessing.value = null;
   }
 };
-// ===== FIN DE LA CORRECCIÓN =====
 
 
 const handleDateUpdated = ({ id, newDate }) => {
