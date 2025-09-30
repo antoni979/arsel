@@ -1,6 +1,7 @@
 <!-- src/components/InspectionListItem.vue -->
 <script setup>
 import { ref, computed } from 'vue';
+import { supabase } from '../supabase';
 import {
 EyeIcon,
 TrashIcon,
@@ -22,10 +23,12 @@ required: true
 isProcessing: Boolean,
 });
 
-const emit = defineEmits(['mark-as-sent', 'reopen', 'delete']);
+const emit = defineEmits(['mark-as-sent', 'reopen', 'delete', 'date-updated']);
 
 const router = useRouter();
 const isExpanded = ref(false);
+const isEditingDate = ref(false);
+const newDate = ref(props.inspeccion.fecha_inspeccion);
 
 const estadoInfo = computed(() => {
 const estado = props.inspeccion.estado;
@@ -41,7 +44,7 @@ default: return { text: estado, class: 'bg-slate-100 text-slate-800' };
 const toggleDetails = () => {
 isExpanded.value = !isExpanded.value;
 if (isExpanded.value) {
-// La carga de detalles se dispara desde el padre, que maneja la lógica de datos
+// La carga de detalles se dispara desde el padre
 }
 };
 
@@ -49,25 +52,62 @@ const openArchivedPdf = (url) => {
 if (url) {
 window.open(url, '_blank');
 } else {
-// Podríamos emitir un evento para mostrar una notificación si es necesario
 console.warn('El informe PDF para esta inspección aún no ha sido generado o archivado.');
 }
 };
+
+// ===== INICIO DE LA CORRECCIÓN: Lógica para editar la fecha =====
+const startEditingDate = () => {
+newDate.value = props.inspeccion.fecha_inspeccion;
+isEditingDate.value = true;
+};
+
+const saveDate = async () => {
+if (newDate.value === props.inspeccion.fecha_inspeccion) {
+isEditingDate.value = false;
+return;
+}
+
+const { error } = await supabase
+.from('inspecciones')
+.update({ fecha_inspeccion: newDate.value })
+.eq('id', props.inspeccion.id);
+
+if (error) {
+alert('Error al actualizar la fecha: ' + error.message);
+} else {
+emit('date-updated', { id: props.inspeccion.id, newDate: newDate.value });
+}
+isEditingDate.value = false;
+};
+// ===== FIN DE LA CORRECCIÓN =====
 </script>
 <template>
 <div class="bg-white rounded-xl shadow-sm border border-slate-200 transition-all">
 <div class="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-center">
-
-<div class="space-y-2">
+  <!-- ===== INICIO DE LA CORRECCIÓN: Contenedor de fecha ahora es editable ===== -->
+  <div class="space-y-2 group cursor-pointer" @click="startEditingDate">
     <div>
       <p class="text-xs font-semibold text-slate-500">Fecha Inspección</p>
-      <p class="font-semibold text-slate-800">{{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString() }}</p>
+      <div v-if="!isEditingDate" class="font-semibold text-slate-800">
+        {{ new Date(inspeccion.fecha_inspeccion + 'T00:00:00').toLocaleDateString() }}
+      </div>
+      <input 
+        v-else
+        type="date"
+        v-model="newDate"
+        @blur="saveDate"
+        @keyup.enter="saveDate"
+        @click.stop
+        class="p-1 rounded-md border-slate-300 shadow-sm text-sm"
+      />
     </div>
     <div class="flex items-center gap-2">
       <UserIcon class="h-4 w-4 text-slate-400" />
       <span class="text-sm text-slate-600">{{ inspeccion.tecnico_nombre }}</span>
     </div>
   </div>
+  <!-- ===== FIN DE LA CORRECCIÓN ===== -->
   
   <div class="space-y-2">
      <div>
