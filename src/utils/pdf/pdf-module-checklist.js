@@ -2,7 +2,7 @@
 
 import autoTable from 'jspdf-autotable';
 import { checklistItems } from '../checklist';
-import { FONT_SIZES, DOC_WIDTH } from './pdf-helpers';
+import { FONT_SIZES, DOC_WIDTH, drawHeader } from './pdf-helpers'; // Importamos drawHeader
 import { getArselLogoUrl } from './pdf-helpers';
 import { supabase } from '../../supabase';
 
@@ -21,7 +21,6 @@ export async function buildChecklistAnnex(pdf, reportData) {
         return;
     }
 
-    // Fetch custom fields and logo
     const [customFieldsRes, arselLogoUrl] = await Promise.all([
         supabase.from('checklist_custom_fields').select('*'),
         getArselLogoUrl()
@@ -66,7 +65,6 @@ export async function buildChecklistAnnex(pdf, reportData) {
 
             const ANCHO_TOTAL = DOC_WIDTH - (LOCAL_MARGIN * 2);
 
-            // Tabla 1: Título Naranja
             autoTable(pdf, {
                 body: [['FORMATO DE INSPECCIÓN DEL SISTEMA DE ALMACENAJE']],
                 startY: 25,
@@ -84,7 +82,6 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
             });
 
-            // Tabla 2: Información del Centro
             autoTable(pdf, {
                 body: [[
                     `CENTRO: ${inspectionData.centros.nombre.toUpperCase()}`,
@@ -113,15 +110,14 @@ export async function buildChecklistAnnex(pdf, reportData) {
             const puntoInspeccionado = puntosInspeccionadosData.find(pi => pi.punto_maestro_id === puntoMaestro.id);
             const puntoInspeccionadoId = puntoInspeccionado ? puntoInspeccionado.id : null;
             
-            // ===== CAMBIO REALIZADO: Ajustamos los tamaños de fuente en la cabecera =====
             const head = [
                 [
-                    { content: 'Parámetro de control', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontSize: 14 } }, // Tamaño más grande
-                    { content: 'S', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontSize: 8 } }, // Un poco más grande
-                    { content: 'I', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontSize: 8 } }, // Un poco más grande
-                    { content: 'RIESGO', colSpan: 3, styles: { halign: 'center', fontSize: 8 } } // Un poco más grande
+                    { content: 'Parámetro de control', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontSize: 9 } },
+                    { content: 'S', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontSize: 8 } },
+                    { content: 'I', rowSpan: 2, styles: { halign: 'center', valign: 'middle', fontSize: 8 } },
+                    { content: 'RIESGO', colSpan: 3, styles: { halign: 'center', fontSize: 8 } }
                 ],
-                [{ content: 'V', styles: { fontSize: 8 } }, { content: 'A', styles: { fontSize: 8 } }, { content: 'R', styles: { fontSize: 8 } }] // Un poco más grande
+                [{ content: 'V', styles: { fontSize: 8 } }, { content: 'A', styles: { fontSize: 8 } }, { content: 'R', styles: { fontSize: 8 } }]
             ];
             
             const body = checklistItems.map(item => {
@@ -139,7 +135,6 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 ];
             });
 
-            // Tabla 3: Checklist Principal
             autoTable(pdf, {
                 head, body, 
                 startY: pdf.lastAutoTable.finalY,
@@ -167,11 +162,13 @@ export async function buildChecklistAnnex(pdf, reportData) {
 
             let finalY = pdf.lastAutoTable.finalY;
 
-            const observacionesDelPunto = incidenciasData
+            // ===== INICIO DE LA LÓGICA CORREGIDA =====
+            const OBSERVACIONES_THRESHOLD_COUNT = 12; // Umbral de NÚMERO de incidencias
+
+            const observacionesArray = incidenciasData
                 .filter(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && (inc.observaciones || inc.custom_fields))
                 .map((obs) => {
                     let parts = [];
-
                     if (obs.custom_fields) {
                         const customs = Object.entries(obs.custom_fields).map(([fieldId, value]) => {
                             const field = customFieldsMap.get(parseInt(fieldId));
@@ -179,26 +176,60 @@ export async function buildChecklistAnnex(pdf, reportData) {
                         }).filter(s => s);
                         parts.push(...customs);
                     }
-
                     if (obs.observaciones && obs.observaciones.trim()) {
                         parts.push(`Observaciones: ${obs.observaciones.trim()}`);
                     }
-
                     if (parts.length > 0) {
-                        return `Parámetro ${obs.item_checklist}: ${parts.join(' / ')}`;
+                        return { text: `Parámetro ${obs.item_checklist}: ${parts.join(' / ')}` };
                     }
                     return null;
                 })
-                .filter(obs => obs !== null)
-                .join('\n');
-            
-            autoTable(pdf, {
-                body: [[{ content: `Observaciones:\n${observacionesDelPunto}`, styles: { fontStyle: 'bold', valign: 'top' } }]],
-                startY: finalY,
-                theme: 'grid',
-                styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 20, font: 'helvetica', textColor: 0 },
-                margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
-            });
+                .filter(obs => obs !== null);
+
+            if (observacionesArray.length >= OBSERVACIONES_THRESHOLD_COUNT) {
+                const placeholderText = '* Las observaciones detalladas para esta alineación se encuentran en la página siguiente.';
+                autoTable(pdf, {
+                    body: [[{ content: placeholderText, styles: { fontStyle: 'italic', valign: 'top' } }]],
+                    startY: finalY,
+                    theme: 'grid',
+                    styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 20, font: 'helvetica', textColor: 0 },
+                    margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
+                });
+                finalY = pdf.lastAutoTable.finalY;
+
+                pdf.addPage();
+                await drawHeader(pdf, inspectionData, arselLogoUrl);
+
+                autoTable(pdf, {
+                    body: [[`ANEXO DE OBSERVACIONES\nALINEACIÓN: ${puntoMaestro.nomenclatura}`]],
+                    startY: 40,
+                    theme: 'plain',
+                    styles: { fontSize: FONT_SIZES.h1, fontStyle: 'bold', halign: 'center', font: 'helvetica', textColor: 0 },
+                    margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
+                });
+
+                autoTable(pdf, {
+                    head: [['Observaciones Detalladas']],
+                    body: observacionesArray.map(obs => [obs.text]),
+                    startY: pdf.lastAutoTable.finalY + 10,
+                    theme: 'grid',
+                    headStyles: { fillColor: [220, 220, 220], textColor: 0, fontStyle: 'bold' },
+                    styles: { fontSize: FONT_SIZES.small, font: 'helvetica', textColor: 0 },
+                    margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
+                });
+
+            } else {
+                const observacionesDelPunto = observacionesArray.map(obs => obs.text).join('\n');
+                autoTable(pdf, {
+                    body: [[{ content: `Observaciones:\n${observacionesDelPunto}`, styles: { fontStyle: 'bold', valign: 'top' } }]],
+                    startY: finalY,
+                    theme: 'grid',
+                    styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 20, font: 'helvetica', textColor: 0 },
+                    margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
+                });
+                finalY = pdf.lastAutoTable.finalY;
+            }
+            // ===== FIN DE LA LÓGICA CORREGIDA =====
 
             const fechaInspeccion = new Date(inspectionData.fecha_inspeccion).toLocaleDateString('es-ES');
             autoTable(pdf, {
@@ -206,7 +237,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
                     `Fecha revisión: ${fechaInspeccion}\n\nFirma de Arsel Ingenieria S.L.:`,
                     `Firma del PRSES:`
                 ]],
-                startY: pdf.lastAutoTable.finalY,
+                startY: finalY,
                 theme: 'grid',
                 styles: { fontSize: FONT_SIZES.small, lineColor: 0, lineWidth: 0.1, minCellHeight: 15, valign: 'top', font: 'helvetica', textColor: 0 },
                 columnStyles: { 1: { halign: 'left' } },
