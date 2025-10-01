@@ -59,27 +59,34 @@ const openEditModal = (centro) => {
   isModalOpen.value = true;
 };
 
+// ===== CAMBIO REALIZADO: Lógica de guardado simplificada y corregida =====
 const handleSaveCentro = async (centroData) => {
-  const validFields = ['id', 'nombre', 'url_imagen_plano', 'fecha_creacion', 'direccion', 'responsable_nombre', 'responsable_email', 'provincia', 'zona', 'url_logo_cliente'];
-  const dataToSave = {};
-  validFields.forEach(field => {
-    if (centroData[field] !== undefined) {
-      dataToSave[field] = centroData[field];
-    }
-  });
+  // Copiamos los datos para no modificar el objeto original
+  const dataToSave = { ...centroData };
   let error;
+
   if (dataToSave.id) {
-    const { error: updateError } = await supabase.from('centros').update(dataToSave).eq('id', dataToSave.id);
+    // --- LÓGICA DE ACTUALIZACIÓN ---
+    const { id, ...updateData } = dataToSave; // Separamos el id del resto de los datos
+    const { error: updateError } = await supabase
+      .from('centros')
+      .update(updateData)
+      .eq('id', id);
     error = updateError;
   } else {
-    delete dataToSave.id;
-    const { error: insertError } = await supabase.from('centros').insert(dataToSave);
+    // --- LÓGICA DE CREACIÓN ---
+    delete dataToSave.id; // Nos aseguramos de que no haya un id (aunque sea null)
+    const { error: insertError } = await supabase
+      .from('centros')
+      .insert(dataToSave);
     error = insertError;
   }
-  if (error) alert(error.message);
-  else {
+  
+  if (error) {
+    alert(error.message);
+  } else {
     isModalOpen.value = false;
-    await fetchCentros();
+    await fetchCentros(); // Recargamos la lista para ver los cambios
   }
 };
 
