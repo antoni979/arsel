@@ -130,10 +130,7 @@ export async function buildTextPages(pdf, reportData) {
   const checkPageBreak = async (heightNeeded) => {
     if (currentY + heightNeeded > PAGE_HEIGHT - FOOTER_MARGIN) {
       pdf.addPage();
-      // --- INICIO DE LA CORRECCIÓN ---
-      // Nos aseguramos de pasar la URL del logo de Arsel en cada nueva página.
       await drawHeader(pdf, inspectionData, arselLogoUrl);
-      // --- FIN DE LA CORRECCIÓN ---
       currentY = TOP_MARGIN;
     }
   };
@@ -174,11 +171,14 @@ export async function buildTextPages(pdf, reportData) {
   pdf.setFont('helvetica', 'normal').setFontSize(FONT_SIZES.body);
   
   const textoPostVerdeAmbar = 'Estas anomalías, si bien no comprometen de forma inmediata la estabilidad ni seguridad del sistema, deben subsanarse lo antes posible para evitar que puedan derivar en un riesgo mayor. (Se adjuntan listados de chequeo y reportaje fotográfico de la visita).';
-  await checkPageBreak((pdf.splitTextToSize(textoPostVerdeAmbar, CONTENT_WIDTH).length * 5 * 1.5) + 5);
-  pdf.text(textoPostVerdeAmbar, MARGIN, currentY, { maxWidth: CONTENT_WIDTH, align: 'justify', lineHeightFactor: 1.5 });
-  currentY += (pdf.splitTextToSize(textoPostVerdeAmbar, CONTENT_WIDTH).length * 5 * 1.5) + 5;
+  const newMargin = MARGIN + 5;
+  const newContentWidth = DOC_WIDTH - (newMargin * 2);
+  await checkPageBreak((pdf.splitTextToSize(textoPostVerdeAmbar, newContentWidth).length * 5 * 1.5) + 5);
+  pdf.text(textoPostVerdeAmbar, newMargin, currentY, { maxWidth: newContentWidth, align: 'justify', lineHeightFactor: 1.5 });
+  currentY += (pdf.splitTextToSize(textoPostVerdeAmbar, newContentWidth).length * 5 * 1.5) + 15;
 
   if(textoRojo) {
+    currentY += 5;
     const textoPreRojo = 'Puntualmente, se han detectado anomalías de riesgo rojo en:';
     await checkPageBreak(8 + textoRojo.split('\n').length * 5 + 5);
     pdf.text(textoPreRojo, MARGIN, currentY, { align: 'justify' }); 
@@ -205,14 +205,18 @@ export async function buildTextPages(pdf, reportData) {
   pdf.text('Para cerrar el proceso de inspección completo, el centro subsanará las deficiencias de menor grado detectadas en los próximos días, comunicando la resolución de las mismas mediante correo electrónico a ARSEL Ingeniería y al Técnico de Prevención Regional.', MARGIN, currentY, { maxWidth: CONTENT_WIDTH, align: 'justify', lineHeightFactor: 1.5 }); 
   currentY += 40;
   pdf.text('Informe realizado por:', MARGIN, currentY);
-  currentY += 8;
+  
+  // --- INICIO DE LA CORRECCIÓN ---
+  currentY += 4; // 1. Reducir el espacio vertical
   const signatureLogoUrl = await getArselLogoUrl('signature_logo');
   const finalLogoUrl = signatureLogoUrl || arselLogoUrl;
   const arselLogoBase64 = await loadImageAsBase64(finalLogoUrl);
   if (arselLogoBase64) {
-      pdf.addImage(arselLogoBase64, 'PNG', MARGIN, currentY, 45, 20, undefined, 'MEDIUM');
-      currentY += 23;
+      pdf.addImage(arselLogoBase64, 'PNG', MARGIN, currentY, 55, 25, undefined, 'MEDIUM'); // 2. Aumentar el tamaño de la imagen
+      currentY += 28; // Ajustar el incremento de Y para que coincida con el nuevo tamaño
   }
+  // --- FIN DE LA CORRECCIÓN ---
+
   pdf.setFont('helvetica', 'bold').text('ARSEL INGENIERIA', MARGIN, currentY);
   currentY += 5;
   pdf.setFont('helvetica', 'normal').text(`Valencia, ${fecha}`, MARGIN, currentY);
