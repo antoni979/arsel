@@ -2,7 +2,7 @@
 
 import autoTable from 'jspdf-autotable';
 import { checklistItems } from '../checklist';
-import { FONT_SIZES, DOC_WIDTH, drawHeader } from './pdf-helpers'; // Importamos drawHeader
+import { FONT_SIZES, DOC_WIDTH, drawHeader, loadImageAsBase64 } from './pdf-helpers'; // Importamos loadImageAsBase64
 import { getArselLogoUrl } from './pdf-helpers';
 import { supabase } from '../../supabase';
 
@@ -63,17 +63,38 @@ export async function buildChecklistAnnex(pdf, reportData) {
         for (const puntoMaestro of puntosDeLaSala) {
             pdf.addPage();
 
-            const ANCHO_TOTAL = DOC_WIDTH - (LOCAL_MARGIN * 2);
+            // --- INICIO DE LA CORRECCIÓN: Logos pequeños en la parte superior ---
+            const [clientLogoBase64, arselLogoBase64] = await Promise.all([
+                loadImageAsBase64(inspectionData.centros.url_logo_cliente, { optimize: false }),
+                loadImageAsBase64(arselLogoUrl, { optimize: false })
+            ]);
 
+            const logoHeight = 10; // Reducimos la altura del logo
+            const headerY = 12; // Subimos los logos en la página
+            const arselLogoWidth = 30;
+
+            if (clientLogoBase64) {
+                pdf.addImage(clientLogoBase64, 'JPEG', LOCAL_MARGIN, headerY, 0, logoHeight);
+            }
+            if (arselLogoBase64) {
+                pdf.addImage(arselLogoBase64, 'JPEG', DOC_WIDTH - LOCAL_MARGIN - arselLogoWidth, headerY, arselLogoWidth, logoHeight);
+            }
+            
+            // Calculamos dónde debe empezar la primera tabla (la naranja)
+            const firstTableStartY = headerY + logoHeight + 3;
+            // --- FIN DE LA CORRECCIÓN ---
+
+
+            // --- INICIO DE LA CORRECCIÓN: Restauración de la cabecera original ---
             autoTable(pdf, {
                 body: [['FORMATO DE INSPECCIÓN DEL SISTEMA DE ALMACENAJE']],
-                startY: 25,
+                startY: firstTableStartY, // La tabla empieza debajo de los logos
                 theme: 'grid',
                 styles: {
                     fontSize: 10,
                     fontStyle: 'bold',
                     halign: 'center',
-                    fillColor: [255, 192, 0],
+                    fillColor: [255, 192, 0], // Color naranja
                     textColor: 0,
                     lineColor: 0,
                     lineWidth: 0.1,
@@ -106,6 +127,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 },
                 margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
             });
+            // --- FIN DE LA CORRECCIÓN ---
             
             const puntoInspeccionado = puntosInspeccionadosData.find(pi => pi.punto_maestro_id === puntoMaestro.id);
             const puntoInspeccionadoId = puntoInspeccionado ? puntoInspeccionado.id : null;
@@ -199,11 +221,10 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 pdf.addPage();
                 await drawHeader(pdf, inspectionData, arselLogoUrl);
 
-                // ===== CAMBIO REALIZADO: Eliminamos el título y subimos la tabla =====
                 autoTable(pdf, {
                     head: [[`Observaciones Detalladas de la Alineación: ${puntoMaestro.nomenclatura}`]],
                     body: observacionesArray.map(obs => [obs.text]),
-                    startY: 40, // Subimos la tabla para que empiece justo después del header
+                    startY: 40,
                     theme: 'grid',
                     headStyles: { fillColor: [220, 220, 220], textColor: 0, fontStyle: 'bold' },
                     styles: { fontSize: FONT_SIZES.small, font: 'helvetica', textColor: 0 },

@@ -130,7 +130,10 @@ export async function buildTextPages(pdf, reportData) {
   const checkPageBreak = async (heightNeeded) => {
     if (currentY + heightNeeded > PAGE_HEIGHT - FOOTER_MARGIN) {
       pdf.addPage();
+      // --- INICIO DE LA CORRECCIÓN ---
+      // Nos aseguramos de pasar la URL del logo de Arsel en cada nueva página.
       await drawHeader(pdf, inspectionData, arselLogoUrl);
+      // --- FIN DE LA CORRECCIÓN ---
       currentY = TOP_MARGIN;
     }
   };
@@ -171,9 +174,8 @@ export async function buildTextPages(pdf, reportData) {
   pdf.setFont('helvetica', 'normal').setFontSize(FONT_SIZES.body);
   
   const textoPostVerdeAmbar = 'Estas anomalías, si bien no comprometen de forma inmediata la estabilidad ni seguridad del sistema, deben subsanarse lo antes posible para evitar que puedan derivar en un riesgo mayor. (Se adjuntan listados de chequeo y reportaje fotográfico de la visita).';
-  await checkPageBreak((pdf.splitTextToSize(textoPostVerdeAmbar, CONTENT_WIDTH).length * 5 * 1.5) + 5); // Reducimos el espacio extra
+  await checkPageBreak((pdf.splitTextToSize(textoPostVerdeAmbar, CONTENT_WIDTH).length * 5 * 1.5) + 5);
   pdf.text(textoPostVerdeAmbar, MARGIN, currentY, { maxWidth: CONTENT_WIDTH, align: 'justify', lineHeightFactor: 1.5 });
-  // ===== CAMBIO 1: Reducimos el espacio después de este párrafo =====
   currentY += (pdf.splitTextToSize(textoPostVerdeAmbar, CONTENT_WIDTH).length * 5 * 1.5) + 5;
 
   if(textoRojo) {
@@ -192,7 +194,6 @@ export async function buildTextPages(pdf, reportData) {
     currentY += (pdf.splitTextToSize(textoRiesgoRojo, CONTENT_WIDTH).length * 5 * 1.5) + 15;
   }
 
-  // ===== CAMBIO 2 y 3: Cambiamos "placa" por "ficha" y eliminamos el paréntesis =====
   await addSection('Alineaciones sin ficha de características o con ficha no válida:', lineasConPlacaInvalida);
   await addSection('Alineaciones con módulos DISMINUIDOS desde la inspección anterior:', lineasDisminuidas);
   await addSection('Alineaciones con módulos AUMENTADOS desde la inspección anterior:', lineasAumentadas);
