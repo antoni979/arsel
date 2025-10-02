@@ -48,15 +48,34 @@ if (isExpanded.value) {
 }
 };
 
+// --- INICIO DE LA SOLUCIÓN PROFESIONAL: Cache Busting ---
+// Esta función ahora se encarga de añadir un parámetro único a la URL
+// para forzar al navegador y al Service Worker a descargar la versión más reciente del archivo.
 const openArchivedPdf = (url) => {
-if (url) {
-window.open(url, '_blank');
-} else {
-console.warn('El informe PDF para esta inspección aún no ha sido generado o archivado.');
-}
-};
+  if (!url) {
+    console.warn('El informe PDF para esta inspección aún no ha sido generado o archivado.');
+    return;
+  }
+  
+  try {
+    // 1. Creamos un objeto URL para manipularla fácilmente.
+    const urlObject = new URL(url);
+    
+    // 2. Añadimos un parámetro de búsqueda 't' con el timestamp actual.
+    // Esto hace que la URL sea única en cada clic, "rompiendo" la caché.
+    urlObject.searchParams.set('t', Date.now());
+    
+    // 3. Abrimos la nueva URL cache-busted en una nueva pestaña.
+    window.open(urlObject.toString(), '_blank');
 
-// ===== INICIO DE LA CORRECCIÓN: Lógica para editar la fecha =====
+  } catch (error) {
+    console.error("URL del PDF inválida, abriendo directamente:", error);
+    // Como fallback, si la URL es inválida, intentamos abrirla tal cual.
+    window.open(url, '_blank');
+  }
+};
+// --- FIN DE LA SOLUCIÓN PROFESIONAL ---
+
 const startEditingDate = () => {
 newDate.value = props.inspeccion.fecha_inspeccion;
 isEditingDate.value = true;
@@ -80,12 +99,10 @@ emit('date-updated', { id: props.inspeccion.id, newDate: newDate.value });
 }
 isEditingDate.value = false;
 };
-// ===== FIN DE LA CORRECCIÓN =====
 </script>
 <template>
 <div class="bg-white rounded-xl shadow-sm border border-slate-200 transition-all">
 <div class="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-center">
-  <!-- ===== INICIO DE LA CORRECCIÓN: Contenedor de fecha ahora es editable ===== -->
   <div class="space-y-2 group cursor-pointer" @click="startEditingDate">
     <div>
       <p class="text-xs font-semibold text-slate-500">Fecha Inspección</p>
@@ -107,7 +124,6 @@ isEditingDate.value = false;
       <span class="text-sm text-slate-600">{{ inspeccion.tecnico_nombre }}</span>
     </div>
   </div>
-  <!-- ===== FIN DE LA CORRECCIÓN ===== -->
   
   <div class="space-y-2">
      <div>

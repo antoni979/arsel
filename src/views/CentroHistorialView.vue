@@ -40,7 +40,6 @@ const filteredInspecciones = computed(() => {
   });
 });
 
-// ===== INICIO DE LA LÓGICA DE BORRADO DE ARCHIVOS B2 =====
 const deleteB2Files = async (urls) => {
   const fileUrls = urls.filter(url => url && url.includes('backblazeb2.com'));
   if (fileUrls.length === 0) {
@@ -61,15 +60,12 @@ const deleteB2Files = async (urls) => {
   if (failedDeletes.length > 0) {
     console.error('Errores al borrar archivos de B2:', failedDeletes);
     showNotification(`Error al borrar ${failedDeletes.length} archivo(s) de B2. Revisa la consola.`, 'error');
-    // Devolvemos `false` si queremos detener el proceso, o `true` si queremos continuar de todos modos.
-    // En este caso, continuaremos para que la base de datos se actualice.
   } else {
     showNotification('Informe(s) borrado(s) de B2 con éxito.', 'success');
   }
   
   return true;
 };
-// ===== FIN DE LA LÓGICA DE BORRADO DE ARCHIVOS B2 =====
 
 const openSentModal = (inspeccion) => {
   selectedInspeccion.value = inspeccion;
@@ -96,6 +92,9 @@ const handleMarkAsSent = async (formData) => {
 
     if (error) throw error;
     
+    // Invalidamos la caché de localStorage para forzar la recarga de datos frescos.
+    localStorage.removeItem(`inspections_${centroId}`);
+
     updateInspectionInList(data);
     showNotification('Registro de envío guardado con éxito.', 'success');
   } catch (error) {
@@ -112,10 +111,8 @@ const reabrirInspeccion = async (inspeccion) => {
   isProcessing.value = inspeccion.id;
   
   try {
-    // 1. Borrar archivos de B2
     await deleteB2Files([inspeccion.url_pdf_informe_inicial, inspeccion.url_pdf_informe_final]);
 
-    // 2. Actualizar la base de datos
     const { data, error } = await supabase
       .from('inspecciones')
       .update({
@@ -129,6 +126,9 @@ const reabrirInspeccion = async (inspeccion) => {
 
     if (error) throw error;
     
+    // Invalidamos la caché de localStorage para forzar la recarga de datos frescos.
+    localStorage.removeItem(`inspections_${centroId}`);
+
     updateInspectionInList(data);
     showNotification('Inspección reabierta. Ahora puedes editarla de nuevo.', 'success');
   } catch (error) {
@@ -148,10 +148,8 @@ const handleDelete = async (inspeccionId) => {
     const inspeccion = inspecciones.value.find(i => i.id === inspeccionId);
     if (!inspeccion) throw new Error("No se encontró la inspección para borrar sus archivos.");
 
-    // 1. Borrar archivos de B2 (informes)
     await deleteB2Files([inspeccion.url_pdf_informe_inicial, inspeccion.url_pdf_informe_final]);
 
-    // 2. Borrar archivos de Supabase Storage (fotos)
     showNotification('Borrando fotos, por favor espera...', 'info');
     const { error: functionError } = await supabase.functions.invoke('delete-inspection-files', {
       body: { inspeccion_id: inspeccionId },
@@ -161,12 +159,14 @@ const handleDelete = async (inspeccionId) => {
       if (!continueDelete) { isProcessing.value = null; return; }
     }
     
-    // 3. Borrar datos de la base de datos
     showNotification('Borrando datos de la base de datos...', 'info');
     const { error: rpcError } = await supabase.rpc('delete_inspection_data', {
       inspeccion_id_param: inspeccionId
     });
     if (rpcError) throw rpcError;
+
+    // Invalidamos la caché de localStorage para forzar la recarga de datos frescos.
+    localStorage.removeItem(`inspections_${centroId}`);
 
     removeInspectionFromList(inspeccionId);
     showNotification('Inspección borrada con éxito.', 'success');
