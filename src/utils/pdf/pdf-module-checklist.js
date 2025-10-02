@@ -63,14 +63,13 @@ export async function buildChecklistAnnex(pdf, reportData) {
         for (const puntoMaestro of puntosDeLaSala) {
             pdf.addPage();
 
-            // --- INICIO DE LA CORRECCIÓN: Logos pequeños en la parte superior ---
             const [clientLogoBase64, arselLogoBase64] = await Promise.all([
                 loadImageAsBase64(inspectionData.centros.url_logo_cliente, { optimize: false }),
                 loadImageAsBase64(arselLogoUrl, { optimize: false })
             ]);
 
-            const logoHeight = 10; // Reducimos la altura del logo
-            const headerY = 12; // Subimos los logos en la página
+            const logoHeight = 10;
+            const headerY = 12;
             const arselLogoWidth = 30;
 
             if (clientLogoBase64) {
@@ -80,21 +79,17 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 pdf.addImage(arselLogoBase64, 'JPEG', DOC_WIDTH - LOCAL_MARGIN - arselLogoWidth, headerY, arselLogoWidth, logoHeight);
             }
             
-            // Calculamos dónde debe empezar la primera tabla (la naranja)
             const firstTableStartY = headerY + logoHeight + 3;
-            // --- FIN DE LA CORRECCIÓN ---
 
-
-            // --- INICIO DE LA CORRECCIÓN: Restauración de la cabecera original ---
             autoTable(pdf, {
                 body: [['FORMATO DE INSPECCIÓN DEL SISTEMA DE ALMACENAJE']],
-                startY: firstTableStartY, // La tabla empieza debajo de los logos
+                startY: firstTableStartY,
                 theme: 'grid',
                 styles: {
                     fontSize: 10,
                     fontStyle: 'bold',
                     halign: 'center',
-                    fillColor: [255, 192, 0], // Color naranja
+                    fillColor: [255, 192, 0],
                     textColor: 0,
                     lineColor: 0,
                     lineWidth: 0.1,
@@ -127,7 +122,6 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 },
                 margin: { left: LOCAL_MARGIN, right: LOCAL_MARGIN }
             });
-            // --- FIN DE LA CORRECCIÓN ---
             
             const puntoInspeccionado = puntosInspeccionadosData.find(pi => pi.punto_maestro_id === puntoMaestro.id);
             const puntoInspeccionadoId = puntoInspeccionado ? puntoInspeccionado.id : null;
@@ -171,7 +165,9 @@ export async function buildChecklistAnnex(pdf, reportData) {
                     lineWidth: 0.1, 
                     font: 'helvetica' 
                 },
-                styles: { fontSize: 8, cellPadding: 1.5, overflow: 'linebreak', lineColor: 0, lineWidth: 0.1, font: 'helvetica', textColor: 0 },
+                // --- INICIO DE LA CORRECCIÓN 2: Reducir el espaciado de las celdas ---
+                styles: { fontSize: 8, cellPadding: 1.0, overflow: 'linebreak', lineColor: 0, lineWidth: 0.1, font: 'helvetica', textColor: 0 }, // cellPadding reducido de 1.5 a 1.0
+                // --- FIN DE LA CORRECCIÓN 2 ---
                 columnStyles: {
                     0: { cellWidth: 136 },
                     1: { cellWidth: 7, halign: 'center' }, 
@@ -184,7 +180,9 @@ export async function buildChecklistAnnex(pdf, reportData) {
 
             let finalY = pdf.lastAutoTable.finalY;
 
-            const OBSERVACIONES_THRESHOLD_COUNT = 12;
+            // --- INICIO DE LA CORRECCIÓN 1: Bajar el límite de observaciones ---
+            const OBSERVACIONES_THRESHOLD_COUNT = 10; // Reducido de 12 a 10
+            // --- FIN DE LA CORRECCIÓN 1 ---
 
             const observacionesArray = incidenciasData
                 .filter(inc => inc.punto_inspeccionado_id === puntoInspeccionadoId && (inc.observaciones || inc.custom_fields))
