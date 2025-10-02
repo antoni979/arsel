@@ -29,19 +29,37 @@ const activeSala = computed(() => salas.value.find(s => s.id === activeSalaId.va
 const isNomenclatureModalOpen = ref(false);
 const newPointCoords = ref(null);
 
-const existingNumbersInActiveSala = computed(() => {
+const existingIdentifiersInActiveSala = computed(() => {
     if (!activeSalaId.value) return [];
     return puntos.value
         .filter(p => p.sala_id === activeSalaId.value)
-        .map(p => {
-            const match = p.nomenclatura.match(/-(\d+)$/);
-            return match ? parseInt(match[1], 10) : 0;
-        });
+        .map(p => p.nomenclatura.split('-').pop() || '');
 });
 
+// --- INICIO DE LA CORRECCIÓN: Lógica de sugerencia de número robusta ---
 const suggestedNextNumber = computed(() => {
-    if (existingNumbersInActiveSala.value.length === 0) return 1;
-    const sortedNumbers = [...existingNumbersInActiveSala.value].sort((a, b) => a - b);
+    if (!activeSalaId.value) return 1;
+
+    // 1. Filtramos los identificadores para quedarnos solo con aquellos
+    //    que son representaciones de números enteros puros.
+    const numericIdentifiers = existingIdentifiersInActiveSala.value
+        .filter(id => {
+            const num = parseInt(id, 10);
+            // La condición clave: un identificador es puramente numérico si al convertirlo a número
+            // y luego de vuelta a string, es idéntico al original.
+            // "1" -> parseInt -> 1 -> String -> "1". ('1' === '1') -> true.
+            // "1,2" -> parseInt -> 1 -> String -> "1". ('1' === '1,2') -> false.
+            // "Picking" -> parseInt -> NaN. -> false.
+            return !isNaN(num) && String(num) === id;
+        })
+        // 2. Convertimos los strings validados a números reales.
+        .map(id => parseInt(id, 10));
+
+    if (numericIdentifiers.length === 0) return 1;
+
+    // 3. El resto de la lógica para encontrar el siguiente número disponible funciona perfectamente.
+    const sortedNumbers = [...numericIdentifiers].sort((a, b) => a - b);
+    
     for (let i = 0; i < sortedNumbers.length; i++) {
         if (sortedNumbers[i] !== i + 1) {
             return i + 1;
@@ -49,6 +67,8 @@ const suggestedNextNumber = computed(() => {
     }
     return sortedNumbers.length + 1;
 });
+// --- FIN DE LA CORRECCIÓN ---
+
 
 const instructionText = computed(() => {
     if (isDrawingMode.value) {
@@ -201,13 +221,13 @@ const handleMapClick = (coords) => {
   }
 };
 
-const handleSaveNomenclature = async (pointNumber) => {
+const handleSaveNomenclature = async (pointIdentifier) => {
   isNomenclatureModalOpen.value = false;
   const coords = newPointCoords.value;
   if (!coords || !activeSalaId.value) return;
 
   const sala = salas.value.find(s => s.id === activeSalaId.value);
-  const newNomenclature = `${sala.nombre}-${pointNumber}`;
+  const newNomenclature = `${sala.nombre}-${pointIdentifier}`;
 
   const { data, error } = await supabase.from('puntos_maestros').insert({ 
     version_id: versionId, 
@@ -236,7 +256,6 @@ const handleDeletePoint = async (point) => {
     }
 };
 
-// ===== INICIO DE LA CORRECCIÓN: Lógica para `addSala` =====
 const addSala = async () => {
   const name = newSalaName.value.trim();
   if (!name) {
@@ -268,9 +287,7 @@ const addSala = async () => {
     newSalaName.value = ''; // Limpiar el input
   }
 };
-// ===== FIN DE LA CORRECCIÓN =====
 
-// ===== INICIO DE LA CORRECCIÓN: Lógica para `deleteSala` =====
 const deleteSala = async (salaId) => {
   const sala = salas.value.find(s => s.id === salaId);
   if (!sala) return;
@@ -294,9 +311,7 @@ const deleteSala = async (salaId) => {
     }
   }
 };
-// ===== FIN DE LA CORRECCIÓN =====
 
-// ===== INICIO DE LA CORRECCIÓN: Lógica para `handleUpdatePosition` =====
 const handleUpdatePosition = async (point) => {
   const { error } = await supabase
     .from('puntos_maestros')
@@ -312,7 +327,6 @@ const handleUpdatePosition = async (point) => {
     // fetchData(); 
   }
 };
-// ===== FIN DE LA CORRECCIÓN =====
 
 const saveSalaColor = async (sala) => {
   await supabase.from('salas').update({ color: sala.color }).eq('id', sala.id);
@@ -396,7 +410,6 @@ const saveSalaColor = async (sala) => {
               <InformationCircleIcon class="h-5 w-5 flex-shrink-0" />
               <span>{{ instructionText }}</span>
             </div>
-            <!-- ======================= INICIO DE LA CORRECCIÓN ======================= -->
             <InteractiveMap
               class="h-full"
               :image-url="version.url_imagen_plano"
@@ -411,7 +424,6 @@ const saveSalaColor = async (sala) => {
               @area-drawn="handleAreaDrawn"
               @drawing-cancelled="cancelAllModes"
             />
-            <!-- ======================= FIN DE LA CORRECCIÓN ======================= -->
           </div>
         </div>
       </div>
@@ -437,7 +449,7 @@ const saveSalaColor = async (sala) => {
       :is-open="isNomenclatureModalOpen"
       :sala-nombre="activeSala?.nombre"
       :suggested-number="suggestedNextNumber"
-      :existing-numbers="existingNumbersInActiveSala"
+      :existing-identifiers="existingIdentifiersInActiveSala"
       @close="isNomenclatureModalOpen = false"
       @save="handleSaveNomenclature"
     />
