@@ -2,7 +2,7 @@
 <script setup>
 import { ref, watch, computed, nextTick, inject } from 'vue';
 import { supabase } from '../supabase';
-import { addToQueue } from '../utils/syncQueue';
+import { addToQueue, getFileLocally } from '../utils/syncQueue'; // <-- Importamos getFileLocally
 import { checklistItems } from '../utils/checklist';
 import { useFileUpload } from '../composables/useFileUpload';
 import {
@@ -23,6 +23,7 @@ const emit = defineEmits(['close', 'save', 'update-nomenclatura', 'update:incide
 const showNotification = inject('showNotification');
 
 const incidencias = ref([]);
+// ... (resto de refs no cambian)
 const puntoInspeccionado = computed(() => props.punto);
 const customFields = ref([]);
 const customValues = ref({});
@@ -33,7 +34,24 @@ const nameInputRef = ref(null);
 const { isUploading, handleFileUpload: processAndUploadFile } = useFileUpload(props.inspeccionId, props.punto.id);
 const dragOverIncidenceId = ref(null);
 
-watch(() => props.isOpen, (newVal) => {
+
+// --- INICIO DE LA MODIFICACIÓN: Lógica de Hidratación ---
+const hydrateOfflineImages = async () => {
+  for (const inc of incidencias.value) {
+    if (inc.offlinePhotoKey_antes && !inc.url_foto_antes?.startsWith('blob:')) {
+      try {
+        const fileData = await getFileLocally(inc.offlinePhotoKey_antes);
+        if (fileData) {
+          inc.url_foto_antes = URL.createObjectURL(fileData);
+        }
+      } catch (error) {
+        console.error(`No se pudo reconstruir la vista previa para ${inc.offlinePhotoKey_antes}:`, error);
+      }
+    }
+  }
+};
+
+watch(() => props.isOpen, async (newVal) => {
   if (newVal) {
     incidencias.value = JSON.parse(JSON.stringify(props.initialIncidencias));
     customFields.value = props.availableCustomFields;
@@ -41,11 +59,56 @@ watch(() => props.isOpen, (newVal) => {
     incidencias.value.forEach(inc => {
         customValues.value[inc.id] = inc.custom_fields || {};
     });
+    
+    // Al abrir, hidratamos las imágenes
+    await hydrateOfflineImages();
+
     isEditingName.value = false;
     collapsedItems.value.clear();
   }
 }, { immediate: true });
+// --- FIN DE LA MODIFICACIÓN ---
 
+
+const handleFileChange = async (event, incidencia) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const result = await processAndUploadFile(file, incidencia);
+  if (result) {
+    incidencia.url_foto_antes = result.previewUrl;
+    incidencia.offlinePhotoKey_antes = result.offlinePhotoKey; // <-- Guardamos la clave
+    emit('update:incidencias', incidencias.value);
+  }
+};
+
+const onDrop = async (event, incidencia) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = null;
+  const files = event.dataTransfer.files;
+  if (files.length === 0) return;
+  const file = files[0];
+  const result = await processAndUploadFile(file, incidencia);
+  if (result) {
+    incidencia.url_foto_antes = result.previewUrl;
+    incidencia.offlinePhotoKey_antes = result.offlinePhotoKey; // <-- Guardamos la clave
+    emit('update:incidencias', incidencias.value);
+  }
+};
+
+const saveIncidencia = (incidencia) => {
+  const { id, ...dataToUpdate } = incidencia;
+  dataToUpdate.custom_fields = customValues.value[id] || {};
+  emit('update:incidencias', incidencias.value);
+  
+  const payload = { ...dataToUpdate };
+  // No enviar la URL de blob ni la clave offline a la DB
+  delete payload.url_foto_antes; 
+  delete payload.offlinePhotoKey_antes;
+  
+  addToQueue({ table: 'incidencias', type: 'update', id: id, payload });
+};
+
+// ... (El resto del script setup es idéntico, no necesita más cambios) ...
 const addIncidencia = async (itemId, defaults = {}) => {
   if (!puntoInspeccionado.value) return;
   let defaultSeverity = defaults.gravedad || 'verde';
@@ -75,7 +138,6 @@ const addIncidencia = async (itemId, defaults = {}) => {
   const { id, ...payload } = newIncidencia;
   addToQueue({ table: 'incidencias', type: 'insert', tempId: tempId, payload: payload });
 };
-
 const deleteIncidencia = async (incidenciaId) => {
     if (!navigator.onLine) { showNotification("Necesitas conexión para borrar incidencias.", "warning"); return; }
     const incidencia = incidencias.value.find(inc => inc.id === incidenciaId);
@@ -101,38 +163,6 @@ const deleteIncidencia = async (incidenciaId) => {
       showNotification("Error al borrar la incidencia: " + error.message, 'error');
     }
 };
-
-const handleFileChange = async (event, incidencia) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  await processAndUploadFile(file, incidencia);
-  emit('update:incidencias', incidencias.value);
-};
-
-const onDrop = async (event, incidencia) => {
-  event.preventDefault();
-  dragOverIncidenceId.value = null;
-  const files = event.dataTransfer.files;
-  if (files.length === 0) return;
-  const file = files[0];
-  await processAndUploadFile(file, incidencia);
-  emit('update:incidencias', incidencias.value);
-};
-
-const saveIncidencia = (incidencia) => {
-  const { id, ...dataToUpdate } = incidencia;
-  dataToUpdate.custom_fields = customValues.value[id] || {};
-
-  emit('update:incidencias', incidencias.value);
-
-  if (dataToUpdate.url_foto_antes && dataToUpdate.url_foto_antes.startsWith('blob:')) {
-      delete dataToUpdate.url_foto_antes;
-  }
-  addToQueue({
-    table: 'incidencias', type: 'update', id: id, payload: dataToUpdate,
-  });
-};
-
 const toggleItemStatus = async (itemId) => {
   if (itemId === 3) {
     alert("El estado de este punto se gestiona automáticamente desde las preguntas superiores.");
