@@ -12,7 +12,6 @@ export const isProcessing = ref(false);
 const QUEUE_STORAGE_KEY = 'arsel-sync-queue';
 const FILE_STORAGE_KEY_PREFIX = 'arsel-offline-file-';
 
-// ... (toda la lógica de IndexedDB no cambia) ...
 const dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open("ArselOfflineFiles", 1);
     request.onerror = () => reject("Error al abrir IndexedDB");
@@ -22,6 +21,7 @@ const dbPromise = new Promise((resolve, reject) => {
         db.createObjectStore("files");
     };
 });
+
 async function saveFileLocally(fileId, file) {
     const db = await dbPromise;
     return new Promise((resolve, reject) => {
@@ -32,6 +32,7 @@ async function saveFileLocally(fileId, file) {
         request.onerror = () => reject("No se pudo guardar el archivo localmente.");
     });
 }
+
 async function getFileLocally(fileId) {
     const db = await dbPromise;
     return new Promise((resolve, reject) => {
@@ -42,6 +43,7 @@ async function getFileLocally(fileId) {
         request.onerror = () => reject("No se pudo leer el archivo local.");
     });
 }
+
 async function deleteFileLocally(fileId) {
     const db = await dbPromise;
     return new Promise((resolve, reject) => {
@@ -51,10 +53,10 @@ async function deleteFileLocally(fileId) {
         resolve();
     });
 }
+
 function saveQueueToStorage() {
   localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(syncQueue.value));
 }
-// ... (fin de la lógica de IndexedDB) ...
 
 const tempIdMap = new Map();
 
@@ -64,16 +66,14 @@ export async function processQueue() {
   }
   isProcessing.value = true;
   
-  // Mantenemos una notificación discreta solo al iniciar el proceso
   if(syncQueue.value.length > 0) {
-    // Puedes descomentar esto si quieres una notificación mínima
     // showNotification('Sincronizando...', 'info', 1500);
   }
 
-  // ... (el resto de la función processQueue no cambia) ...
   while (syncQueue.value.length > 0) {
     const action = syncQueue.value[0];
     let success = false;
+
     try {
       if (action.payload) {
         for (const key in action.payload) {
@@ -86,16 +86,18 @@ export async function processQueue() {
           }
         }
       }
+
       const sanitizedPayload = { ...action.payload };
       delete sanitizedPayload.id;
       delete sanitizedPayload.created_at;
-      let query;
+
       switch (action.type) {
         case 'insert':
           const { data: insertData, error: insertError } = await supabase.from(action.table).insert(sanitizedPayload).select().single();
           if (insertError) throw insertError;
           if (action.tempId) { tempIdMap.set(action.tempId, insertData.id); }
           break;
+
         case 'update':
           let updateId = action.id;
           if (typeof updateId === 'string' && updateId.startsWith('temp_')) {
@@ -105,26 +107,39 @@ export async function processQueue() {
           const { error: updateError } = await supabase.from(action.table).update(sanitizedPayload).eq('id', updateId);
           if (updateError) throw updateError;
           break;
+        
         case 'uploadAndUpdate':
-          const file = await getFileLocally(action.fileId);
-          if (!file) throw new Error("Archivo local no encontrado para subir.");
-          const { error: uploadError } = await supabase.storage.from(action.bucket).upload(action.path, file, { upsert: true });
+          let fileData = await getFileLocally(action.fileId);
+          if (!fileData) throw new Error("Archivo local no encontrado para subir.");
+
+          // --- INICIO DE LA CORRECCIÓN CRÍTICA ---
+          // Reconstituimos el Blob para asegurar la compatibilidad con la librería de Supabase
+          const fileToUpload = new Blob([fileData], { type: fileData.type });
+          // --- FIN DE LA CORRECCIÓN CRÍTICA ---
+
+          const { error: uploadError } = await supabase.storage.from(action.bucket).upload(action.path, fileToUpload, { upsert: true }); // Usamos el Blob reconstituido
           if (uploadError) throw uploadError;
+
           const { data: { publicUrl } } = supabase.storage.from(action.bucket).getPublicUrl(action.path);
+
           let recordId = action.recordId;
           if (typeof recordId === 'string' && recordId.startsWith('temp_')) {
             if (!tempIdMap.has(recordId)) throw new Error(`ID temporal ${recordId} no encontrado para actualizar URL.`);
             recordId = tempIdMap.get(recordId);
           }
+
           const updateUrlPayload = {};
           updateUrlPayload[action.urlColumn] = publicUrl;
           const { error: urlUpdateError } = await supabase.from(action.table).update(updateUrlPayload).eq('id', recordId);
           if (urlUpdateError) throw urlUpdateError;
+
           await deleteFileLocally(action.fileId);
           break;
+
         default:
           throw new Error(`Tipo de acción desconocido: ${action.type}`);
       }
+      
       success = true;
     } catch (error) {
       console.error('Error al procesar la acción de la cola:', error);
@@ -133,6 +148,7 @@ export async function processQueue() {
       }
       break; 
     }
+
     if (success) {
       syncQueue.value.shift();
       saveQueueToStorage();
@@ -149,7 +165,7 @@ export async function addToQueue(action) {
           action.fileId = fileId;
           delete action.file;
       } catch(e) {
-          showNotification(e, 'error');
+          showNotification(e.message, 'error');
           return;
       }
   }
@@ -157,8 +173,6 @@ export async function addToQueue(action) {
   syncQueue.value.push(action);
   saveQueueToStorage();
   
-  // --- NOTIFICACIÓN ELIMINADA ---
-
   processQueue(); 
 }
 
