@@ -4,17 +4,36 @@ import { ref } from 'vue';
 import { useNotification } from '../utils/notification';
 import { addToQueue } from '../utils/syncQueue';
 
+// --- INICIO DE LA MODIFICACIÓN: Nuevo helper para leer archivos ---
+/**
+ * Lee un objeto File y lo convierte en un ArrayBuffer.
+ * Esto es crucial para la persistencia en iOS, que puede revocar BlobURLs.
+ * @param {File} file El archivo a leer.
+ * @returns {Promise<ArrayBuffer>} El contenido del archivo como ArrayBuffer.
+ */
+function readFileAsArrayBuffer(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      resolve(reader.result);
+    };
+    reader.onerror = (error) => {
+      reject(error);
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+// --- FIN DE LA MODIFICACIÓN ---
+
 export function useFileUpload(inspeccionId, puntoId) {
   const { showNotification } = useNotification();
-  const isUploading = ref(null); // ID de la incidencia que se está procesando
+  const isUploading = ref(null);
 
-  // Función de compresión de imagen (movida aquí desde el modal)
   const compressImage = (file) => {
     return new Promise((resolve, reject) => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       const img = new Image();
-
       img.onload = () => {
         let { width, height } = img;
         const maxDimension = 1024;
@@ -69,17 +88,27 @@ export function useFileUpload(inspeccionId, puntoId) {
         fileToUpload = await compressImage(file);
       }
 
+      // --- INICIO DE LA MODIFICACIÓN: Leemos el archivo a un formato estable ---
+      // 1. Leemos el contenido del archivo a un ArrayBuffer
+      const arrayBuffer = await readFileAsArrayBuffer(fileToUpload);
+      // 2. Creamos un nuevo Blob y una nueva URL a partir del ArrayBuffer.
+      //    Este nuevo Blob es más estable que el original del input.
+      const stableBlob = new Blob([arrayBuffer], { type: fileToUpload.type });
+      const stableBlobUrl = URL.createObjectURL(stableBlob);
+      // --- FIN DE LA MODIFICACIÓN ---
+
       const fileName = `inspeccion_${inspeccionId}/punto_${puntoId}/${Date.now()}_${file.name}`;
       
-      // Actualización optimista de la UI
-      incidencia.url_foto_antes = URL.createObjectURL(fileToUpload);
+      // Actualización optimista de la UI con la URL estable
+      incidencia.url_foto_antes = stableBlobUrl;
 
       // Encolar la acción de subida y actualización
+      // Pasamos el Blob estable, que es lo que IndexedDB guardará.
       await addToQueue({
         type: 'uploadAndUpdate',
         bucket: 'incidencias',
         path: fileName,
-        file: fileToUpload,
+        file: stableBlob, // <-- Pasamos el Blob estable
         table: 'incidencias',
         recordId: incidencia.id,
         urlColumn: 'url_foto_antes',
