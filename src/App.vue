@@ -1,8 +1,6 @@
 <!-- src/App.vue -->
 <script setup>
-// --- INICIO DE LA CORRECCIÓN: Añadimos 'onUpdated' al import ---
-import { computed, onMounted, onUnmounted, onUpdated, provide } from 'vue'; 
-// --- FIN DE LA CORRECCIÓN ---
+import { computed, onMounted, onUnmounted, onUpdated, provide } from 'vue';
 import { useRoute } from 'vue-router';
 import DefaultLayout from './layouts/DefaultLayout.vue';
 import BlankLayout from './layouts/BlankLayout.vue';
@@ -13,25 +11,36 @@ import { useRegisterSW } from 'virtual:pwa-register/vue';
 import ReloadPWA from './components/ReloadPWA.vue';
 import { initializeQueue, processQueue } from './utils/syncQueue';
 
-// --- LÓGICA DE ACTUALIZACIÓN DE PWA ---
 const { offlineReady, needRefresh, updateServiceWorker } = useRegisterSW();
 
 const handleUpdateServiceWorker = async () => {
   await updateServiceWorker();
 };
-// --- FIN LÓGICA PWA ---
+
+// --- INICIO DE LA MODIFICACIÓN: Nuevo handler para visibilidad ---
+const handleVisibilityChange = () => {
+  if (document.visibilityState === 'visible') {
+    // Cuando la app vuelve a ser visible, intentamos sincronizar.
+    console.log("App is visible again, attempting to sync queue.");
+    processQueue();
+  }
+};
+// --- FIN DE LA MODIFICACIÓN ---
 
 onMounted(() => {
   console.log('[App.vue] Componente montado en el DOM.');
-  // Inicializa la cola de sincronización desde localStorage
   initializeQueue();
-  // Escucha el evento 'online' para procesar la cola cuando se recupere la conexión
   window.addEventListener('online', processQueue);
+  // --- INICIO DE LA MODIFICACIÓN: Añadimos el nuevo listener ---
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  // --- FIN DE LA MODIFICACIÓN ---
 });
 
 onUnmounted(() => {
-  // Limpia el listener cuando el componente se destruye
   window.removeEventListener('online', processQueue);
+  // --- INICIO DE LA MODIFICACIÓN: Limpiamos el nuevo listener ---
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+  // --- FIN DE LA MODIFICACIÓN ---
 });
 
 onUpdated(() => console.log('[App.vue] Componente actualizado (cambio de layout o ruta).'));
@@ -51,7 +60,6 @@ const layout = computed(() => {
 </script>
 
 <template>
-  <!-- El nuevo notificador de PWA vivirá por encima de todo -->
   <ReloadPWA 
     :offline-ready="offlineReady" 
     :need-refresh="needRefresh" 
