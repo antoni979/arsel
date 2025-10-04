@@ -6,9 +6,7 @@ import { supabase } from '../supabase';
 import InteractiveMap from '../components/InteractiveMap.vue';
 import ChecklistModal from '../components/ChecklistModal.vue';
 import InspectionSidebar from '../components/InspectionSidebar.vue';
-// --- INICIO DE LA MODIFICACIÓN ---
-import MobileStatusIndicator from '../components/MobileStatusIndicator.vue';
-// --- FIN DE LA MODIFICACIÓN ---
+import GlobalStatusIndicator from '../components/GlobalStatusIndicator.vue';
 import { CheckCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
 import { generateTextReport } from '../utils/pdf';
 import SkeletonLoader from '../components/SkeletonLoader.vue';
@@ -151,6 +149,16 @@ const incidenciasDelPuntoSeleccionado = computed(() => {
     if (!selectedPunto.value) return [];
     return allIncidencias.value.filter(inc => inc.punto_inspeccionado_id === selectedPunto.value.id);
 });
+
+const handleIncidenciasUpdate = (nuevasIncidenciasDelPunto) => {
+  if (!selectedPunto.value) return;
+
+  const otrasIncidencias = allIncidencias.value.filter(
+    inc => inc.punto_inspeccionado_id !== selectedPunto.value.id
+  );
+
+  allIncidencias.value = [...otrasIncidencias, ...nuevasIncidenciasDelPunto];
+};
 
 const createNewPointAt = async (coords, salaId) => {
   const salaSeleccionada = salas.value.find(s => s.id === salaId);
@@ -325,7 +333,28 @@ const finalizarInspeccion = async () => {
 <template>
   <div class="h-full flex flex-col">
     <div v-if="loading" class="flex-1 flex flex-col lg:flex-row overflow-hidden">
-      <!-- Skeleton... -->
+      <header class="flex-shrink-0 px-4 md:px-8 pt-6 pb-4 bg-slate-100/80 border-b border-slate-200 z-10">
+         <div class="flex flex-col md:flex-row justify-between items-start gap-4">
+            <div class="flex-1 space-y-2">
+               <SkeletonLoader class="h-8 w-3/4" />
+               <SkeletonLoader class="h-5 w-1/2" />
+            </div>
+            <div class="w-full md:w-auto">
+               <SkeletonLoader class="h-10 w-48" />
+            </div>
+         </div>
+      </header>
+      <div class="flex-1 flex flex-col lg:flex-row overflow-hidden">
+         <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 p-4 space-y-4">
+            <SkeletonLoader class="h-10 w-full" />
+            <div class="space-y-2 pt-4">
+               <SkeletonLoader v-for="i in 5" :key="i" class="h-12 w-full" />
+            </div>
+         </aside>
+         <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full p-4">
+            <SkeletonLoader class="h-full w-full" />
+         </main>
+      </div>
     </div>
     
     <div v-else-if="inspeccion && centro && version" class="flex-1 flex flex-col min-h-0">
@@ -344,11 +373,7 @@ const finalizarInspeccion = async () => {
             </div>
           </div>
           <div class="w-full md:w-auto flex items-center flex-col sm:flex-row gap-2">
-            <!-- --- INICIO DE LA MODIFICACIÓN --- -->
-            <!-- Este componente solo se mostrará en pantallas pequeñas (<768px) -->
-            <MobileStatusIndicator class="w-full md:hidden" />
-            <!-- --- FIN DE LA MODIFICACIÓN --- -->
-
+            <GlobalStatusIndicator mode="mobile" class="w-full justify-center md:hidden" />
             <button v-if="canEditInspection" @click="finalizarInspeccion" :disabled="isFinalizing" class="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm disabled:bg-slate-400">
               <CheckCircleIcon class="h-5 w-5" />
               {{ isFinalizing ? 'Finalizando...' : 'Finalizar Inspección' }}
@@ -409,6 +434,7 @@ const finalizarInspeccion = async () => {
       @close="isModalOpen = false" 
       @save="refreshInspectedPoints"
       @update-nomenclatura="handleUpdatePointNomenclatura"
+      @update:incidencias="handleIncidenciasUpdate"
     />
   </div>
 </template>

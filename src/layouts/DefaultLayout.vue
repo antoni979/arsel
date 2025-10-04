@@ -2,25 +2,12 @@
 <script setup>
 import { ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
-// --- INICIO DE LA CORRECCIÓN ---
-// Ambos iconos, WifiIcon y SignalSlashIcon, están en el paquete 'outline'
-import { 
-  HomeIcon, 
-  ListBulletIcon, 
-  DocumentMagnifyingGlassIcon, 
-  Cog6ToothIcon, 
-  Bars3Icon, 
-  TableCellsIcon, 
-  WifiIcon, 
-  SignalSlashIcon // <-- ESTE ES EL NOMBRE CORRECTO DEL ICONO
-} from '@heroicons/vue/24/outline';
-// --- FIN DE LA CORRECCIÓN ---
+import { HomeIcon, ListBulletIcon, DocumentMagnifyingGlassIcon, Cog6ToothIcon, Bars3Icon, TableCellsIcon } from '@heroicons/vue/24/outline';
 import { supabase } from '../supabase';
 import { useRouter } from 'vue-router';
-import SyncStatusIndicator from '../components/SyncStatusIndicator.vue';
-import { useOnlineStatus } from '../composables/useOnlineStatus';
-
-const { isOnline } = useOnlineStatus();
+// --- INICIO DE LA MODIFICACIÓN ---
+import GlobalStatusIndicator from '../components/GlobalStatusIndicator.vue';
+// --- FIN DE LA MODIFICACIÓN ---
 
 const route = useRoute();
 const router = useRouter();
@@ -45,6 +32,10 @@ const handleLogout = async () => {
 </script>
 <template>
 <div class="relative h-screen flex overflow-hidden bg-slate-100">
+  <!-- Overlay para móvil -->
+  <div v-if="isSidebarOpen" @click="isSidebarOpen = false" class="fixed inset-0 bg-black bg-opacity-50 z-20 md:hidden"></div>
+  
+  <!-- Barra Lateral -->
   <aside 
     :class="[
       'absolute inset-y-0 left-0 w-64 bg-slate-800 flex flex-col z-30 transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0',
@@ -72,15 +63,11 @@ const handleLogout = async () => {
         </RouterLink>
     </nav>
     
+    <!-- --- INICIO DE LA MODIFICACIÓN: Indicador para ESCRITORIO --- -->
     <div class="px-4 py-2 border-t border-slate-700">
-      <div 
-        :class="['flex items-center justify-center gap-2 p-2 rounded-md text-xs font-bold', isOnline ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300']">
-        <!-- --- INICIO DE LA CORRECCIÓN --- -->
-        <component :is="isOnline ? WifiIcon : SignalSlashIcon" class="h-4 w-4" />
-        <!-- --- FIN DE LA CORRECCIÓN --- -->
-        <span>{{ isOnline ? 'Conectado' : 'Sin Conexión' }}</span>
-      </div>
+      <GlobalStatusIndicator mode="desktop" />
     </div>
+    <!-- --- FIN DE LA MODIFICACIÓN --- -->
 
     <div class="p-4 border-t border-slate-700">
       <button @click="handleLogout" class="w-full px-4 py-2 font-semibold text-white bg-red-600 rounded-md hover:bg-red-700">
@@ -89,13 +76,16 @@ const handleLogout = async () => {
     </div>
   </aside>
 
+  <!-- Contenido Principal -->
   <div class="flex-1 flex flex-col overflow-hidden">
       <header class="md:hidden h-16 bg-white shadow-sm flex items-center justify-between px-4 flex-shrink-0">
         <button @click="isSidebarOpen = true" class="text-slate-600">
           <Bars3Icon class="h-6 w-6" />
         </button>
         <h2 class="text-lg font-bold text-slate-800">{{ route.name }}</h2>
-        <div class="w-6"></div> <!-- Espaciador -->
+        <!-- --- INICIO DE LA MODIFICACIÓN: Indicador para MÓVIL --- -->
+        <GlobalStatusIndicator mode="mobile" />
+        <!-- --- FIN DE LA MODIFICACIÓN --- -->
       </header>
       
       <main class="flex-1 overflow-y-auto">
@@ -104,5 +94,5 @@ const handleLogout = async () => {
     </div>
   </div>
   
-  <SyncStatusIndicator />
+  <!-- El indicador flotante de escritorio ya no es necesario aquí -->
 </template>

@@ -4,9 +4,7 @@ import { ref, watch, computed, nextTick, inject } from 'vue';
 import { supabase } from '../supabase';
 import { addToQueue } from '../utils/syncQueue';
 import { checklistItems } from '../utils/checklist';
-// --- INICIO REFACTORIZACIÓN: Importamos el nuevo composable ---
 import { useFileUpload } from '../composables/useFileUpload';
-// --- FIN REFACTORIZACIÓN ---
 import {
   ArrowUpTrayIcon, CheckCircleIcon, XCircleIcon, PlusCircleIcon, TrashIcon,
   ArrowTrendingUpIcon, ArrowTrendingDownIcon, StopCircleIcon, ChevronUpIcon, ChevronDownIcon,
@@ -21,7 +19,7 @@ const props = defineProps({
   availableCustomFields: { type: Array, required: true },
 });
 
-const emit = defineEmits(['close', 'save', 'update-nomenclatura']);
+const emit = defineEmits(['close', 'save', 'update-nomenclatura', 'update:incidencias']);
 const showNotification = inject('showNotification');
 
 const incidencias = ref([]);
@@ -32,11 +30,7 @@ const collapsedItems = ref(new Set());
 const isEditingName = ref(false);
 const tempPointIdentifier = ref('');
 const nameInputRef = ref(null);
-
-// --- INICIO REFACTORIZACIÓN: Instanciamos el composable de subida de archivos ---
 const { isUploading, handleFileUpload: processAndUploadFile } = useFileUpload(props.inspeccionId, props.punto.id);
-// --- FIN REFACTORIZACIÓN ---
-
 const dragOverIncidenceId = ref(null);
 
 watch(() => props.isOpen, (newVal) => {
@@ -52,10 +46,8 @@ watch(() => props.isOpen, (newVal) => {
   }
 }, { immediate: true });
 
-// --- INICIO DE LA CORRECCIÓN CRÍTICA ---
 const addIncidencia = async (itemId, defaults = {}) => {
   if (!puntoInspeccionado.value) return;
-
   let defaultSeverity = defaults.gravedad || 'verde';
   if (!navigator.onLine && !defaults.gravedad) {
       defaultSeverity = 'ambar';
@@ -63,7 +55,6 @@ const addIncidencia = async (itemId, defaults = {}) => {
     const { data: def } = await supabase.from('checklist_defaults').select('default_severity').eq('point_id', itemId).single();
     if (def) defaultSeverity = def.default_severity;
   }
-
   const tempId = `temp_${Date.now()}`;
   const newIncidencia = {
     id: tempId,
@@ -76,21 +67,71 @@ const addIncidencia = async (itemId, defaults = {}) => {
     url_foto_antes: null,
     url_foto_despues: null,
   };
-
   incidencias.value.push(newIncidencia);
   customValues.value[newIncidencia.id] = {};
   
-  // CORRECCIÓN: Excluimos 'id' y cualquier otra propiedad que no deba ir en el payload.
-  const { id, ...payload } = newIncidencia; 
-  
+  emit('update:incidencias', incidencias.value);
+
+  const { id, ...payload } = newIncidencia;
+  addToQueue({ table: 'incidencias', type: 'insert', tempId: tempId, payload: payload });
+};
+
+const deleteIncidencia = async (incidenciaId) => {
+    if (!navigator.onLine) { showNotification("Necesitas conexión para borrar incidencias.", "warning"); return; }
+    const incidencia = incidencias.value.find(inc => inc.id === incidenciaId);
+    if (!incidencia) return;
+    if (incidencia.url_foto_antes) {
+      try {
+        const url = new URL(incidencia.url_foto_antes);
+        const pathParts = url.pathname.split('/');
+        const bucketIndex = pathParts.findIndex(part => part === 'incidencias');
+        if (bucketIndex !== -1) {
+          const filePath = pathParts.slice(bucketIndex + 1).join('/');
+          await supabase.storage.from('incidencias').remove([filePath]);
+        }
+      } catch (error) { console.error('Error processing photo URL for deletion:', error); }
+    }
+    const { error } = await supabase.from('incidencias').delete().eq('id', incidenciaId);
+    if (!error) {
+      incidencias.value = incidencias.value.filter(inc => inc.id !== incidenciaId);
+      delete customValues.value[incidenciaId];
+      emit('update:incidencias', incidencias.value);
+      showNotification('Incidencia eliminada correctamente.', 'success');
+    } else {
+      showNotification("Error al borrar la incidencia: " + error.message, 'error');
+    }
+};
+
+const handleFileChange = async (event, incidencia) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  await processAndUploadFile(file, incidencia);
+  emit('update:incidencias', incidencias.value);
+};
+
+const onDrop = async (event, incidencia) => {
+  event.preventDefault();
+  dragOverIncidenceId.value = null;
+  const files = event.dataTransfer.files;
+  if (files.length === 0) return;
+  const file = files[0];
+  await processAndUploadFile(file, incidencia);
+  emit('update:incidencias', incidencias.value);
+};
+
+const saveIncidencia = (incidencia) => {
+  const { id, ...dataToUpdate } = incidencia;
+  dataToUpdate.custom_fields = customValues.value[id] || {};
+
+  emit('update:incidencias', incidencias.value);
+
+  if (dataToUpdate.url_foto_antes && dataToUpdate.url_foto_antes.startsWith('blob:')) {
+      delete dataToUpdate.url_foto_antes;
+  }
   addToQueue({
-    table: 'incidencias',
-    type: 'insert',
-    tempId: tempId,
-    payload: payload,
+    table: 'incidencias', type: 'update', id: id, payload: dataToUpdate,
   });
 };
-// --- FIN DE LA CORRECCIÓN CRÍTICA ---
 
 const toggleItemStatus = async (itemId) => {
   if (itemId === 3) {
@@ -108,40 +149,13 @@ const toggleItemStatus = async (itemId) => {
       const { error } = await supabase.from('incidencias').delete().in('id', idsToDelete);
       if (!error) {
         incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
+        emit('update:incidencias', incidencias.value);
       }
     }
   } else {
     await addIncidencia(itemId);
   }
 };
-
-const handleFileChange = (event, incidencia) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  processAndUploadFile(file, incidencia);
-};
-
-const onDrop = (event, incidencia) => {
-  event.preventDefault();
-  dragOverIncidenceId.value = null;
-  const files = event.dataTransfer.files;
-  if (files.length === 0) return;
-  const file = files[0];
-  processAndUploadFile(file, incidencia);
-};
-
-const saveIncidencia = (incidencia) => {
-  const { id, ...dataToUpdate } = incidencia;
-  dataToUpdate.custom_fields = customValues.value[id] || {};
-  if (dataToUpdate.url_foto_antes && dataToUpdate.url_foto_antes.startsWith('blob:')) {
-      delete dataToUpdate.url_foto_antes;
-  }
-  addToQueue({
-    table: 'incidencias', type: 'update', id: id, payload: dataToUpdate,
-  });
-};
-
-// ... (El resto del script setup que no cambia)
 const pointPrefix = computed(() => {
   if (!props.punto?.nomenclatura) return '';
   const parts = props.punto.nomenclatura.split('-');
@@ -189,6 +203,7 @@ const handlePlacaStatusChange = async (status) => {
       const idsToDelete = incidenciasPlaca.map(inc => inc.id);
       await supabase.from('incidencias').delete().in('id', idsToDelete);
       incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
+      emit('update:incidencias', incidencias.value);
     }
   } else {
     if (incidenciasPlaca.length === 0) { await addIncidencia(2, { gravedad: 'verde', observaciones: 'Falta ficha' }); }
@@ -202,6 +217,7 @@ const handleModificationChange = async (newStatus) => {
   if (idsToDelete.length > 0) {
     await supabase.from('incidencias').delete().in('id', idsToDelete);
     incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
+    emit('update:incidencias', incidencias.value);
   }
   if (newStatus === 'aumentado') {
     await addIncidencia(3, { gravedad: 'ambar', observaciones: 'Se ha aumentado el número de módulos y/o niveles.' });
@@ -211,30 +227,6 @@ const handleModificationChange = async (newStatus) => {
 };
 const getIncidenciasForItem = (itemId) => computed(() => incidencias.value.filter(inc => inc.item_checklist === itemId));
 const getCustomFieldsForItem = (itemId) => customFields.value.filter(field => field.point_id === itemId);
-const deleteIncidencia = async (incidenciaId) => {
-    if (!navigator.onLine) { showNotification("Necesitas conexión para borrar incidencias.", "warning"); return; }
-  const incidencia = incidencias.value.find(inc => inc.id === incidenciaId);
-  if (!incidencia) return;
-  if (incidencia.url_foto_antes) {
-    try {
-      const url = new URL(incidencia.url_foto_antes);
-      const pathParts = url.pathname.split('/');
-      const bucketIndex = pathParts.findIndex(part => part === 'incidencias');
-      if (bucketIndex !== -1) {
-        const filePath = pathParts.slice(bucketIndex + 1).join('/');
-        await supabase.storage.from('incidencias').remove([filePath]);
-      }
-    } catch (error) { console.error('Error processing photo URL for deletion:', error); }
-  }
-  const { error } = await supabase.from('incidencias').delete().eq('id', incidenciaId);
-  if (!error) {
-    incidencias.value = incidencias.value.filter(inc => inc.id !== incidenciaId);
-    delete customValues.value[incidenciaId];
-    showNotification('Incidencia eliminada correctamente.', 'success');
-  } else {
-    showNotification("Error al borrar la incidencia: " + error.message, 'error');
-  }
-};
 const isCollapsed = (itemId) => collapsedItems.value.has(itemId);
 const toggleCollapse = (itemId) => { if (isCollapsed(itemId)) { collapsedItems.value.delete(itemId); } else { collapsedItems.value.add(itemId); } };
 const onDragOver = (event, incidenceId) => { event.preventDefault(); dragOverIncidenceId.value = incidenceId; };
@@ -255,15 +247,13 @@ const handleClose = () => {
       }
     }
   }
-  emit('save');
+  emit('save'); 
   emit('close');
 };
 </script>
 
 <template>
   <div v-if="isOpen" class="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
-    <!-- El template es idéntico al anterior, no necesita cambios -->
-    <!-- ... (pega aquí tu template sin modificar) ... -->
     <div class="bg-slate-50 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
     <header class="p-4 border-b bg-white rounded-t-lg flex justify-between items-center">
     <div class="flex items-center gap-2">
