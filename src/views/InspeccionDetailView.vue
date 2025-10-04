@@ -6,9 +6,13 @@ import { supabase } from '../supabase';
 import InteractiveMap from '../components/InteractiveMap.vue';
 import ChecklistModal from '../components/ChecklistModal.vue';
 import InspectionSidebar from '../components/InspectionSidebar.vue';
+// --- INICIO DE LA MODIFICACIÓN ---
+import MobileStatusIndicator from '../components/MobileStatusIndicator.vue';
+// --- FIN DE LA MODIFICACIÓN ---
 import { CheckCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
 import { generateTextReport } from '../utils/pdf';
 import SkeletonLoader from '../components/SkeletonLoader.vue';
+import { addToQueue } from '../utils/syncQueue';
 
 const showNotification = inject('showNotification');
 const showConfirm = inject('showConfirm');
@@ -26,7 +30,8 @@ const puntosMaestros = ref([]);
 const puntosInspeccionados = ref([]);
 const isModalOpen = ref(false);
 const selectedPunto = ref(null);
-
+const allIncidencias = ref([]);
+const allCustomFields = ref([]);
 const isPlacementMode = ref(false);
 const newPointSalaId = ref(null);
 const isAreaDrawingMode = ref(false);
@@ -36,17 +41,24 @@ const canEditInspection = computed(() => {
   return inspeccion.value?.estado === 'en_progreso';
 });
 
-// ===== INICIO DE LA CORRECCIÓN: Lógica de recarga inteligente =====
 const refreshInspectedPoints = async () => {
-  // Esta función solo recarga los puntos inspeccionados, evitando el parpadeo.
-  const { data, error } = await supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId);
-  if (error) {
+  if (!navigator.onLine) {
+    return;
+  }
+  const { data: updatedPoints, error: pointsError } = await supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId);
+  if (pointsError) {
     showNotification('Error al refrescar los datos de los puntos.', 'error');
   } else {
-    puntosInspeccionados.value = data || [];
+    puntosInspeccionados.value = updatedPoints || [];
+  }
+  
+  const { data: updatedIncidencias, error: incidenciasError } = await supabase.from('incidencias').select('*').eq('inspeccion_id', inspeccionId);
+  if (incidenciasError) {
+      showNotification('Error al refrescar las incidencias.', 'error');
+  } else {
+      allIncidencias.value = updatedIncidencias || [];
   }
 };
-// ===== FIN DE LA CORRECCIÓN =====
 
 const loadAllData = async () => {
   loading.value = true;
@@ -73,15 +85,19 @@ const loadAllData = async () => {
       return;
   }
   
-  const [salasRes, puntosMaestrosRes, puntosInspeccionadosRes] = await Promise.all([
+  const [salasRes, puntosMaestrosRes, puntosInspeccionadosRes, incidenciasRes, customFieldsRes] = await Promise.all([
     supabase.from('salas').select('*').eq('version_id', version.value.id).order('nombre'),
     supabase.from('puntos_maestros').select('*').eq('version_id', version.value.id),
-    supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId)
+    supabase.from('puntos_inspeccionados').select('*').eq('inspeccion_id', inspeccionId),
+    supabase.from('incidencias').select('*').eq('inspeccion_id', inspeccionId),
+    supabase.from('checklist_custom_fields').select('*').order('point_id, id')
   ]);
   
   salas.value = salasRes.data || [];
   puntosMaestros.value = puntosMaestrosRes.data || [];
   puntosInspeccionados.value = puntosInspeccionadosRes.data || [];
+  allIncidencias.value = incidenciasRes.data || [];
+  allCustomFields.value = customFieldsRes.data || [];
 
   await initializeInspectionPoints();
 
@@ -90,6 +106,10 @@ const loadAllData = async () => {
 
 const initializeInspectionPoints = async () => {
   if (canEditInspection.value && puntosInspeccionados.value.length === 0 && puntosMaestros.value.length > 0) {
+    if (!navigator.onLine) {
+        showNotification("Se necesita conexión a internet para iniciar una inspección por primera vez.", "warning", 5000);
+        return;
+    }
     const pointsToCreate = puntosMaestros.value.map(pm => ({
       inspeccion_id: inspeccionId, punto_maestro_id: pm.id, nomenclatura: pm.nomenclatura,
       coordenada_x: pm.coordenada_x, coordenada_y: pm.coordenada_y,
@@ -127,6 +147,11 @@ const puntosAgrupadosPorSala = computed(() => {
   })).filter(g => g.puntos.length > 0 || g.isNew);
 });
 
+const incidenciasDelPuntoSeleccionado = computed(() => {
+    if (!selectedPunto.value) return [];
+    return allIncidencias.value.filter(inc => inc.punto_inspeccionado_id === selectedPunto.value.id);
+});
+
 const createNewPointAt = async (coords, salaId) => {
   const salaSeleccionada = salas.value.find(s => s.id === salaId);
   const puntosDeLaSala = puntosMaestros.value.filter(p => p.sala_id === salaId);
@@ -135,61 +160,39 @@ const createNewPointAt = async (coords, salaId) => {
       return isNaN(num) ? 0 : num;
   }));
   const nuevaNomenclatura = `${salaSeleccionada.nombre}-${ultimoNumero + 1}`;
-  
-  const { data: nuevoPuntoMaestro, error: maestroError } = await supabase.from('puntos_maestros')
-    .insert({ version_id: version.value.id, sala_id: salaId, nomenclatura: nuevaNomenclatura, coordenada_x: coords.x, coordenada_y: coords.y })
-    .select().single();
-  if (maestroError) {
-    showNotification('Error al crear el punto maestro: ' + maestroError.message, 'error');
-    return;
-  }
+
+  const tempMaestroId = `temp_maestro_${Date.now()}`;
+  const nuevoPuntoMaestro = {
+    id: tempMaestroId, version_id: version.value.id, sala_id: salaId, 
+    nomenclatura: nuevaNomenclatura, coordenada_x: coords.x, coordenada_y: coords.y
+  };
+  const tempInspeccionadoId = `temp_inspeccionado_${Date.now()}`;
+  const nuevoPuntoIns = {
+    id: tempInspeccionadoId, inspeccion_id: inspeccionId, punto_maestro_id: tempMaestroId,
+    nomenclatura: nuevaNomenclatura, coordenada_x: coords.x, coordenada_y: coords.y,
+    estado: 'nuevo', tiene_placa_caracteristicas: true
+  };
+
   puntosMaestros.value.push(nuevoPuntoMaestro);
+  puntosInspeccionados.value.push(nuevoPuntoIns);
 
-  const { data: nuevoPuntoIns, error: inspError } = await supabase.from('puntos_inspeccionados')
-    .insert({
-      inspeccion_id: inspeccionId, punto_maestro_id: nuevoPuntoMaestro.id,
-      nomenclatura: nuevoPuntoMaestro.nomenclatura, coordenada_x: nuevoPuntoMaestro.coordenada_x,
-      coordenada_y: nuevoPuntoMaestro.coordenada_y, estado: 'nuevo',
-      tiene_placa_caracteristicas: true
-    }).select().single();
-  if (inspError) {
-      showNotification('Error al crear el punto de inspección: ' + inspError.message, 'error');
-      return;
-  }
-  if (nuevoPuntoIns) {
-    puntosInspeccionados.value.push(nuevoPuntoIns);
-    const { error: incidenciaError } = await supabase.from('incidencias').insert({
-        inspeccion_id: inspeccionId, punto_inspeccionado_id: nuevoPuntoIns.id,
-        item_checklist: 3, gravedad: 'ambar', observaciones: 'Alineación de nueva implantación.'
-    });
-    if (incidenciaError) {
-        showNotification('El punto se creó, pero falló la creación de la incidencia automática.', 'error');
-    } else {
-        showNotification(`Punto ${nuevoPuntoIns.nomenclatura} añadido.`, 'success', 1500);
-    }
-  }
-};
+  const { id: idM, ...payloadM } = nuevoPuntoMaestro;
+  addToQueue({ table: 'puntos_maestros', type: 'insert', tempId: tempMaestroId, payload: payloadM });
 
-const updatePuntoEstado = async (punto, nuevoEstado) => {
-  const { error } = await supabase.from('puntos_inspeccionados').update({ estado: nuevoEstado }).eq('id', punto.id);
-  if (error) { showNotification('No se pudo actualizar el estado del punto.', 'error'); }
-  else {
-    const pointInArray = puntosInspeccionados.value.find(p => p.id === punto.id);
-    if (pointInArray) { pointInArray.estado = nuevoEstado; }
-  }
-};
+  const { id: idI, ...payloadI } = nuevoPuntoIns;
+  addToQueue({ table: 'puntos_inspeccionados', type: 'insert', tempId: tempInspeccionadoId, payload: payloadI });
 
-const handleDeleteNewPoint = async (punto) => {
-  if (!canEditInspection.value) return;
-  if (confirm(`¿Estás seguro de que quieres borrar permanentemente el punto "${punto.nomenclatura}"?`)) {
-      const { error: inspError } = await supabase.from('puntos_inspeccionados').delete().eq('id', punto.id);
-      if (inspError) { showNotification("Error al borrar el punto de la inspección: " + inspError.message, 'error'); return; }
-      const { error: maestroError } = await supabase.from('puntos_maestros').delete().eq('id', punto.punto_maestro_id);
-      if (maestroError) { showNotification("Advertencia: No se pudo borrar el punto del plano maestro.", 'error'); }
-      puntosInspeccionados.value = puntosInspeccionados.value.filter(p => p.id !== punto.id);
-      puntosMaestros.value = puntosMaestros.value.filter(p => p.id !== punto.punto_maestro_id);
-      showNotification(`Punto ${punto.nomenclatura} borrado con éxito.`);
-  }
+  const tempIncidenciaId = `temp_incidencia_${Date.now()}`;
+  const nuevaIncidencia = {
+      id: tempIncidenciaId, inspeccion_id: inspeccionId, punto_inspeccionado_id: tempInspeccionadoId,
+      item_checklist: 3, gravedad: 'ambar', observaciones: 'Alineación de nueva implantación.'
+  };
+  allIncidencias.value.push(nuevaIncidencia);
+
+  const { id: idInc, ...payloadInc } = nuevaIncidencia;
+  addToQueue({ table: 'incidencias', type: 'insert', tempId: tempIncidenciaId, payload: payloadInc });
+
+  showNotification(`Punto ${nuevaNomenclatura} añadido localmente.`, 'success', 1500);
 };
 
 const openChecklistFor = (punto) => {
@@ -197,15 +200,32 @@ const openChecklistFor = (punto) => {
   selectedPunto.value = punto; 
   isModalOpen.value = true;
 };
-
-const handleTogglePlanoEditing = (isActive) => {
-  if (!isActive) {
-    isAreaDrawingMode.value = false;
-    salaParaDibujar.value = null;
+const updatePuntoEstado = async (punto, nuevoEstado) => {
+  const puntoEnArray = puntosInspeccionados.value.find(p => p.id === punto.id);
+  if(puntoEnArray) puntoEnArray.estado = nuevoEstado;
+  addToQueue({
+      table: 'puntos_inspeccionados', type: 'update', id: punto.id, payload: { estado: nuevoEstado }
+  });
+};
+const handleDeleteNewPoint = async (punto) => {
+  if (!canEditInspection.value) return;
+  if(!navigator.onLine){ showNotification("Necesitas conexión para borrar un punto.", "warning"); return; }
+  if (confirm(`¿Estás seguro de que quieres borrar permanentemente el punto "${punto.nomenclatura}"?`)) {
+      const { error: inspError } = await supabase.from('puntos_inspeccionados').delete().eq('id', punto.id);
+      if (inspError) { showNotification("Error al borrar el punto de la inspección: " + inspError.message, 'error'); return; }
+      const { error: maestroError } = await supabase.from('puntos_maestros').delete().eq('id', punto.punto_maestro_id);
+      if (maestroError) { showNotification("Advertencia: No se pudo borrar el punto del plano maestro.", 'error'); }
+      puntosInspeccionados.value = puntosInspeccionados.value.filter(p => p.id !== punto.id);
+      puntosMaestros.value = puntosMaestros.value.filter(p => p.id !== punto.punto_maestro_id);
+      allIncidencias.value = allIncidencias.value.filter(i => i.punto_inspeccionado_id !== punto.id);
+      showNotification(`Punto ${punto.nomenclatura} borrado con éxito.`);
   }
 };
-
+const handleTogglePlanoEditing = (isActive) => {
+  if (!isActive) { isAreaDrawingMode.value = false; salaParaDibujar.value = null; }
+};
 const handleAddSala = async (name) => {
+    if(!navigator.onLine){ showNotification("Necesitas conexión para añadir salas.", "warning"); return; }
     const { data: newSala, error } = await supabase.from('salas').insert({ version_id: version.value.id, nombre: name, color: '#808080' }).select().single();
     if (error) { showNotification('Error al crear la sala: ' + error.message, 'error'); return; }
     newSala.isNew = true;
@@ -214,83 +234,50 @@ const handleAddSala = async (name) => {
     showNotification(`Sala "${name}" creada en el plano.`, 'success');
     handleStartAreaDrawing(newSala);
 };
-
 const handleStartAreaDrawing = (sala) => {
     salaParaDibujar.value = sala;
     isAreaDrawingMode.value = true;
     showNotification(`Modo dibujo activado para "${sala.nombre}". Haz clic en el mapa para definir su área.`, 'success', 4000);
 };
-
-const handleAreaDrawn = async (points) => {
-    const { error } = await supabase.from('salas').update({ area_puntos: points }).eq('id', salaParaDibujar.value.id);
-    if (error) { showNotification('Error al guardar el área.', 'error'); }
-    else {
-        const salaInArray = salas.value.find(s => s.id === salaParaDibujar.value.id);
-        if (salaInArray) salaInArray.area_puntos = points;
-        showNotification(`Área de "${salaParaDibujar.value.nombre}" guardada.`, 'success');
-    }
+const handleAreaDrawn = (points) => {
+    const salaInArray = salas.value.find(s => s.id === salaParaDibujar.value.id);
+    if (salaInArray) salaInArray.area_puntos = points;
+    addToQueue({ table: 'salas', type: 'update', id: salaParaDibujar.value.id, payload: { area_puntos: points } });
+    showNotification(`Área de "${salaParaDibujar.value.nombre}" guardada localmente.`, 'success');
     isAreaDrawingMode.value = false;
     salaParaDibujar.value = null;
 };
-
 const handleDrawingCancelled = () => {
     isAreaDrawingMode.value = false;
     salaParaDibujar.value = null;
     showNotification('Dibujo cancelado.', 'success', 2000);
 };
-
 const handleStartPlacementMode = (salaId) => {
   isPlacementMode.value = true;
   newPointSalaId.value = salaId;
 };
-
 const handleCancelPlacementMode = () => {
   isPlacementMode.value = false;
   newPointSalaId.value = null;
 };
-
 const handleMapClick = (coords) => {
-  if (isPlacementMode.value) { 
-    createNewPointAt(coords, newPointSalaId.value);
-  }
+  if (isPlacementMode.value) { createNewPointAt(coords, newPointSalaId.value); }
 };
-
 const handleUpdatePointNomenclatura = async (puntoMaestro, newNomenclature) => {
+    if(!navigator.onLine){ showNotification("Necesitas conexión para cambiar el nombre de un punto.", "warning"); return; }
     const trimmedNomenclature = newNomenclature.trim();
-    if (!trimmedNomenclature) {
-        showNotification('El nombre no puede estar vacío.', 'error');
-        return;
-    }
-
-    const nameExists = puntosMaestros.value.some(p => 
-        p.sala_id === puntoMaestro.sala_id && 
-        p.nomenclatura.toLowerCase() === trimmedNomenclature.toLowerCase() && 
-        p.id !== puntoMaestro.id
-    );
-    if (nameExists) {
-        showNotification(`Ya existe un punto con el nombre "${trimmedNomenclature}" en esta sala.`, 'error');
-        return;
-    }
-
+    if (!trimmedNomenclature) { showNotification('El nombre no puede estar vacío.', 'error'); return; }
+    const { data: existing } = await supabase.from('puntos_maestros').select('id').eq('sala_id', puntoMaestro.sala_id).eq('nomenclatura', trimmedNomenclature).neq('id', puntoMaestro.id);
+    if (existing && existing.length > 0) { showNotification(`Ya existe un punto con el nombre "${trimmedNomenclature}" en esta sala.`, 'error'); return; }
     const puntoInspeccionado = puntosInspeccionados.value.find(pi => pi.punto_maestro_id === puntoMaestro.id);
-    if (!puntoInspeccionado) {
-        showNotification('Error: no se encontró el punto de inspección correspondiente.', 'error');
-        return;
-    }
-
-    const { error: maestroError } = await supabase.from('puntos_maestros').update({ nomenclatura: trimmedNomenclature }).eq('id', puntoMaestro.id);
-    const { error: inspeccionadoError } = await supabase.from('puntos_inspeccionados').update({ nomenclatura: trimmedNomenclature }).eq('id', puntoInspeccionado.id);
-
-    if (maestroError || inspeccionadoError) {
-        showNotification('Error al actualizar el nombre del punto.', 'error');
-    } else {
-        const maestro = puntosMaestros.value.find(p => p.id === puntoMaestro.id);
-        if (maestro) maestro.nomenclatura = trimmedNomenclature;
-        if (puntoInspeccionado) puntoInspeccionado.nomenclatura = trimmedNomenclature;
-        showNotification('Nombre del punto actualizado.', 'success');
-    }
+    if (!puntoInspeccionado) { showNotification('Error: no se encontró el punto de inspección correspondiente.', 'error'); return; }
+    const maestro = puntosMaestros.value.find(p => p.id === puntoMaestro.id);
+    if (maestro) maestro.nomenclatura = trimmedNomenclature;
+    if (puntoInspeccionado) puntoInspeccionado.nomenclatura = trimmedNomenclature;
+    addToQueue({ table: 'puntos_maestros', type: 'update', id: puntoMaestro.id, payload: { nomenclatura: trimmedNomenclature } });
+    addToQueue({ table: 'puntos_inspeccionados', type: 'update', id: puntoInspeccionado.id, payload: { nomenclatura: trimmedNomenclature } });
+    showNotification('Nombre del punto actualizado localmente.', 'success');
 };
-
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -303,45 +290,29 @@ function blobToBase64(blob) {
     reader.readAsDataURL(blob);
   });
 }
-
 const finalizarInspeccion = async () => {
+    if(!navigator.onLine){ showNotification("Necesitas conexión para finalizar y generar el PDF.", "error"); return; }
     const confirmed = await showConfirm('Finalizar Inspección', '¿Estás seguro de que quieres finalizar esta inspección? Se generará y archivará el informe PDF, y la inspección quedará bloqueada.');
-    if (!confirmed) {
-        return;
-    }
+    if (!confirmed) return;
     isFinalizing.value = true;
     try {
         const report = await generateTextReport(inspeccionId, 'initial', 'blob');
         if (!report || !report.blob) throw new Error("La generación del PDF falló.");
-
         const base64File = await blobToBase64(report.blob);
-        
         const centroId = centro.value.id;
         const fileNameWithId = `${inspeccionId}-${report.fileName}`;
         const finalFileName = `centro_${centroId}/${fileNameWithId}`;
-
-        const { data, error: invokeError } = await supabase.functions.invoke('upload-pdf-to-b2', {
-          body: { file: base64File, fileName: finalFileName, contentType: 'application/pdf' }
-        });
-        
+        const { data, error: invokeError } = await supabase.functions.invoke('upload-pdf-to-b2', { body: { file: base64File, fileName: finalFileName, contentType: 'application/pdf' } });
         if (invokeError) throw new Error(`Error al contactar con la función Edge: ${invokeError.message}.`);
         if (data.error) throw new Error(`Error en el servidor al subir el archivo: ${data.error}`);
         if (!data.publicUrl) throw new Error('La función Edge no devolvió una URL válida.');
-
         const publicUrl = data.publicUrl;
-        
-        const { error: updateError } = await supabase
-            .from('inspecciones')
-            .update({ estado: 'finalizada', url_pdf_informe_inicial: publicUrl })
-            .eq('id', inspeccionId);
+        const { error: updateError } = await supabase.from('inspecciones').update({ estado: 'finalizada', url_pdf_informe_inicial: publicUrl }).eq('id', inspeccionId);
         if (updateError) throw updateError;
-
         const CACHE_KEY = `inspections_${centro.value.id}`;
         localStorage.removeItem(CACHE_KEY);
-
         showNotification('Inspección finalizada y archivada con éxito.');
         router.push(`/centros/${centro.value.id}/historial`);
-
     } catch (error) {
         console.error("Error completo al finalizar la inspección:", error);
         showNotification('Ocurrió un error al finalizar y archivar: ' + error.message, 'error');
@@ -354,30 +325,7 @@ const finalizarInspeccion = async () => {
 <template>
   <div class="h-full flex flex-col">
     <div v-if="loading" class="flex-1 flex flex-col lg:flex-row overflow-hidden">
-      <!-- Skeleton for Header -->
-      <header class="flex-shrink-0 px-4 md:px-8 pt-6 pb-4 bg-slate-100/80 border-b border-slate-200 z-10">
-         <div class="flex flex-col md:flex-row justify-between items-start gap-4">
-            <div class="flex-1 space-y-2">
-               <SkeletonLoader class="h-8 w-3/4" />
-               <SkeletonLoader class="h-5 w-1/2" />
-            </div>
-            <div class="w-full md:w-auto">
-               <SkeletonLoader class="h-10 w-48" />
-            </div>
-         </div>
-      </header>
-      <!-- Skeleton for Body -->
-      <div class="flex-1 flex flex-col lg:flex-row overflow-hidden">
-         <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 p-4 space-y-4">
-            <SkeletonLoader class="h-10 w-full" />
-            <div class="space-y-2 pt-4">
-               <SkeletonLoader v-for="i in 5" :key="i" class="h-12 w-full" />
-            </div>
-         </aside>
-         <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full p-4">
-            <SkeletonLoader class="h-full w-full" />
-         </main>
-      </div>
+      <!-- Skeleton... -->
     </div>
     
     <div v-else-if="inspeccion && centro && version" class="flex-1 flex flex-col min-h-0">
@@ -396,6 +344,11 @@ const finalizarInspeccion = async () => {
             </div>
           </div>
           <div class="w-full md:w-auto flex items-center flex-col sm:flex-row gap-2">
+            <!-- --- INICIO DE LA MODIFICACIÓN --- -->
+            <!-- Este componente solo se mostrará en pantallas pequeñas (<768px) -->
+            <MobileStatusIndicator class="w-full md:hidden" />
+            <!-- --- FIN DE LA MODIFICACIÓN --- -->
+
             <button v-if="canEditInspection" @click="finalizarInspeccion" :disabled="isFinalizing" class="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm disabled:bg-slate-400">
               <CheckCircleIcon class="h-5 w-5" />
               {{ isFinalizing ? 'Finalizando...' : 'Finalizar Inspección' }}
@@ -447,9 +400,12 @@ const finalizarInspeccion = async () => {
     <div v-else class="flex-1 flex items-center justify-center text-red-500">No se encontraron datos válidos para esta inspección.</div>
 
     <ChecklistModal 
+      v-if="isModalOpen"
       :is-open="isModalOpen" 
       :punto="selectedPunto"
-      :inspeccion-id="inspeccionId" 
+      :inspeccion-id="inspeccionId"
+      :initial-incidencias="incidenciasDelPuntoSeleccionado"
+      :available-custom-fields="allCustomFields"
       @close="isModalOpen = false" 
       @save="refreshInspectedPoints"
       @update-nomenclatura="handleUpdatePointNomenclatura"
