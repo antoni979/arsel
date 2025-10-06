@@ -2,7 +2,7 @@
 <script setup>
 import { ref, watch, computed, nextTick, inject } from 'vue';
 import { supabase } from '../supabase';
-import { addToQueue, getFileLocally } from '../utils/syncQueue'; // <-- Importamos getFileLocally
+import { addToQueue, getFileLocally } from '../utils/syncQueue';
 import { checklistItems } from '../utils/checklist';
 import { useFileUpload } from '../composables/useFileUpload';
 import {
@@ -17,13 +17,15 @@ const props = defineProps({
   inspeccionId: Number,
   initialIncidencias: { type: Array, required: true },
   availableCustomFields: { type: Array, required: true },
+  // --- INICIO DE LA CORRECCIÓN: Se define la nueva prop ---
+  existingIdentifiersInSala: { type: Array, default: () => [] }
+  // --- FIN DE LA CORRECCIÓN ---
 });
 
 const emit = defineEmits(['close', 'save', 'update-nomenclatura', 'update:incidencias']);
 const showNotification = inject('showNotification');
 
 const incidencias = ref([]);
-// ... (resto de refs no cambian)
 const puntoInspeccionado = computed(() => props.punto);
 const customFields = ref([]);
 const customValues = ref({});
@@ -35,7 +37,6 @@ const { isUploading, handleFileUpload: processAndUploadFile } = useFileUpload(pr
 const dragOverIncidenceId = ref(null);
 
 
-// --- INICIO DE LA MODIFICACIÓN: Lógica de Hidratación ---
 const hydrateOfflineImages = async () => {
   for (const inc of incidencias.value) {
     if (inc.offlinePhotoKey_antes && !inc.url_foto_antes?.startsWith('blob:')) {
@@ -60,14 +61,12 @@ watch(() => props.isOpen, async (newVal) => {
         customValues.value[inc.id] = inc.custom_fields || {};
     });
     
-    // Al abrir, hidratamos las imágenes
     await hydrateOfflineImages();
 
     isEditingName.value = false;
     collapsedItems.value.clear();
   }
 }, { immediate: true });
-// --- FIN DE LA MODIFICACIÓN ---
 
 
 const handleFileChange = async (event, incidencia) => {
@@ -76,7 +75,7 @@ const handleFileChange = async (event, incidencia) => {
   const result = await processAndUploadFile(file, incidencia);
   if (result) {
     incidencia.url_foto_antes = result.previewUrl;
-    incidencia.offlinePhotoKey_antes = result.offlinePhotoKey; // <-- Guardamos la clave
+    incidencia.offlinePhotoKey_antes = result.offlinePhotoKey;
     emit('update:incidencias', incidencias.value);
   }
 };
@@ -90,7 +89,7 @@ const onDrop = async (event, incidencia) => {
   const result = await processAndUploadFile(file, incidencia);
   if (result) {
     incidencia.url_foto_antes = result.previewUrl;
-    incidencia.offlinePhotoKey_antes = result.offlinePhotoKey; // <-- Guardamos la clave
+    incidencia.offlinePhotoKey_antes = result.offlinePhotoKey;
     emit('update:incidencias', incidencias.value);
   }
 };
@@ -101,14 +100,12 @@ const saveIncidencia = (incidencia) => {
   emit('update:incidencias', incidencias.value);
   
   const payload = { ...dataToUpdate };
-  // No enviar la URL de blob ni la clave offline a la DB
   delete payload.url_foto_antes; 
   delete payload.offlinePhotoKey_antes;
   
   addToQueue({ table: 'incidencias', type: 'update', id: id, payload });
 };
 
-// ... (El resto del script setup es idéntico, no necesita más cambios) ...
 const addIncidencia = async (itemId, defaults = {}) => {
   if (!puntoInspeccionado.value) return;
   let defaultSeverity = defaults.gravedad || 'verde';
@@ -200,13 +197,28 @@ const startNameEditing = () => {
   tempPointIdentifier.value = parts.length > 1 ? parts.pop() : props.punto.nomenclatura;
   nextTick(() => nameInputRef.value?.focus());
 };
+
+// --- INICIO DE LA CORRECCIÓN: Lógica de guardado con validación ---
 const saveName = () => {
-  const newNomenclature = `${pointPrefix.value}${tempPointIdentifier.value.trim()}`;
-  if (tempPointIdentifier.value.trim() && newNomenclature !== props.punto.nomenclatura) {
+  const newIdentifier = tempPointIdentifier.value.trim();
+  const newNomenclature = `${pointPrefix.value}${newIdentifier}`;
+  
+  // 1. Validar que el identificador no esté vacío y sea diferente al original.
+  if (newIdentifier && newNomenclature !== props.punto.nomenclatura) {
+    // 2. Comprobar si el nuevo identificador ya existe en la sala (usando la nueva prop).
+    if (props.existingIdentifiersInSala.includes(newIdentifier)) {
+      showNotification(`El identificador "${newIdentifier}" ya existe en esta sala. Por favor, elige otro.`, 'error');
+      return; // Detenemos la ejecución aquí.
+    }
+    
+    // 3. Si la validación pasa, buscamos el punto maestro y emitimos el evento.
     findPuntoMaestroAndEmitUpdate(newNomenclature);
   }
+  
   isEditingName.value = false;
 };
+// --- FIN DE LA CORRECCIÓN ---
+
 const findPuntoMaestroAndEmitUpdate = async (newNomenclature) => {
   const { data: puntoMaestro, error } = await supabase.from('puntos_maestros').select('*').eq('id', props.punto.punto_maestro_id).single();
   if (puntoMaestro && !error) {

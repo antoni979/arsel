@@ -39,6 +39,29 @@ const canEditInspection = computed(() => {
   return inspeccion.value?.estado === 'en_progreso';
 });
 
+// --- INICIO DE LA CORRECCIÓN: Nueva propiedad computada para la validación ---
+const existingIdentifiersInSala = computed(() => {
+  if (!selectedPunto.value) return [];
+  
+  // 1. Encontrar el punto maestro correspondiente al punto de inspección seleccionado.
+  const puntoMaestroSeleccionado = puntosMaestros.value.find(pm => pm.id === selectedPunto.value.punto_maestro_id);
+  if (!puntoMaestroSeleccionado) return [];
+
+  const salaId = puntoMaestroSeleccionado.sala_id;
+
+  // 2. Obtener todos los puntos maestros de esa misma sala.
+  return puntosMaestros.value
+    .filter(pm => 
+      // Que pertenezcan a la misma sala
+      pm.sala_id === salaId && 
+      // Y que no sea el punto que estamos editando actualmente
+      pm.id !== puntoMaestroSeleccionado.id
+    )
+    .map(pm => pm.nomenclatura.split('-').pop() || ''); // 3. Extraer solo el identificador final (ej: "10", "Picking-A").
+});
+// --- FIN DE LA CORRECCIÓN ---
+
+
 const refreshInspectedPoints = async () => {
   if (!navigator.onLine) {
     return;
@@ -271,21 +294,29 @@ const handleCancelPlacementMode = () => {
 const handleMapClick = (coords) => {
   if (isPlacementMode.value) { createNewPointAt(coords, newPointSalaId.value); }
 };
+
+// --- INICIO DE LA CORRECCIÓN: Función simplificada sin validación ---
 const handleUpdatePointNomenclatura = async (puntoMaestro, newNomenclature) => {
-    if(!navigator.onLine){ showNotification("Necesitas conexión para cambiar el nombre de un punto.", "warning"); return; }
-    const trimmedNomenclature = newNomenclature.trim();
-    if (!trimmedNomenclature) { showNotification('El nombre no puede estar vacío.', 'error'); return; }
-    const { data: existing } = await supabase.from('puntos_maestros').select('id').eq('sala_id', puntoMaestro.sala_id).eq('nomenclatura', trimmedNomenclature).neq('id', puntoMaestro.id);
-    if (existing && existing.length > 0) { showNotification(`Ya existe un punto con el nombre "${trimmedNomenclature}" en esta sala.`, 'error'); return; }
+    // La validación ahora ocurre dentro del modal, por lo que aquí simplemente confiamos y procedemos.
     const puntoInspeccionado = puntosInspeccionados.value.find(pi => pi.punto_maestro_id === puntoMaestro.id);
-    if (!puntoInspeccionado) { showNotification('Error: no se encontró el punto de inspección correspondiente.', 'error'); return; }
+    if (!puntoInspeccionado) { 
+      showNotification('Error interno: no se encontró el punto de inspección correspondiente.', 'error'); 
+      return; 
+    }
+
+    // Actualizamos el estado local para reflejar el cambio inmediatamente en la UI.
     const maestro = puntosMaestros.value.find(p => p.id === puntoMaestro.id);
-    if (maestro) maestro.nomenclatura = trimmedNomenclature;
-    if (puntoInspeccionado) puntoInspeccionado.nomenclatura = trimmedNomenclature;
-    addToQueue({ table: 'puntos_maestros', type: 'update', id: puntoMaestro.id, payload: { nomenclatura: trimmedNomenclature } });
-    addToQueue({ table: 'puntos_inspeccionados', type: 'update', id: puntoInspeccionado.id, payload: { nomenclatura: trimmedNomenclature } });
+    if (maestro) maestro.nomenclatura = newNomenclature;
+    if (puntoInspeccionado) puntoInspeccionado.nomenclatura = newNomenclature;
+
+    // Encolamos las acciones para sincronizarlas con la base de datos.
+    addToQueue({ table: 'puntos_maestros', type: 'update', id: puntoMaestro.id, payload: { nomenclatura: newNomenclature } });
+    addToQueue({ table: 'puntos_inspeccionados', type: 'update', id: puntoInspeccionado.id, payload: { nomenclatura: newNomenclature } });
+    
     showNotification('Nombre del punto actualizado localmente.', 'success');
 };
+// --- FIN DE LA CORRECCIÓN ---
+
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -431,6 +462,7 @@ const finalizarInspeccion = async () => {
       :inspeccion-id="inspeccionId"
       :initial-incidencias="incidenciasDelPuntoSeleccionado"
       :available-custom-fields="allCustomFields"
+      :existing-identifiers-in-sala="existingIdentifiersInSala"
       @close="isModalOpen = false" 
       @save="refreshInspectedPoints"
       @update-nomenclatura="handleUpdatePointNomenclatura"

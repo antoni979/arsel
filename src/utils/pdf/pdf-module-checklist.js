@@ -68,7 +68,7 @@ export async function buildChecklistAnnex(pdf, reportData) {
                 loadImageAsBase64(arselLogoUrl, { optimize: false })
             ]);
 
-            const logoHeight = 10;
+            const logoHeight = 8;
             const headerY = 12;
             const arselLogoWidth = 30;
 
