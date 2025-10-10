@@ -16,6 +16,8 @@ const isUploadingLogo = ref(false);
 const logoInput = ref(null);
 const zonas = ref([]);
 const provincias = ref([]); // <-- Ahora es reactivo
+const selectedLogoFile = ref(null); // Archivo seleccionado antes de guardar
+const previewLogoUrl = ref(null); // URL de preview temporal
 
 onMounted(async () => {
   // Cargar las listas desde Supabase cuando el componente se monta
@@ -31,35 +33,56 @@ onMounted(async () => {
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
     form.value = props.centro ? { ...props.centro } : { nombre: '', direccion: '', responsable_nombre: '', responsable_email: '', provincia: '', zona: '', url_logo_cliente: null };
+    // Limpiar archivo y preview al abrir el modal
+    selectedLogoFile.value = null;
+    if (previewLogoUrl.value) {
+      URL.revokeObjectURL(previewLogoUrl.value);
+      previewLogoUrl.value = null;
+    }
   }
 });
 
 const handleLogoSelected = async (event) => {
   const file = event.target.files[0];
-  if (!file || !form.value.id) {
-    if(!form.value.id) alert("Guarda primero el centro para poder asignarle un logo.");
-    return;
-  }
-  isUploadingLogo.value = true;
-  const fileName = `cliente_${form.value.id}/${Date.now()}_${file.name}`;
-  const { error: uploadError } = await supabase.storage.from('logos-clientes').upload(fileName, file);
-  if (uploadError) {
-    alert("Error al subir el logo: " + uploadError.message);
+  if (!file) return;
+
+  // Si el centro ya existe (modo edición), subir directamente
+  if (form.value.id) {
+    isUploadingLogo.value = true;
+    const fileName = `cliente_${form.value.id}/${Date.now()}_${file.name}`;
+    const { error: uploadError } = await supabase.storage.from('logos-clientes').upload(fileName, file);
+    if (uploadError) {
+      alert("Error al subir el logo: " + uploadError.message);
+      isUploadingLogo.value = false;
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from('logos-clientes').getPublicUrl(fileName);
+    const { error: updateError } = await supabase.from('centros').update({ url_logo_cliente: publicUrl }).eq('id', form.value.id);
+    if (updateError) {
+      alert("Error al guardar la URL del logo: " + updateError.message);
+    } else {
+      form.value.url_logo_cliente = publicUrl;
+    }
     isUploadingLogo.value = false;
-    return;
-  }
-  const { data: { publicUrl } } = supabase.storage.from('logos-clientes').getPublicUrl(fileName);
-  const { error: updateError } = await supabase.from('centros').update({ url_logo_cliente: publicUrl }).eq('id', form.value.id);
-  if (updateError) {
-    alert("Error al guardar la URL del logo: " + updateError.message);
   } else {
-    form.value.url_logo_cliente = publicUrl;
+    // Si es un centro nuevo, guardar el archivo para subirlo después
+    selectedLogoFile.value = file;
+    // Limpiar preview anterior si existe
+    if (previewLogoUrl.value) {
+      URL.revokeObjectURL(previewLogoUrl.value);
+    }
+    // Crear preview temporal
+    previewLogoUrl.value = URL.createObjectURL(file);
   }
-  isUploadingLogo.value = false;
 };
 
 const handleSubmit = () => {
-  emit('save', form.value);
+  // Incluir el archivo del logo si fue seleccionado
+  const dataToSave = { ...form.value };
+  if (selectedLogoFile.value) {
+    dataToSave._logoFile = selectedLogoFile.value;
+  }
+  emit('save', dataToSave);
 };
 </script>
 
@@ -105,21 +128,21 @@ const handleSubmit = () => {
              <input type="file" ref="logoInput" @change="handleLogoSelected" accept="image/*" class="hidden">
              <label class="block text-sm font-medium text-slate-600 mb-1">Logo del Cliente</label>
              <div class="aspect-video bg-slate-100 rounded-md flex items-center justify-center border-2 border-dashed">
-                <img v-if="form.url_logo_cliente" :src="form.url_logo_cliente" class="object-contain w-full h-full p-2">
+                <img v-if="previewLogoUrl || form.url_logo_cliente" :src="previewLogoUrl || form.url_logo_cliente" class="object-contain w-full h-full p-2">
                 <div v-else class="text-center text-slate-500 p-4">Sin logo</div>
              </div>
-             <button 
-                type="button" 
-                @click="logoInput.click()" 
-                :disabled="!form.id || isUploadingLogo"
+             <button
+                type="button"
+                @click="logoInput.click()"
+                :disabled="isUploadingLogo"
                 class="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold rounded-md transition-colors
                        disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed
                        text-slate-700 bg-white border border-slate-300 hover:bg-slate-50"
               >
                <ArrowUpTrayIcon class="h-4 w-4" />
-               {{ isUploadingLogo ? 'Subiendo...' : (form.url_logo_cliente ? 'Cambiar Logo' : 'Subir Logo') }}
+               {{ isUploadingLogo ? 'Subiendo...' : ((previewLogoUrl || form.url_logo_cliente) ? 'Cambiar Logo' : 'Subir Logo') }}
              </button>
-             <p v-if="!form.id" class="text-xs text-slate-500 mt-1 text-center">Debes guardar el centro antes de subir un logo.</p>
+             <p v-if="!form.id && selectedLogoFile" class="text-xs text-green-600 mt-1 text-center">Logo seleccionado. Se subirá al guardar.</p>
           </div>
         </div>
         <div class="p-6 bg-slate-50 border-t flex justify-end space-x-4">

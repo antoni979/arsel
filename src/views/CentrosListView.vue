@@ -69,9 +69,14 @@ const dataToSave = { ...centroData };
 // Debemos eliminarlas antes de intentar guardar los datos en Supabase para evitar el error.
 delete dataToSave.numero_informes;
 delete dataToSave.ultima_revision;
+
+// Extraer el archivo del logo si existe (propiedad especial)
+const logoFile = dataToSave._logoFile;
+delete dataToSave._logoFile;
 // --- FIN DE LA CORRECCIÓN ---
 
 let error;
+let centroId = dataToSave.id;
 
 if (dataToSave.id) {
 // --- LÓGICA DE ACTUALIZACIÓN ---
@@ -84,10 +89,35 @@ error = updateError;
 } else {
 // --- LÓGICA DE CREACIÓN ---
 delete dataToSave.id; // Nos aseguramos de que no haya un id (aunque sea null)
-const { error: insertError } = await supabase
+const { data: insertData, error: insertError } = await supabase
 .from('centros')
-.insert(dataToSave);
+.insert(dataToSave)
+.select()
+.single();
 error = insertError;
+
+if (!error && insertData) {
+centroId = insertData.id;
+
+// Si hay un logo seleccionado, subirlo ahora que tenemos el ID
+if (logoFile) {
+const fileName = `cliente_${centroId}/${Date.now()}_${logoFile.name}`;
+const { error: uploadError } = await supabase.storage
+.from('logos-clientes')
+.upload(fileName, logoFile);
+
+if (!uploadError) {
+const { data: { publicUrl } } = supabase.storage
+.from('logos-clientes')
+.getPublicUrl(fileName);
+
+// Actualizar el centro con la URL del logo
+await supabase.from('centros')
+.update({ url_logo_cliente: publicUrl })
+.eq('id', centroId);
+}
+}
+}
 }
 
 if (error) {
