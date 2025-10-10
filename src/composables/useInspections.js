@@ -2,6 +2,9 @@
 
 import { ref, onMounted, onUnmounted, readonly } from 'vue';
 import { supabase } from '../supabase';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('Inspections');
 
 // Web Worker for processing inspection details
 const createProcessingWorker = () => {
@@ -69,7 +72,7 @@ export function useInspections(centroId) {
         const { data, timestamp } = JSON.parse(cached);
         if (Date.now() - timestamp < CACHE_DURATION) return data;
       }
-    } catch (error) { console.warn('Error reading cache:', error); }
+    } catch (error) { logger.warn('Error reading cache:', error); }
     return null;
   };
 
@@ -77,7 +80,7 @@ export function useInspections(centroId) {
     try {
       const cacheData = { data, timestamp: Date.now() };
       localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
-    } catch (error) { console.warn('Error writing cache:', error); }
+    } catch (error) { logger.warn('Error writing cache:', error); }
   };
 
   const fetchData = async (page = 1, append = false, silent = false) => {

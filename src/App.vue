@@ -10,6 +10,9 @@ import { useNotification } from './utils/notification';
 import { useRegisterSW } from 'virtual:pwa-register/vue';
 import ReloadPWA from './components/ReloadPWA.vue';
 import { initializeQueue, processQueue } from './utils/syncQueue';
+import { createLogger } from './utils/logger';
+
+const logger = createLogger('App');
 
 const { offlineReady, needRefresh, updateServiceWorker } = useRegisterSW();
 
@@ -21,14 +24,14 @@ const handleUpdateServiceWorker = async () => {
 const handleVisibilityChange = () => {
   if (document.visibilityState === 'visible') {
     // Cuando la app vuelve a ser visible, intentamos sincronizar.
-    console.log("App is visible again, attempting to sync queue.");
+    logger.debug("App is visible again, attempting to sync queue.");
     processQueue();
   }
 };
 // --- FIN DE LA MODIFICACIÓN ---
 
 onMounted(() => {
-  console.log('[App.vue] Componente montado en el DOM.');
+  logger.info('[App.vue] Componente montado en el DOM.');
   initializeQueue();
   window.addEventListener('online', processQueue);
   // --- INICIO DE LA MODIFICACIÓN: Añadimos el nuevo listener ---
@@ -43,7 +46,7 @@ onUnmounted(() => {
   // --- FIN DE LA MODIFICACIÓN ---
 });
 
-onUpdated(() => console.log('[App.vue] Componente actualizado (cambio de layout o ruta).'));
+onUpdated(() => logger.debug('[App.vue] Componente actualizado (cambio de layout o ruta).'));
 
 const { notificationShow, notificationMessage, notificationType, confirmShow, confirmTitle, confirmMessage, showNotification, showConfirm, confirmYes, confirmNo } = useNotification();
 provide('showNotification', showNotification);
@@ -54,7 +57,7 @@ provide('confirmNo', confirmNo);
 const route = useRoute();
 const layout = computed(() => {
   const layoutName = route.meta.layout === 'Blank' ? 'BlankLayout' : 'DefaultLayout';
-  console.log(`[App.vue] Layout computado es: ${layoutName}`);
+  logger.debug(`[App.vue] Layout computado es: ${layoutName}`);
   return layoutName === 'BlankLayout' ? BlankLayout : DefaultLayout;
 });
 </script>

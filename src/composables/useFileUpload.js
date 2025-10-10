@@ -3,6 +3,9 @@
 import { ref } from 'vue';
 import { useNotification } from '../utils/notification';
 import { addToQueue, FILE_STORAGE_KEY_PREFIX } from '../utils/syncQueue';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('FileUpload');
 
 function readFileAsArrayBuffer(file) {
   return new Promise((resolve, reject) => {
@@ -67,12 +70,11 @@ export function useFileUpload(inspeccionId, puntoId) {
       const arrayBuffer = await readFileAsArrayBuffer(fileToUpload);
       const stableBlob = new Blob([arrayBuffer], { type: fileToUpload.type });
       const stableBlobUrl = URL.createObjectURL(stableBlob);
-      
-      const fileName = `inspeccion_${inspeccionId}/punto_${puntoId}/${Date.now()}_${file.name}`;
-      
-      const fileId = `${FILE_STORAGE_KEY_PREFIX}${Date.now()}`; // Generamos la clave aquí
 
-      await addToQueue({
+      const fileName = `inspeccion_${inspeccionId}/punto_${puntoId}/${Date.now()}_${file.name}`;
+
+      // addToQueue manejará la creación del fileId internamente
+      const queueAction = {
         type: 'uploadAndUpdate',
         bucket: 'incidencias',
         path: fileName,
@@ -80,20 +82,20 @@ export function useFileUpload(inspeccionId, puntoId) {
         table: 'incidencias',
         recordId: incidencia.id,
         urlColumn: 'url_foto_antes',
-        fileId: fileId, // Pasamos la clave a la cola
-      });
+      };
+
+      await addToQueue(queueAction);
 
       showNotification('Foto guardada localmente.', 'success');
-      
-      // --- INICIO DE LA MODIFICACIÓN: Devolvemos la clave y la URL de preview ---
+
+      // addToQueue modifica el objeto queueAction y le añade el fileId
       return {
-          offlinePhotoKey: fileId,
+          offlinePhotoKey: queueAction.fileId, // Usamos el fileId que addToQueue creó
           previewUrl: stableBlobUrl,
       };
-      // --- FIN DE LA MODIFICACIÓN ---
 
     } catch (error) {
-      console.error('Error procesando imagen para guardado local:', error);
+      logger.error('Error procesando imagen para guardado local:', error);
       showNotification('Error al procesar la imagen: ' + error.message, 'error');
       return null;
     } finally {

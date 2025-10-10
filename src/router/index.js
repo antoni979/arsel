@@ -2,6 +2,9 @@
 
 import { createRouter, createWebHistory } from 'vue-router'
 import { supabase } from '../supabase'
+import { createLogger } from '../utils/logger'
+
+const logger = createLogger('Router')
 
 // Importación de Vistas y Componentes
 import Login from '../components/Login.vue'
@@ -37,12 +40,12 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to, from, next) => {
-  console.log(`[Router] Navegando de '${from.fullPath}' a '${to.fullPath}'`);
-  
+  logger.debug(`Navegando de '${from.fullPath}' a '${to.fullPath}'`);
+
   const { data: { session } } = await supabase.auth.getSession()
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
 
-  if (requiresAuth && !session) { next({ name: 'Login' }) } 
+  if (requiresAuth && !session) { next({ name: 'Login' }) }
   else if (session && to.name === 'Login') { next({ name: 'Dashboard' }) }
   else { next() }
 })

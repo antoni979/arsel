@@ -16,25 +16,29 @@ const { isOnline } = useOnlineStatus();
 
 <template>
   <!-- ======================== MODO MÓVIL (ICONO COMPACTO) ======================== -->
-  <div v-if="mode === 'mobile'" class="relative flex items-center justify-center w-8 h-8">
-    <!-- Offline (Máxima Prioridad) -->
-    <div v-if="!isOnline" title="Estás sin conexión">
-      <SignalSlashIcon class="h-6 w-6 text-red-500" />
-    </div>
-    <!-- Sincronizando -->
-    <div v-else-if="isProcessing" title="Sincronizando cambios...">
-      <CloudArrowUpIcon class="h-6 w-6 text-blue-500 animate-pulse" />
-    </div>
-    <!-- Cambios Pendientes -->
-    <div v-else-if="syncQueue.length > 0" title="Cambios pendientes de sincronizar">
-      <CloudArrowUpIcon class="h-6 w-6 text-amber-500" />
-      <span class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-white text-[10px] font-bold">
-        {{ syncQueue.length }}
-      </span>
-    </div>
-    <!-- Online y Sincronizado -->
-    <div v-else title="Conectado y sincronizado">
-      <WifiIcon class="h-6 w-6 text-green-500" />
+  <!-- INICIO DE LA CORRECCIÓN: Añadido un div contenedor -->
+  <div v-if="mode === 'mobile'">
+  <!-- FIN DE LA CORRECCIÓN -->
+    <div class="relative flex items-center justify-center w-8 h-8">
+      <!-- Offline (Máxima Prioridad) -->
+      <div v-if="!isOnline" title="Estás sin conexión">
+        <SignalSlashIcon class="h-6 w-6 text-red-500" />
+      </div>
+      <!-- Sincronizando -->
+      <div v-else-if="isProcessing" title="Sincronizando cambios...">
+        <CloudArrowUpIcon class="h-6 w-6 text-blue-500 animate-pulse" />
+      </div>
+      <!-- Cambios Pendientes -->
+      <div v-else-if="syncQueue.length > 0" title="Cambios pendientes de sincronizar">
+        <CloudArrowUpIcon class="h-6 w-6 text-amber-500" />
+        <span class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-white text-[10px] font-bold">
+          {{ syncQueue.length }}
+        </span>
+      </div>
+      <!-- Online y Sincronizado -->
+      <div v-else title="Conectado y sincronizado">
+        <WifiIcon class="h-6 w-6 text-green-500" />
+      </div>
     </div>
   </div>
 

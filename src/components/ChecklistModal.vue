@@ -2,7 +2,9 @@
 <script setup>
 import { ref, watch, computed, nextTick, inject } from 'vue';
 import { supabase } from '../supabase';
+// --- INICIO DE LA MODIFICACIÓN: Importamos addToQueue ---
 import { addToQueue, getFileLocally } from '../utils/syncQueue';
+// --- FIN DE LA MODIFICACIÓN ---
 import { checklistItems } from '../utils/checklist';
 import { useFileUpload } from '../composables/useFileUpload';
 import {
@@ -17,9 +19,7 @@ const props = defineProps({
   inspeccionId: Number,
   initialIncidencias: { type: Array, required: true },
   availableCustomFields: { type: Array, required: true },
-  // --- INICIO DE LA CORRECCIÓN: Se define la nueva prop ---
   existingIdentifiersInSala: { type: Array, default: () => [] }
-  // --- FIN DE LA CORRECCIÓN ---
 });
 
 const emit = defineEmits(['close', 'save', 'update-nomenclatura', 'update:incidencias']);
@@ -72,6 +72,18 @@ watch(() => props.isOpen, async (newVal) => {
 const handleFileChange = async (event, incidencia) => {
   const file = event.target.files[0];
   if (!file) return;
+
+  // --- INICIO DE LA MODIFICACIÓN: Borrado de foto antigua ---
+  // Si ya hay una foto online, la marcamos para borrar.
+  if (incidencia.url_foto_antes && incidencia.url_foto_antes.startsWith('http')) {
+    addToQueue({
+      type: 'deleteFile',
+      bucket: 'incidencias',
+      url: incidencia.url_foto_antes
+    });
+  }
+  // --- FIN DE LA MODIFICACIÓN ---
+
   const result = await processAndUploadFile(file, incidencia);
   if (result) {
     incidencia.url_foto_antes = result.previewUrl;
@@ -86,6 +98,17 @@ const onDrop = async (event, incidencia) => {
   const files = event.dataTransfer.files;
   if (files.length === 0) return;
   const file = files[0];
+  
+  // --- INICIO DE LA MODIFICACIÓN: Borrado de foto antigua ---
+  if (incidencia.url_foto_antes && incidencia.url_foto_antes.startsWith('http')) {
+    addToQueue({
+      type: 'deleteFile',
+      bucket: 'incidencias',
+      url: incidencia.url_foto_antes
+    });
+  }
+  // --- FIN DE LA MODIFICACIÓN ---
+
   const result = await processAndUploadFile(file, incidencia);
   if (result) {
     incidencia.url_foto_antes = result.previewUrl;
@@ -97,12 +120,18 @@ const onDrop = async (event, incidencia) => {
 const saveIncidencia = (incidencia) => {
   const { id, ...dataToUpdate } = incidencia;
   dataToUpdate.custom_fields = customValues.value[id] || {};
+
+  // CRITICAL FIX: Update the incidencia object's custom_fields so it persists in the local state
+  // This ensures that when the parent component receives the updated incidencias array,
+  // the custom_fields are included and will be sent in the sync queue payload
+  incidencia.custom_fields = dataToUpdate.custom_fields;
+
   emit('update:incidencias', incidencias.value);
-  
+
   const payload = { ...dataToUpdate };
-  delete payload.url_foto_antes; 
+  delete payload.url_foto_antes;
   delete payload.offlinePhotoKey_antes;
-  
+
   addToQueue({ table: 'incidencias', type: 'update', id: id, payload });
 };
 
@@ -135,31 +164,36 @@ const addIncidencia = async (itemId, defaults = {}) => {
   const { id, ...payload } = newIncidencia;
   addToQueue({ table: 'incidencias', type: 'insert', tempId: tempId, payload: payload });
 };
-const deleteIncidencia = async (incidenciaId) => {
-    if (!navigator.onLine) { showNotification("Necesitas conexión para borrar incidencias.", "warning"); return; }
-    const incidencia = incidencias.value.find(inc => inc.id === incidenciaId);
-    if (!incidencia) return;
-    if (incidencia.url_foto_antes) {
-      try {
-        const url = new URL(incidencia.url_foto_antes);
-        const pathParts = url.pathname.split('/');
-        const bucketIndex = pathParts.findIndex(part => part === 'incidencias');
-        if (bucketIndex !== -1) {
-          const filePath = pathParts.slice(bucketIndex + 1).join('/');
-          await supabase.storage.from('incidencias').remove([filePath]);
-        }
-      } catch (error) { console.error('Error processing photo URL for deletion:', error); }
-    }
-    const { error } = await supabase.from('incidencias').delete().eq('id', incidenciaId);
-    if (!error) {
-      incidencias.value = incidencias.value.filter(inc => inc.id !== incidenciaId);
-      delete customValues.value[incidenciaId];
-      emit('update:incidencias', incidencias.value);
-      showNotification('Incidencia eliminada correctamente.', 'success');
-    } else {
-      showNotification("Error al borrar la incidencia: " + error.message, 'error');
-    }
+
+// --- INICIO DE LA MODIFICACIÓN: Función de borrado offline ---
+const deleteIncidencia = (incidenciaId) => {
+  const incidencia = incidencias.value.find(inc => inc.id === incidenciaId);
+  if (!incidencia) return;
+
+  // 1. Si hay una foto online, la encolamos para su borrado.
+  if (incidencia.url_foto_antes && incidencia.url_foto_antes.startsWith('http')) {
+    addToQueue({
+      type: 'deleteFile',
+      bucket: 'incidencias',
+      url: incidencia.url_foto_antes
+    });
+  }
+
+  // 2. Encolamos el borrado del registro de la incidencia.
+  addToQueue({
+    type: 'delete',
+    table: 'incidencias',
+    id: incidenciaId
+  });
+
+  // 3. Actualizamos la interfaz de usuario inmediatamente.
+  incidencias.value = incidencias.value.filter(inc => inc.id !== incidenciaId);
+  delete customValues.value[incidenciaId];
+  emit('update:incidencias', incidencias.value);
+  showNotification('Incidencia eliminada. Se sincronizará en segundo plano.', 'success');
 };
+// --- FIN DE LA MODIFICACIÓN ---
+
 const toggleItemStatus = async (itemId) => {
   if (itemId === 3) {
     alert("El estado de este punto se gestiona automáticamente desde las preguntas superiores.");
@@ -167,16 +201,10 @@ const toggleItemStatus = async (itemId) => {
   }
   const itemIncidencias = getIncidenciasForItem(itemId).value;
   if (itemIncidencias.length > 0) {
-    if (!navigator.onLine) {
-        showNotification("Necesitas conexión para marcar un punto como satisfactorio (requiere borrar incidencias).", "warning");
-        return;
-    }
     if (confirm(`¿Marcar este punto como "Satisfactorio"? Se borrarán las ${itemIncidencias.length} incidencias registradas.`)) {
-      const idsToDelete = itemIncidencias.map(inc => inc.id);
-      const { error } = await supabase.from('incidencias').delete().in('id', idsToDelete);
-      if (!error) {
-        incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
-        emit('update:incidencias', incidencias.value);
+      // Borramos cada incidencia usando la nueva función offline-first
+      for (const incidencia of itemIncidencias) {
+        deleteIncidencia(incidencia.id);
       }
     }
   } else {
@@ -198,26 +226,21 @@ const startNameEditing = () => {
   nextTick(() => nameInputRef.value?.focus());
 };
 
-// --- INICIO DE LA CORRECCIÓN: Lógica de guardado con validación ---
 const saveName = () => {
   const newIdentifier = tempPointIdentifier.value.trim();
   const newNomenclature = `${pointPrefix.value}${newIdentifier}`;
   
-  // 1. Validar que el identificador no esté vacío y sea diferente al original.
   if (newIdentifier && newNomenclature !== props.punto.nomenclatura) {
-    // 2. Comprobar si el nuevo identificador ya existe en la sala (usando la nueva prop).
     if (props.existingIdentifiersInSala.includes(newIdentifier)) {
       showNotification(`El identificador "${newIdentifier}" ya existe en esta sala. Por favor, elige otro.`, 'error');
-      return; // Detenemos la ejecución aquí.
+      return;
     }
     
-    // 3. Si la validación pasa, buscamos el punto maestro y emitimos el evento.
     findPuntoMaestroAndEmitUpdate(newNomenclature);
   }
   
   isEditingName.value = false;
 };
-// --- FIN DE LA CORRECCIÓN ---
 
 const findPuntoMaestroAndEmitUpdate = async (newNomenclature) => {
   const { data: puntoMaestro, error } = await supabase.from('puntos_maestros').select('*').eq('id', props.punto.punto_maestro_id).single();
@@ -238,14 +261,14 @@ const detalleModificacion = computed({
 });
 const handlePlacaStatusChange = async (status) => {
   if (!puntoInspeccionado.value) return;
-  await supabase.from('puntos_inspeccionados').update({ tiene_placa_caracteristicas: status }).eq('id', puntoInspeccionado.value.id);
+  addToQueue({ table: 'puntos_inspeccionados', type: 'update', id: puntoInspeccionado.value.id, payload: { tiene_placa_caracteristicas: status } });
+  
   const incidenciasPlaca = getIncidenciasForItem(2).value;
   if (status === true) {
     if (incidenciasPlaca.length > 0) {
-      const idsToDelete = incidenciasPlaca.map(inc => inc.id);
-      await supabase.from('incidencias').delete().in('id', idsToDelete);
-      incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
-      emit('update:incidencias', incidencias.value);
+      for (const inc of incidenciasPlaca) {
+        deleteIncidencia(inc.id);
+      }
     }
   } else {
     if (incidenciasPlaca.length === 0) { await addIncidencia(2, { gravedad: 'verde', observaciones: 'Falta ficha' }); }
@@ -253,14 +276,15 @@ const handlePlacaStatusChange = async (status) => {
 };
 const handleModificationChange = async (newStatus) => {
   if (!puntoInspeccionado.value) return;
-  await supabase.from('puntos_inspeccionados').update({ detalle_modificacion: newStatus }).eq('id', puntoInspeccionado.value.id);
+  addToQueue({ table: 'puntos_inspeccionados', type: 'update', id: puntoInspeccionado.value.id, payload: { detalle_modificacion: newStatus } });
+  
   const incidenciasModificacion = getIncidenciasForItem(3).value;
-  const idsToDelete = incidenciasModificacion.map(inc => inc.id);
-  if (idsToDelete.length > 0) {
-    await supabase.from('incidencias').delete().in('id', idsToDelete);
-    incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
-    emit('update:incidencias', incidencias.value);
+  if (incidenciasModificacion.length > 0) {
+    for (const inc of incidenciasModificacion) {
+        deleteIncidencia(inc.id);
+    }
   }
+
   if (newStatus === 'aumentado') {
     await addIncidencia(3, { gravedad: 'ambar', observaciones: 'Se ha aumentado el número de módulos y/o niveles.' });
   } else if (newStatus === 'disminuido') {
