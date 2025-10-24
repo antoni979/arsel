@@ -9,6 +9,10 @@ const props = defineProps({
   canEdit: Boolean,
   salas: Array,
   puntosAgrupados: Array,
+  allIncidencias: {
+    type: Array,
+    default: () => []
+  }
 });
 
 const emit = defineEmits([
@@ -104,9 +108,10 @@ const handleCancelPlacement = () => {
     <!-- ===== FIN DE LA CORRECCIÓN ===== -->
 
     <div class="flex-1 overflow-y-auto px-4 pb-4">
-      <PointList 
+      <PointList
         :grouped-points="puntosAgrupados"
         :can-edit="canEdit"
+        :all-incidencias="allIncidencias"
         @select-point="$emit('select-point', $event)"
         @update-state="(point, newState) => $emit('update-point-state', point, newState)"
         @delete-new-point="$emit('delete-new-point', $event)"

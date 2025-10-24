@@ -10,7 +10,7 @@ import GlobalStatusIndicator from '../components/GlobalStatusIndicator.vue';
 import { CheckCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
 import { generateTextReport } from '../utils/pdf';
 import SkeletonLoader from '../components/SkeletonLoader.vue';
-import { addToQueue } from '../utils/syncQueue';
+import { addToQueue, processQueue, syncQueue, waitForQueueToEmpty } from '../utils/syncQueue';
 
 const showNotification = inject('showNotification');
 const showConfirm = inject('showConfirm');
@@ -335,6 +335,29 @@ const finalizarInspeccion = async () => {
     if (!confirmed) return;
     isFinalizing.value = true;
     try {
+        // Wait for sync queue to be processed before generating PDF
+        if (syncQueue.value.length > 0) {
+            showNotification(`Sincronizando ${syncQueue.value.length} cambios pendientes...`, 'info', 3000);
+
+            try {
+                // Trigger queue processing
+                await processQueue();
+                // Wait for queue to be completely empty
+                await waitForQueueToEmpty();
+                showNotification('Sincronización completa', 'success', 2000);
+            } catch (syncError) {
+                console.error('Error during sync:', syncError);
+                const continueAnyway = await showConfirm(
+                    'Error de sincronización',
+                    `No se pudieron sincronizar todos los cambios: ${syncError.message}\n\n¿Deseas continuar de todos modos? El PDF podría no incluir todos los cambios offline.`
+                );
+                if (!continueAnyway) {
+                    isFinalizing.value = false;
+                    return;
+                }
+            }
+        }
+
         const report = await generateTextReport(inspeccionId, 'initial', 'blob');
         if (!report || !report.blob) throw new Error("La generación del PDF falló.");
         const base64File = await blobToBase64(report.blob);
@@ -422,6 +445,7 @@ const finalizarInspeccion = async () => {
           :can-edit="canEditInspection"
           :salas="salas"
           :puntos-agrupados="puntosAgrupadosPorSala"
+          :all-incidencias="allIncidencias"
           @toggle-plano-editing="handleTogglePlanoEditing"
           @add-sala="handleAddSala"
           @start-area-drawing="handleStartAreaDrawing"
@@ -440,6 +464,7 @@ const finalizarInspeccion = async () => {
             :image-url="version.url_imagen_plano"
             :points="puntosParaMostrar.filter(p => p.estado !== 'suprimido')"
             :salas="salas"
+            :all-incidencias="allIncidencias"
             :is-read-only="!canEditInspection || (!isPlacementMode && !isAreaDrawingMode)"
             :is-placement-mode="isPlacementMode"
             :is-area-drawing-mode="isAreaDrawingMode"

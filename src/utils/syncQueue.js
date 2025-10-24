@@ -105,7 +105,7 @@ function hasTempId(tempId) {
 
 export async function processQueue() {
   if (isProcessing.value || !navigator.onLine) {
-    return;
+    return Promise.resolve();
   }
   isProcessing.value = true;
 
@@ -268,6 +268,41 @@ export async function processQueue() {
   }
 
   isProcessing.value = false;
+  return Promise.resolve();
+}
+
+/**
+ * Waits for the sync queue to become empty
+ * @param {number} timeout - Timeout in milliseconds (default: 30000ms = 30s)
+ * @returns {Promise<void>} Resolves when queue is empty or timeout is reached
+ */
+export async function waitForQueueToEmpty(timeout = 30000) {
+  const startTime = Date.now();
+  const checkInterval = 100; // Check every 100ms
+
+  return new Promise((resolve, reject) => {
+    const checkQueue = () => {
+      // Check if queue is empty
+      if (syncQueue.value.length === 0 && !isProcessing.value) {
+        logger.debug('Queue is empty');
+        resolve();
+        return;
+      }
+
+      // Check if timeout exceeded
+      if (Date.now() - startTime >= timeout) {
+        const remainingItems = syncQueue.value.length;
+        logger.warn(`Queue timeout after ${timeout}ms with ${remainingItems} items remaining`);
+        reject(new Error(`Tiempo de espera agotado. Quedan ${remainingItems} elementos pendientes de sincronización.`));
+        return;
+      }
+
+      // Continue checking
+      setTimeout(checkQueue, checkInterval);
+    };
+
+    checkQueue();
+  });
 }
 
 export async function addToQueue(action) {

@@ -3,9 +3,13 @@
 import { ref } from 'vue';
 import { EyeSlashIcon, ArrowUturnLeftIcon, TrashIcon, ChevronDownIcon } from '@heroicons/vue/24/solid';
 
-defineProps({
+const props = defineProps({
   groupedPoints: Array,
   canEdit: Boolean,
+  allIncidencias: {
+    type: Array,
+    default: () => []
+  }
 });
 
 const emit = defineEmits(['select-point', 'update-state', 'delete-new-point']);
@@ -18,6 +22,17 @@ const toggleSala = (salaId) => {
 
 function handleUpdateState(punto, newState) {
   emit('update-state', punto, newState);
+}
+
+// Calculate incident counts for a specific point
+function getIncidentCountsForPoint(puntoId) {
+  const incidents = props.allIncidencias.filter(inc => inc.punto_inspeccionado_id === puntoId);
+  return {
+    verde: incidents.filter(inc => inc.gravedad === 'verde').length,
+    ambar: incidents.filter(inc => inc.gravedad === 'ambar').length,
+    rojo: incidents.filter(inc => inc.gravedad === 'rojo').length,
+    total: incidents.length
+  };
 }
 </script>
 
@@ -39,12 +54,31 @@ function handleUpdateState(punto, newState) {
             <!-- ===== CORRECCIÓN: El div entero ahora emite el evento para abrir el modal ===== -->
             <div @click="$emit('select-point', punto)" class="flex-1 flex items-center cursor-pointer">
               <span class="w-3 h-3 rounded-full flex-shrink-0" :style="{ backgroundColor: punto.color }"></span>
-              
-              <span 
+
+              <span
                 :class="['font-semibold ml-3', { 'line-through text-slate-500': punto.estado === 'suprimido', 'text-slate-700': punto.estado !== 'suprimido' }]"
               >
                 {{ punto.nomenclatura }}
               </span>
+
+              <!-- Incident indicators (semaphore badges) -->
+              <div v-if="getIncidentCountsForPoint(punto.id).total > 0" class="flex items-center gap-1 ml-2">
+                <!-- Green dot + count -->
+                <div v-if="getIncidentCountsForPoint(punto.id).verde > 0" class="flex items-center gap-0.5">
+                  <span class="h-1.5 w-1.5 rounded-full bg-green-500"></span>
+                  <span class="text-[10px] font-semibold text-slate-600">{{ getIncidentCountsForPoint(punto.id).verde }}</span>
+                </div>
+                <!-- Amber dot + count -->
+                <div v-if="getIncidentCountsForPoint(punto.id).ambar > 0" class="flex items-center gap-0.5">
+                  <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                  <span class="text-[10px] font-semibold text-slate-600">{{ getIncidentCountsForPoint(punto.id).ambar }}</span>
+                </div>
+                <!-- Red dot + count -->
+                <div v-if="getIncidentCountsForPoint(punto.id).rojo > 0" class="flex items-center gap-0.5">
+                  <span class="h-1.5 w-1.5 rounded-full bg-red-500"></span>
+                  <span class="text-[10px] font-semibold text-slate-600">{{ getIncidentCountsForPoint(punto.id).rojo }}</span>
+                </div>
+              </div>
 
               <span v-if="punto.estado === 'nuevo'" class="ml-2 text-xs font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full">NUEVO</span>
             </div>

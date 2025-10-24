@@ -1,9 +1,10 @@
 <!-- src/views/CentroVersionsView.vue -->
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, inject, nextTick, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
-import { PlusIcon, PencilIcon, CheckCircleIcon, ArchiveBoxIcon } from '@heroicons/vue/24/solid';
+import { PlusIcon, PencilIcon, CheckCircleIcon, ArchiveBoxIcon, CheckIcon } from '@heroicons/vue/24/solid';
+import { addToQueue } from '../utils/syncQueue';
 
 const route = useRoute();
 const router = useRouter();
@@ -13,6 +14,13 @@ const loading = ref(true);
 const centro = ref(null);
 const versiones = ref([]);
 const newVersionName = ref('');
+
+// Inline editing state
+const editingVersionId = ref(null);
+const tempVersionName = ref('');
+
+// Inject notification system
+const showNotification = inject('showNotification');
 
 const fetchVersions = async () => {
   loading.value = true;
@@ -59,7 +67,88 @@ const createNewVersion = async () => {
     }
 };
 
-onMounted(fetchVersions);
+// Inline editing functions
+const startEditingName = (version) => {
+  editingVersionId.value = version.id;
+  tempVersionName.value = version.nombre;
+  nextTick(() => {
+    // Find the input element by its data attribute
+    const inputElement = document.querySelector(`input[data-version-id="${version.id}"]`);
+    if (inputElement) {
+      inputElement.focus();
+      inputElement.select(); // Also select all text for easier editing
+    }
+  });
+};
+
+const cancelEditingName = () => {
+  editingVersionId.value = null;
+  tempVersionName.value = '';
+};
+
+const saveVersionName = async (versionId) => {
+  const newName = tempVersionName.value.trim();
+
+  // Validation
+  if (!newName) {
+    showNotification('El nombre de la versión no puede estar vacío.', 'error');
+    return;
+  }
+
+  if (newName.length > 100) {
+    showNotification('El nombre es demasiado largo (máximo 100 caracteres).', 'error');
+    return;
+  }
+
+  try {
+    // Use sync queue for offline support
+    addToQueue({
+      table: 'versiones_plano',
+      type: 'update',
+      id: versionId,
+      payload: { nombre: newName }
+    });
+
+    // Update local state immediately
+    const version = versiones.value.find(v => v.id === versionId);
+    if (version) {
+      version.nombre = newName;
+    }
+
+    showNotification('Nombre de versión actualizado correctamente.', 'success');
+    cancelEditingName();
+  } catch (error) {
+    console.error('Error updating version name:', error);
+    showNotification('Error al actualizar el nombre: ' + error.message, 'error');
+  }
+};
+
+// Handle clicking outside to cancel edit
+const handleClickOutside = (event) => {
+  if (editingVersionId.value === null) {
+    return; // Not editing, nothing to do
+  }
+
+  // Check if click target is the pencil button itself
+  const pencilButton = event.target.closest('button[title="Editar nombre"]');
+  if (pencilButton) {
+    return; // Ignore clicks on the pencil button
+  }
+
+  const editContainer = document.querySelector('.version-name-edit-container');
+  if (editContainer && !editContainer.contains(event.target)) {
+    cancelEditingName();
+  }
+};
+
+onMounted(() => {
+  fetchVersions();
+  document.addEventListener('click', handleClickOutside);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside);
+});
 </script>
 
 <template>
@@ -106,7 +195,40 @@ onMounted(fetchVersions);
           </li>
           <li v-for="version in versiones" :key="version.id" class="p-4 grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
             <div class="md:col-span-1">
-              <p class="font-semibold text-slate-800 text-lg">{{ version.nombre }}</p>
+              <!-- Editable version name -->
+              <div class="flex items-center gap-2 group version-name-edit-container">
+                <!-- Edit mode -->
+                <div v-if="editingVersionId === version.id" class="flex items-center gap-1 flex-1">
+                  <input
+                    :data-version-id="version.id"
+                    v-model="tempVersionName"
+                    type="text"
+                    @keyup.enter="saveVersionName(version.id)"
+                    @keyup.esc="cancelEditingName"
+                    class="font-semibold text-slate-800 text-lg px-2 py-1 border-2 border-blue-400 rounded-md focus:ring-2 focus:ring-blue-400 focus:outline-none flex-1"
+                    maxlength="100"
+                  />
+                  <button
+                    @mousedown.prevent="saveVersionName(version.id)"
+                    class="p-1.5 text-green-600 hover:bg-green-100 rounded-md transition-colors"
+                    title="Guardar"
+                  >
+                    <CheckIcon class="h-5 w-5" />
+                  </button>
+                </div>
+
+                <!-- View mode -->
+                <div v-else class="flex items-center gap-2 flex-1">
+                  <p class="font-semibold text-slate-800 text-lg">{{ version.nombre }}</p>
+                  <button
+                    @click="startEditingName(version)"
+                    class="p-1 text-slate-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Editar nombre"
+                  >
+                    <PencilIcon class="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
               <p class="text-sm text-slate-500">Creada: {{ new Date(version.fecha_creacion).toLocaleDateString() }}</p>
             </div>
             <div class="md:col-span-1">

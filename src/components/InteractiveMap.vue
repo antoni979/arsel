@@ -9,6 +9,7 @@ const props = defineProps({
   isReadOnly: { type: Boolean, default: false },
   isPlacementMode: { type: Boolean, default: false },
   isAreaDrawingMode: { type: Boolean, default: false },
+  allIncidencias: { type: Array, default: () => [] }
 });
 
 const emit = defineEmits(['add-point', 'delete-point', 'update-point-position', 'point-click', 'area-drawn', 'drawing-cancelled', 'image-error']);
@@ -177,6 +178,22 @@ const handlePointClick = (point) => {
   if (props.isPlacementMode || props.isAreaDrawingMode) return;
   emit('point-click', point);
 };
+
+// Get incident badge data for a point (highest severity and count)
+function getPointIncidentBadge(puntoId) {
+  const incidents = props.allIncidencias.filter(inc => inc.punto_inspeccionado_id === puntoId);
+  if (incidents.length === 0) return null;
+
+  const hasRojo = incidents.some(inc => inc.gravedad === 'rojo');
+  const hasAmbar = incidents.some(inc => inc.gravedad === 'ambar');
+
+  return {
+    count: incidents.length,
+    color: hasRojo ? '#EF4444' : hasAmbar ? '#F59E0B' : '#22C55E',
+    severity: hasRojo ? 'rojo' : hasAmbar ? 'ambar' : 'verde',
+    shouldPulse: hasRojo // Pulse effect for critical incidents
+  };
+}
 </script>
 
 <template>
@@ -256,7 +273,18 @@ const handlePointClick = (point) => {
            @click.stop="handlePointClick(point)"
          >
           {{ point.nomenclatura.split('-').pop() || '?' }}
-          <button 
+
+          <!-- Incident count badge -->
+          <div
+            v-if="getPointIncidentBadge(point.id)"
+            class="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white shadow-lg"
+            :class="{ 'animate-pulse': getPointIncidentBadge(point.id).shouldPulse }"
+            :style="{ backgroundColor: getPointIncidentBadge(point.id).color }"
+          >
+            {{ getPointIncidentBadge(point.id).count }}
+          </div>
+
+          <button
             v-if="!isReadOnly && (point.estado === 'nuevo' || point.estado === undefined)"
             @click.stop="handleDeleteClick(point)"
             class="absolute -top-2 -right-2 w-5 h-5 bg-red-600 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
