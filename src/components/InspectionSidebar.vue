@@ -12,6 +12,14 @@ const props = defineProps({
   allIncidencias: {
     type: Array,
     default: () => []
+  },
+  isPlanoEditingMode: {
+    type: Boolean,
+    default: false
+  },
+  isMobileAddPointOpen: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -25,18 +33,20 @@ const emit = defineEmits([
   'update-point-state',
   'delete-new-point',
   'update-point-nomenclatura',
+  'update:is-mobile-add-point-open'
 ]);
 
-const isPlanoEditingMode = ref(false);
+// Estado local para desktop
+const isPlanoEditingModeLocal = ref(false);
 const showAddSalaForm = ref(false);
 const newSalaName = ref('');
 const showAddPointForm = ref(false);
 const isPlacementMode = ref(false);
 
 const handleTogglePlanoEditing = () => {
-  isPlanoEditingMode.value = !isPlanoEditingMode.value;
-  emit('toggle-plano-editing', isPlanoEditingMode.value);
-  if (!isPlanoEditingMode.value) {
+  isPlanoEditingModeLocal.value = !isPlanoEditingModeLocal.value;
+  emit('toggle-plano-editing', isPlanoEditingModeLocal.value);
+  if (!isPlanoEditingModeLocal.value) {
     showAddSalaForm.value = false;
   }
 };
@@ -52,6 +62,7 @@ const handleAddSala = () => {
 const handleStartPlacement = (salaId) => {
   isPlacementMode.value = true;
   showAddPointForm.value = false;
+  emit('update:is-mobile-add-point-open', false);
   emit('start-placement-mode', salaId);
 };
 
@@ -62,21 +73,22 @@ const handleCancelPlacement = () => {
 </script>
 
 <template>
-  <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col h-1/2 lg:h-full">
-    <div class="p-4 flex-shrink-0 border-b">
-      <button v-if="canEdit" @click="handleTogglePlanoEditing" 
+  <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
+    <!-- Botón Editar Plano - SOLO VISIBLE EN DESKTOP -->
+    <div class="hidden lg:block p-4 flex-shrink-0 border-b">
+      <button v-if="canEdit" @click="handleTogglePlanoEditing"
               :class="[
                 'w-full flex items-center justify-center gap-2 px-4 py-2 font-semibold rounded-md shadow-sm transition-colors',
-                isPlanoEditingMode ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+                isPlanoEditingModeLocal ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
               ]">
         <PencilSquareIcon class="h-5 w-5" />
-        {{ isPlanoEditingMode ? 'Finalizar Edición Plano' : 'Editar Plano' }}
+        {{ isPlanoEditingModeLocal ? 'Finalizar Edición Plano' : 'Editar Plano' }}
       </button>
     </div>
 
-    <!-- ===== INICIO DE LA CORRECCIÓN: Se restaura este bloque completo ===== -->
-    <div class="p-4 flex-shrink-0 space-y-2">
-       <div v-if="canEdit && isPlanoEditingMode" class="p-3 bg-orange-50 border border-orange-200 rounded-lg space-y-3">
+    <!-- Formularios de Edición - SOLO VISIBLE EN DESKTOP -->
+    <div class="hidden lg:block p-4 flex-shrink-0 space-y-2">
+       <div v-if="canEdit && isPlanoEditingModeLocal" class="p-3 bg-orange-50 border border-orange-200 rounded-lg space-y-3">
           <h3 class="font-bold text-orange-800">Modo Edición de Plano</h3>
           <form v-if="showAddSalaForm" @submit.prevent="handleAddSala" class="flex gap-2">
               <input v-model="newSalaName" type="text" placeholder="Nombre nueva sala..." class="flex-1 block w-full rounded-md border-slate-300 shadow-sm text-sm">
@@ -87,9 +99,9 @@ const handleCancelPlacement = () => {
              <PlusIcon class="h-5 w-5" /> Añadir Sala
           </button>
        </div>
-       
-       <div v-if="canEdit && !isPlanoEditingMode">
-          <AddPointForm 
+
+       <div v-if="canEdit && !isPlanoEditingModeLocal">
+          <AddPointForm
              v-if="showAddPointForm"
              :salas="salas"
              @save="handleStartPlacement"
@@ -105,7 +117,20 @@ const handleCancelPlacement = () => {
           </button>
        </div>
     </div>
-    <!-- ===== FIN DE LA CORRECCIÓN ===== -->
+
+    <!-- Formulario móvil de Agregar Punto - SOLO VISIBLE EN MÓVIL -->
+    <div v-if="canEdit && !isPlanoEditingMode && isMobileAddPointOpen" class="lg:hidden p-4 flex-shrink-0 border-b bg-blue-50">
+       <AddPointForm
+          :salas="salas"
+          @save="handleStartPlacement"
+          @cancel="emit('update:is-mobile-add-point-open', false)"
+       />
+    </div>
+
+    <!-- Mensaje de modo edición en móvil -->
+    <div v-if="canEdit && isPlanoEditingMode" class="lg:hidden p-3 bg-orange-50 border-b border-orange-200">
+       <p class="text-sm font-medium text-orange-800 text-center">Modo Edición de Plano activo</p>
+    </div>
 
     <div class="flex-1 overflow-y-auto px-4 pb-4">
       <PointList
@@ -116,10 +141,10 @@ const handleCancelPlacement = () => {
         @update-state="(point, newState) => $emit('update-point-state', point, newState)"
         @delete-new-point="$emit('delete-new-point', $event)"
         @update-point-nomenclatura="(point, newName) => $emit('update-point-nomenclatura', point, newName)"
-        :class="{ 'pointer-events-none opacity-50': isPlacementMode || isPlanoEditingMode }"
+        :class="{ 'pointer-events-none opacity-50': isPlacementMode || isPlanoEditingMode || isPlanoEditingModeLocal }"
       >
         <template #sala-actions="{ sala }">
-          <button v-if="isPlanoEditingMode" @click="$emit('start-area-drawing', sala)" class="p-1 text-slate-400 hover:text-blue-600" title="Definir área de la sala">
+          <button v-if="isPlanoEditingMode || isPlanoEditingModeLocal" @click="$emit('start-area-drawing', sala)" class="p-1 text-slate-400 hover:text-blue-600" title="Definir área de la sala">
             <MapIcon class="h-5 w-5" />
           </button>
         </template>

@@ -17,7 +17,7 @@ const routes = [
   { path: '/centros/:id/versiones', name: 'CentroVersions', component: () => import('../views/CentroVersionsView.vue'), meta: { requiresAuth: true } },
   { path: '/versiones/:id/configurar', name: 'VersionConfig', component: () => import('../views/CentroConfigView.vue'), meta: { requiresAuth: true } },
   { path: '/inspecciones', name: 'InspeccionesList', component: () => import('../views/InspeccionesListView.vue'), meta: { requiresAuth: true } },
-  { path: '/inspecciones/:id', name: 'InspeccionDetail', component: () => import('../views/InspeccionDetailView.vue'), meta: { requiresAuth: true } },
+  { path: '/inspecciones/:id', name: 'InspeccionDetail', component: () => import('../views/InspeccionDetailView.vue'), meta: { requiresAuth: true, hideDefaultHeader: true } },
   { path: '/centros/:id/historial', name: 'CentroHistorial', component: () => import('../views/CentroHistorialView.vue'), meta: { requiresAuth: true } },
   {
     path: '/inspecciones/:id/plano-preview',

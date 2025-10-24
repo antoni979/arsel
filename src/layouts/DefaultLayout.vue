@@ -1,6 +1,6 @@
 <!-- src/layouts/DefaultLayout.vue -->
 <script setup>
-import { ref } from 'vue';
+import { ref, provide } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { HomeIcon, ListBulletIcon, DocumentMagnifyingGlassIcon, Cog6ToothIcon, Bars3Icon, TableCellsIcon } from '@heroicons/vue/24/outline';
 import { supabase } from '../supabase';
@@ -12,6 +12,9 @@ import GlobalStatusIndicator from '../components/GlobalStatusIndicator.vue';
 const route = useRoute();
 const router = useRouter();
 const isSidebarOpen = ref(false);
+
+// Proporcionar el estado del sidebar a los componentes hijos
+provide('toggleSidebar', () => { isSidebarOpen.value = true; });
 
 const navigation = [
   { name: 'Menú Principal', href: '/dashboard', icon: HomeIcon },
@@ -78,7 +81,9 @@ const handleLogout = async () => {
 
   <!-- Contenido Principal -->
   <div class="flex-1 flex flex-col overflow-hidden">
-      <header class="md:hidden h-16 bg-white shadow-sm flex items-center justify-between px-4 flex-shrink-0">
+      <header
+        v-if="!route.meta.hideDefaultHeader"
+        class="md:hidden h-16 bg-white shadow-sm flex items-center justify-between px-4 flex-shrink-0">
         <button @click="isSidebarOpen = true" class="text-slate-600">
           <Bars3Icon class="h-6 w-6" />
         </button>
@@ -87,7 +92,7 @@ const handleLogout = async () => {
         <GlobalStatusIndicator mode="mobile" />
         <!-- --- FIN DE LA MODIFICACIÓN --- -->
       </header>
-      
+
       <main class="flex-1 overflow-y-auto">
         <router-view />
       </main>

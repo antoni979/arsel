@@ -7,13 +7,14 @@ import InteractiveMap from '../components/InteractiveMap.vue';
 import ChecklistModal from '../components/ChecklistModal.vue';
 import InspectionSidebar from '../components/InspectionSidebar.vue';
 import GlobalStatusIndicator from '../components/GlobalStatusIndicator.vue';
-import { CheckCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
+import { CheckCircleIcon, InformationCircleIcon, MapIcon, PlusIcon, PencilSquareIcon, ArrowLeftIcon, ListBulletIcon, Bars3Icon } from '@heroicons/vue/24/solid';
 import { generateTextReport } from '../utils/pdf';
 import SkeletonLoader from '../components/SkeletonLoader.vue';
 import { addToQueue, processQueue, syncQueue, waitForQueueToEmpty } from '../utils/syncQueue';
 
 const showNotification = inject('showNotification');
 const showConfirm = inject('showConfirm');
+const toggleSidebar = inject('toggleSidebar', null);
 const route = useRoute();
 const router = useRouter();
 const inspeccionId = Number(route.params.id);
@@ -34,6 +35,9 @@ const isPlacementMode = ref(false);
 const newPointSalaId = ref(null);
 const isAreaDrawingMode = ref(false);
 const salaParaDibujar = ref(null);
+const isPlanoEditingMode = ref(false);
+const isMobileAddPointOpen = ref(false);
+const showMapInMobile = ref(false);
 
 const canEditInspection = computed(() => {
   return inspeccion.value?.estado === 'en_progreso';
@@ -253,7 +257,26 @@ const handleDeleteNewPoint = async (punto) => {
   }
 };
 const handleTogglePlanoEditing = (isActive) => {
-  if (!isActive) { isAreaDrawingMode.value = false; salaParaDibujar.value = null; }
+  isPlanoEditingMode.value = isActive;
+  if (!isActive) {
+    isAreaDrawingMode.value = false;
+    salaParaDibujar.value = null;
+  }
+};
+
+// Función para manejar el toggle desde el header móvil
+const toggleMobilePlanoEditing = () => {
+  isPlanoEditingMode.value = !isPlanoEditingMode.value;
+  handleTogglePlanoEditing(isPlanoEditingMode.value);
+};
+
+// Función para hacer toggle del mapa en móvil
+const toggleMapInMobile = () => {
+  showMapInMobile.value = !showMapInMobile.value;
+  // Si estamos mostrando el mapa, desactivamos el modo de agregar puntos
+  if (showMapInMobile.value) {
+    isMobileAddPointOpen.value = false;
+  }
 };
 const handleAddSala = async (name) => {
     if(!navigator.onLine){ showNotification("Necesitas conexión para añadir salas.", "warning"); return; }
@@ -412,12 +435,97 @@ const finalizarInspeccion = async () => {
     </div>
     
     <div v-else-if="inspeccion && centro && version" class="flex-1 flex flex-col min-h-0">
-      <header class="flex-shrink-0 px-4 md:px-8 pt-6 pb-4 bg-slate-100/80 backdrop-blur-sm border-b border-slate-200 z-10">
-        <div class="flex flex-col md:flex-row justify-between items-start gap-4">
+      <!-- ============ HEADER MÓVIL COMPACTO (visible solo < lg) ============ -->
+      <header class="lg:hidden flex-shrink-0 px-3 py-2 bg-white border-b border-slate-200 z-10">
+        <div class="flex items-center justify-between gap-2">
+          <!-- Botón hamburguesa para el menú lateral -->
+          <button
+            v-if="toggleSidebar"
+            @click="toggleSidebar"
+            class="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+            title="Abrir Menú"
+            aria-label="Abrir Menú">
+            <Bars3Icon class="h-5 w-5" />
+          </button>
+
+          <!-- Indicador de conexión -->
+          <GlobalStatusIndicator mode="mobile" />
+
+          <!-- Botones de acción compactos -->
+          <div class="flex items-center gap-1">
+            <!-- Botón Editar Plano -->
+            <button
+              v-if="canEditInspection"
+              @click="toggleMobilePlanoEditing"
+              :class="[
+                'p-2 rounded-md transition-colors',
+                isPlanoEditingMode ? 'bg-orange-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              ]"
+              :title="isPlanoEditingMode ? 'Finalizar Edición' : 'Editar Plano'"
+              :aria-label="isPlanoEditingMode ? 'Finalizar Edición' : 'Editar Plano'">
+              <PencilSquareIcon class="h-5 w-5" />
+            </button>
+
+            <!-- Botón Agregar Punto -->
+            <button
+              v-if="canEditInspection && !isPlanoEditingMode"
+              @click="isMobileAddPointOpen = !isMobileAddPointOpen"
+              :class="[
+                'p-2 rounded-md transition-colors',
+                isMobileAddPointOpen ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              ]"
+              title="Agregar Punto"
+              aria-label="Agregar Punto">
+              <PlusIcon class="h-5 w-5" />
+            </button>
+
+            <!-- Botón Ver Plano / Ver Lista -->
+            <button
+              @click="toggleMapInMobile"
+              :class="[
+                'p-2 rounded-md transition-colors',
+                showMapInMobile ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              ]"
+              :title="showMapInMobile ? 'Ver Lista' : 'Ver Plano'"
+              :aria-label="showMapInMobile ? 'Ver Lista' : 'Ver Plano'">
+              <component :is="showMapInMobile ? ListBulletIcon : MapIcon" class="h-5 w-5" />
+            </button>
+
+            <!-- Botón Finalizar o Volver -->
+            <button
+              v-if="canEditInspection"
+              @click="finalizarInspeccion"
+              :disabled="isFinalizing"
+              class="p-2 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:bg-slate-400 transition-colors"
+              title="Finalizar Inspección"
+              :aria-label="isFinalizing ? 'Finalizando...' : 'Finalizar Inspección'">
+              <CheckCircleIcon class="h-5 w-5" />
+            </button>
+            <button
+              v-else
+              @click="router.push(`/centros/${centro.id}/historial`)"
+              class="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+              title="Volver al Historial"
+              aria-label="Volver al Historial">
+              <ArrowLeftIcon class="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        <!-- Aviso de solo lectura compacto (móvil) -->
+        <div v-if="!canEditInspection" class="mt-2 flex items-center gap-2 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded px-2 py-1">
+          <InformationCircleIcon class="h-4 w-4 flex-shrink-0" />
+          <span>Solo lectura</span>
+        </div>
+      </header>
+
+      <!-- ============ HEADER DESKTOP COMPLETO (visible solo >= lg) ============ -->
+      <header class="hidden lg:flex flex-shrink-0 px-4 md:px-8 pt-6 pb-4 bg-slate-100/80 backdrop-blur-sm border-b border-slate-200 z-10">
+        <div class="flex flex-col md:flex-row justify-between items-start gap-4 w-full">
           <div class="flex-1">
             <h1 class="text-2xl md:text-3xl font-bold text-slate-800 mb-1">Inspección: {{ centro.nombre }}</h1>
             <p class="text-slate-500 text-sm">
-              Técnico: <span class="font-medium">{{ inspeccion.tecnico_nombre }}</span> | 
+              Técnico: <span class="font-medium">{{ inspeccion.tecnico_nombre }}</span> |
               Fecha: <span class="font-medium">{{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString() }}</span> |
               Plano: <strong class="text-blue-600">{{ version.nombre }}</strong>
             </p>
@@ -427,7 +535,6 @@ const finalizarInspeccion = async () => {
             </div>
           </div>
           <div class="w-full md:w-auto flex items-center flex-col sm:flex-row gap-2">
-            <GlobalStatusIndicator mode="mobile" class="w-full justify-center md:hidden" />
             <button v-if="canEditInspection" @click="finalizarInspeccion" :disabled="isFinalizing" class="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm disabled:bg-slate-400">
               <CheckCircleIcon class="h-5 w-5" />
               {{ isFinalizing ? 'Finalizando...' : 'Finalizar Inspección' }}
@@ -440,12 +547,18 @@ const finalizarInspeccion = async () => {
       </header>
       
       <div class="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        
+
         <InspectionSidebar
+          :class="[
+            'lg:block',
+            showMapInMobile ? 'hidden' : 'block'
+          ]"
           :can-edit="canEditInspection"
           :salas="salas"
           :puntos-agrupados="puntosAgrupadosPorSala"
           :all-incidencias="allIncidencias"
+          :is-plano-editing-mode="isPlanoEditingMode"
+          :is-mobile-add-point-open="isMobileAddPointOpen"
           @toggle-plano-editing="handleTogglePlanoEditing"
           @add-sala="handleAddSala"
           @start-area-drawing="handleStartAreaDrawing"
@@ -455,9 +568,15 @@ const finalizarInspeccion = async () => {
           @update-point-state="updatePuntoEstado"
           @delete-new-point="handleDeleteNewPoint"
           @update-point-nomenclatura="handleUpdatePointNomenclatura"
+          @update:is-mobile-add-point-open="isMobileAddPointOpen = $event"
         />
-        
-        <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full overflow-auto">
+
+        <main
+          :class="[
+            'flex-1 bg-slate-100 min-w-0 lg:h-full overflow-auto',
+            showMapInMobile ? 'block' : 'hidden lg:block'
+          ]"
+        >
           <InteractiveMap
             v-if="!loading && version?.url_imagen_plano"
             :key="inspeccionId"
