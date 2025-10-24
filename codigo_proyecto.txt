@@ -145,6 +145,9 @@ import { useNotification } from './utils/notification';
 import { useRegisterSW } from 'virtual:pwa-register/vue';
 import ReloadPWA from './components/ReloadPWA.vue';
 import { initializeQueue, processQueue } from './utils/syncQueue';
+import { createLogger } from './utils/logger';
+
+const logger = createLogger('App');
 
 const { offlineReady, needRefresh, updateServiceWorker } = useRegisterSW();
 
@@ -156,14 +159,14 @@ const handleUpdateServiceWorker = async () => {
 const handleVisibilityChange = () => {
   if (document.visibilityState === 'visible') {
     // Cuando la app vuelve a ser visible, intentamos sincronizar.
-    console.log("App is visible again, attempting to sync queue.");
+    logger.debug("App is visible again, attempting to sync queue.");
     processQueue();
   }
 };
 // --- FIN DE LA MODIFICACIÓN ---
 
 onMounted(() => {
-  console.log('[App.vue] Componente montado en el DOM.');
+  logger.info('[App.vue] Componente montado en el DOM.');
   initializeQueue();
   window.addEventListener('online', processQueue);
   // --- INICIO DE LA MODIFICACIÓN: Añadimos el nuevo listener ---
@@ -178,7 +181,7 @@ onUnmounted(() => {
   // --- FIN DE LA MODIFICACIÓN ---
 });
 
-onUpdated(() => console.log('[App.vue] Componente actualizado (cambio de layout o ruta).'));
+onUpdated(() => logger.debug('[App.vue] Componente actualizado (cambio de layout o ruta).'));
 
 const { notificationShow, notificationMessage, notificationType, confirmShow, confirmTitle, confirmMessage, showNotification, showConfirm, confirmYes, confirmNo } = useNotification();
 provide('showNotification', showNotification);
@@ -189,7 +192,7 @@ provide('confirmNo', confirmNo);
 const route = useRoute();
 const layout = computed(() => {
   const layoutName = route.meta.layout === 'Blank' ? 'BlankLayout' : 'DefaultLayout';
-  console.log(`[App.vue] Layout computado es: ${layoutName}`);
+  logger.debug(`[App.vue] Layout computado es: ${layoutName}`);
   return layoutName === 'BlankLayout' ? BlankLayout : DefaultLayout;
 });
 </script>
@@ -316,14 +319,21 @@ export function useNotification() {
 import { ref } from 'vue';
 import { supabase } from '../supabase';
 import { useNotification } from './notification';
+import { createLogger } from './logger';
 
 const { showNotification } = useNotification();
+const logger = createLogger('SyncQueue');
 
 export const syncQueue = ref([]);
 export const isProcessing = ref(false);
 
 const QUEUE_STORAGE_KEY = 'arsel-sync-queue';
-export const FILE_STORAGE_KEY_PREFIX = 'arsel-offline-file-'; // <-- Exportado
+export const FILE_STORAGE_KEY_PREFIX = 'arsel-offline-file-';
+
+// LRU Cache para tempIdMap con límite de 500 entradas
+const MAX_TEMP_ID_MAP_SIZE = 500;
+const tempIdMapAccess = new Map(); // Tracking de último acceso
+const tempIdMap = new Map();
 
 const dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open("ArselOfflineFiles", 1);
@@ -346,9 +356,7 @@ async function saveFileLocally(fileId, file) {
     });
 }
 
-// --- INICIO DE LA MODIFICACIÓN: Exportamos esta función ---
 export async function getFileLocally(fileId) {
-// --- FIN DE LA MODIFICACIÓN ---
     const db = await dbPromise;
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(["files"]);
@@ -359,7 +367,6 @@ export async function getFileLocally(fileId) {
     });
 }
 
-// ... (El resto del archivo no cambia en absoluto) ...
 async function deleteFileLocally(fileId) {
     const db = await dbPromise;
     return new Promise((resolve, reject) => {
@@ -374,28 +381,66 @@ function saveQueueToStorage() {
   localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(syncQueue.value));
 }
 
-const tempIdMap = new Map();
+// Funciones LRU para tempIdMap
+function setTempId(tempId, realId) {
+  // Limpiar entrada más antigua si excedemos el límite
+  if (tempIdMap.size >= MAX_TEMP_ID_MAP_SIZE) {
+    let oldestKey = null;
+    let oldestTime = Date.now();
+
+    for (const [key, time] of tempIdMapAccess.entries()) {
+      if (time < oldestTime) {
+        oldestTime = time;
+        oldestKey = key;
+      }
+    }
+
+    if (oldestKey) {
+      tempIdMap.delete(oldestKey);
+      tempIdMapAccess.delete(oldestKey);
+      logger.debug(`LRU: Removed oldest tempId ${oldestKey} to make space`);
+    }
+  }
+
+  tempIdMap.set(tempId, realId);
+  tempIdMapAccess.set(tempId, Date.now());
+  logger.debug(`Mapped ${tempId} → ${realId}`);
+}
+
+function getTempId(tempId) {
+  if (!tempIdMap.has(tempId)) return null;
+
+  // Actualizar tiempo de acceso (LRU)
+  tempIdMapAccess.set(tempId, Date.now());
+  return tempIdMap.get(tempId);
+}
+
+function hasTempId(tempId) {
+  return tempIdMap.has(tempId);
+}
 
 export async function processQueue() {
   if (isProcessing.value || !navigator.onLine) {
-    return;
+    return Promise.resolve();
   }
   isProcessing.value = true;
-  
-  if(syncQueue.value.length > 0) {
-    // showNotification('Sincronizando...', 'info', 1500);
-  }
 
-  while (syncQueue.value.length > 0) {
+  // Límite para evitar bucles infinitos
+  let processedActions = 0;
+  const maxActionsInCycle = syncQueue.value.length * 2;
+
+  while (syncQueue.value.length > 0 && processedActions < maxActionsInCycle) {
     const action = syncQueue.value[0];
     let success = false;
+    processedActions++;
 
     try {
       if (action.payload) {
         for (const key in action.payload) {
           if (typeof action.payload[key] === 'string' && action.payload[key].startsWith('temp_')) {
-            if (tempIdMap.has(action.payload[key])) {
-              action.payload[key] = tempIdMap.get(action.payload[key]);
+            const realId = getTempId(action.payload[key]);
+            if (realId) {
+              action.payload[key] = realId;
             } else {
               throw new Error(`Dependencia de ID temporal (${action.payload[key]}) no resuelta. Reintentando...`);
             }
@@ -403,66 +448,255 @@ export async function processQueue() {
         }
       }
 
-      const sanitizedPayload = { ...action.payload };
-      delete sanitizedPayload.id;
-      delete sanitizedPayload.created_at;
+      const sanitizedPayload = action.payload ? { ...action.payload } : {};
+      if(sanitizedPayload.id) delete sanitizedPayload.id;
+      if(sanitizedPayload.created_at) delete sanitizedPayload.created_at;
 
       switch (action.type) {
         case 'insert':
           const { data: insertData, error: insertError } = await supabase.from(action.table).insert(sanitizedPayload).select().single();
           if (insertError) throw insertError;
-          if (action.tempId) { tempIdMap.set(action.tempId, insertData.id); }
+          if (action.tempId) {
+            setTempId(action.tempId, insertData.id);
+          }
+          success = true;
           break;
 
         case 'update':
           let updateId = action.id;
           if (typeof updateId === 'string' && updateId.startsWith('temp_')) {
-             if (!tempIdMap.has(updateId)) { throw new Error(`ID temporal ${updateId} no encontrado para actualizar.`); }
-             updateId = tempIdMap.get(updateId);
+            const realId = getTempId(updateId);
+            if (!realId) {
+              logger.warn(`Update de ${updateId} reordenado - esperando resolución`);
+              throw new Error(`ID temporal ${updateId} no encontrado para actualizar.`);
+            }
+            updateId = realId;
+            logger.debug(`Update resolved: ${action.id} → ${updateId}`);
           }
           const { error: updateError } = await supabase.from(action.table).update(sanitizedPayload).eq('id', updateId);
           if (updateError) throw updateError;
+          success = true;
           break;
         
+        case 'delete':
+          if (typeof action.id === 'string' && action.id.startsWith('temp_')) {
+            success = true;
+          } else {
+            const { error: deleteError } = await supabase.from(action.table).delete().eq('id', action.id);
+            if (!deleteError || deleteError.code === 'PGRST116') {
+              success = true;
+            } else {
+              throw deleteError;
+            }
+          }
+          break;
+
+        case 'deleteFile':
+          try {
+            const url = new URL(action.url);
+            const pathParts = url.pathname.split('/');
+            const bucketIndex = pathParts.findIndex(part => part === action.bucket);
+            if (bucketIndex === -1) throw new Error(`Bucket '${action.bucket}' no encontrado en la URL.`);
+            const filePath = pathParts.slice(bucketIndex + 1).join('/');
+            const { error: fileDeleteError } = await supabase.storage.from(action.bucket).remove([filePath]);
+            if (fileDeleteError && fileDeleteError.message !== 'The resource was not found') {
+              logger.error('Error al borrar archivo del storage:', fileDeleteError);
+            }
+          } catch(e) {
+              logger.error('URL de archivo inválida para borrado:', action.url, e);
+          }
+          success = true;
+          break;
+
         case 'uploadAndUpdate':
           let fileData = await getFileLocally(action.fileId);
-          if (!fileData) throw new Error("Archivo local no encontrado para subir.");
+          if (!fileData) {
+            logger.warn(`Archivo local ${action.fileId} no encontrado, saltando acción`);
+            success = true;
+            break;
+          }
           const fileToUpload = new Blob([fileData], { type: fileData.type });
           const { error: uploadError } = await supabase.storage.from(action.bucket).upload(action.path, fileToUpload, { upsert: true });
           if (uploadError) throw uploadError;
+
           const { data: { publicUrl } } = supabase.storage.from(action.bucket).getPublicUrl(action.path);
+
           let recordId = action.recordId;
           if (typeof recordId === 'string' && recordId.startsWith('temp_')) {
-            if (!tempIdMap.has(recordId)) throw new Error(`ID temporal ${recordId} no encontrado para actualizar URL.`);
-            recordId = tempIdMap.get(recordId);
+            const realRecordId = getTempId(recordId);
+            if (!realRecordId) {
+              logger.error(`ID temporal ${recordId} no encontrado. Map size: ${tempIdMap.size}`);
+              throw new Error(`ID temporal ${recordId} no encontrado para actualizar URL.`);
+            }
+            logger.debug(`Resolviendo ${recordId} → ${realRecordId}`);
+            recordId = realRecordId;
           }
+
           const updateUrlPayload = {};
           updateUrlPayload[action.urlColumn] = publicUrl;
           const { error: urlUpdateError } = await supabase.from(action.table).update(updateUrlPayload).eq('id', recordId);
           if (urlUpdateError) throw urlUpdateError;
+
           await deleteFileLocally(action.fileId);
+          logger.debug(`Archivo subido y URL actualizada para recordId ${recordId}`);
+          success = true;
           break;
 
         default:
           throw new Error(`Tipo de acción desconocido: ${action.type}`);
       }
-      success = true;
     } catch (error) {
-      console.error('Error al procesar la acción de la cola:', error);
-      if (!error.message.includes('Reintentando')) {
+      logger.error('Error al procesar la acción de la cola:', error);
+
+      // === MANEJO ROBUSTO DE ERRORES ===
+      if (error.message.includes('Dependencia de ID temporal') || error.message.includes('ID temporal no encontrado')) {
+        // Error de dependencia: la acción depende de un ID temporal que aún no se ha resuelto
+        logger.warn(`Reordenando acción por dependencia no resuelta:`, action);
+        const failingAction = syncQueue.value.shift();
+        syncQueue.value.push(failingAction);
+        // NO marcamos success=true, el bucle continuará con el siguiente elemento
+      } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        // Error de red: detenemos el procesamiento para reintentar más tarde
+        logger.info('Fallo de red. La sincronización se detiene y reintentará más tarde.');
+        break;
+      } else if (error.code === 'PGRST116' || error.message.includes('no rows returned')) {
+        // El registro no existe en la BD (probablemente ya fue borrado)
+        // Esto puede pasar si intentamos actualizar/borrar algo que ya no existe
+        logger.warn(`Registro no encontrado, removiendo acción de la cola:`, action);
+        success = true; // Marcamos como éxito para remover la acción
+      } else {
+        // Error grave e inesperado: detenemos la cola y notificamos
         showNotification(`Error de sincronización: ${error.message}`, 'error');
+        logger.error('Error grave en cola de sincronización:', error, action);
+        break;
       }
-      break; 
     }
     if (success) {
       syncQueue.value.shift();
-      saveQueueToStorage();
+
+      // NOTA: NO limpiamos el tempIdMap aquí
+      // El mapa persiste durante toda la sesión para manejar updates tardíos
+      // que puedan llegar después de que el insert se haya procesado
     }
+
+    // Siempre guardamos el estado actual de la cola, especialmente si la hemos reordenado.
+    saveQueueToStorage();
   }
+
   isProcessing.value = false;
+  return Promise.resolve();
+}
+
+/**
+ * Waits for the sync queue to become empty
+ * @param {number} timeout - Timeout in milliseconds (default: 30000ms = 30s)
+ * @returns {Promise<void>} Resolves when queue is empty or timeout is reached
+ */
+export async function waitForQueueToEmpty(timeout = 30000) {
+  const startTime = Date.now();
+  const checkInterval = 100; // Check every 100ms
+
+  return new Promise((resolve, reject) => {
+    const checkQueue = () => {
+      // Check if queue is empty
+      if (syncQueue.value.length === 0 && !isProcessing.value) {
+        logger.debug('Queue is empty');
+        resolve();
+        return;
+      }
+
+      // Check if timeout exceeded
+      if (Date.now() - startTime >= timeout) {
+        const remainingItems = syncQueue.value.length;
+        logger.warn(`Queue timeout after ${timeout}ms with ${remainingItems} items remaining`);
+        reject(new Error(`Tiempo de espera agotado. Quedan ${remainingItems} elementos pendientes de sincronización.`));
+        return;
+      }
+
+      // Continue checking
+      setTimeout(checkQueue, checkInterval);
+    };
+
+    checkQueue();
+  });
 }
 
 export async function addToQueue(action) {
+  // === OPTIMIZACIÓN: Borrado de registros con ID temporal ===
+  // Si intentamos borrar un registro con ID temporal (creado offline),
+  // eliminamos TODAS las acciones relacionadas con ese ID temporal de la cola.
+  if (action.type === 'delete' && typeof action.id === 'string' && action.id.startsWith('temp_')) {
+    const tempId = action.id;
+    const actionsToRemove = [];
+
+    // Buscamos todas las acciones relacionadas con este ID temporal
+    syncQueue.value.forEach((item, index) => {
+      // Insert con este tempId
+      if (item.type === 'insert' && item.tempId === tempId) {
+        actionsToRemove.push(index);
+      }
+      // Update con este id
+      else if (item.type === 'update' && item.id === tempId) {
+        actionsToRemove.push(index);
+      }
+      // uploadAndUpdate con este recordId
+      else if (item.type === 'uploadAndUpdate' && item.recordId === tempId) {
+        actionsToRemove.push(index);
+        // Si hay un archivo guardado localmente, lo borramos
+        if (item.fileId) {
+          deleteFileLocally(item.fileId).catch(err =>
+            logger.warn(`No se pudo borrar archivo local ${item.fileId}:`, err)
+          );
+        }
+      }
+    });
+
+    // Eliminamos las acciones en orden inverso para no afectar los índices
+    if (actionsToRemove.length > 0) {
+      actionsToRemove.reverse().forEach(index => {
+        syncQueue.value.splice(index, 1);
+      });
+
+      // Limpiamos el tempIdMap si existe
+      if (hasTempId(tempId)) {
+        tempIdMap.delete(tempId);
+        tempIdMapAccess.delete(tempId);
+      }
+
+      showNotification('Operaciones locales de la incidencia canceladas.', 'info', 2000);
+      saveQueueToStorage();
+      return; // No agregamos la acción de delete
+    }
+  }
+
+  // === OPTIMIZACIÓN: Borrado de archivos asociados ===
+  // Si es un deleteFile, buscamos si hay una acción uploadAndUpdate pendiente con la misma ruta
+  if (action.type === 'deleteFile') {
+    const filePathToDelete = extractFilePathFromUrl(action.url, action.bucket);
+
+    // Buscamos uploadAndUpdate pendientes con la misma ruta
+    const uploadIndex = syncQueue.value.findIndex(
+      item => item.type === 'uploadAndUpdate' &&
+              item.bucket === action.bucket &&
+              item.path === filePathToDelete
+    );
+
+    if (uploadIndex > -1) {
+      const uploadAction = syncQueue.value[uploadIndex];
+      // Borramos el archivo local si existe
+      if (uploadAction.fileId) {
+        await deleteFileLocally(uploadAction.fileId).catch(err =>
+          logger.warn(`No se pudo borrar archivo local ${uploadAction.fileId}:`, err)
+        );
+      }
+      // Eliminamos la acción de upload
+      syncQueue.value.splice(uploadIndex, 1);
+      saveQueueToStorage();
+      return; // No agregamos la acción de deleteFile
+    }
+  }
+
+  // === Procesamiento normal de acciones ===
   if (action.type === 'uploadAndUpdate' && action.file) {
       const fileId = `${FILE_STORAGE_KEY_PREFIX}${Date.now()}`;
       try {
@@ -474,16 +708,81 @@ export async function addToQueue(action) {
           return;
       }
   }
+
   syncQueue.value.push(action);
   saveQueueToStorage();
-  processQueue(); 
+  processQueue();
+}
+
+// Helper para extraer el path del archivo desde una URL
+function extractFilePathFromUrl(url, bucket) {
+  try {
+    const urlObj = new URL(url);
+    const pathParts = urlObj.pathname.split('/');
+    const bucketIndex = pathParts.findIndex(part => part === bucket);
+    if (bucketIndex === -1) return null;
+    return pathParts.slice(bucketIndex + 1).join('/');
+  } catch (e) {
+    logger.error('Error extrayendo path de URL:', e);
+    return null;
+  }
 }
 
 export function initializeQueue() {
   const savedQueue = localStorage.getItem(QUEUE_STORAGE_KEY);
   if (savedQueue) {
     syncQueue.value = JSON.parse(savedQueue);
+
+    // === LIMPIEZA DE ACCIONES HUÉRFANAS ===
+    // Eliminamos acciones update/uploadAndUpdate de IDs temporales que no tienen insert
+    const tempIdsWithInsert = new Set();
+
+    // Primera pasada: recolectar todos los tempIds que tienen insert
+    syncQueue.value.forEach(action => {
+      if (action.type === 'insert' && action.tempId) {
+        tempIdsWithInsert.add(action.tempId);
+      }
+    });
+
+    // Segunda pasada: eliminar acciones huérfanas
+    syncQueue.value = syncQueue.value.filter(action => {
+      // Si es un update o uploadAndUpdate con ID temporal sin insert correspondiente
+      if ((action.type === 'update' || action.type === 'uploadAndUpdate') &&
+          typeof action.id === 'string' && action.id.startsWith('temp_') &&
+          !tempIdsWithInsert.has(action.id)) {
+        logger.warn(`Removiendo acción huérfana de ID temporal ${action.id}:`, action);
+
+        // Si es uploadAndUpdate, borramos el archivo local
+        if (action.type === 'uploadAndUpdate' && action.fileId) {
+          deleteFileLocally(action.fileId).catch(err =>
+            logger.warn(`No se pudo borrar archivo local ${action.fileId}:`, err)
+          );
+        }
+
+        return false; // Filtrar esta acción
+      }
+
+      // Mismo chequeo para uploadAndUpdate con recordId
+      if (action.type === 'uploadAndUpdate' &&
+          typeof action.recordId === 'string' && action.recordId.startsWith('temp_') &&
+          !tempIdsWithInsert.has(action.recordId)) {
+        logger.warn(`Removiendo uploadAndUpdate huérfano de recordId ${action.recordId}:`, action);
+
+        if (action.fileId) {
+          deleteFileLocally(action.fileId).catch(err =>
+            logger.warn(`No se pudo borrar archivo local ${action.fileId}:`, err)
+          );
+        }
+
+        return false;
+      }
+
+      return true; // Mantener esta acción
+    });
+
+    saveQueueToStorage();
   }
+
   processQueue();
 }
 --- FIN DEL ARCHIVO: src/utils/syncQueue.js ---
@@ -597,6 +896,89 @@ function findNonOverlappingPosition(pointAbs, badgeSize, obstacles, pageBounds) 
     return { x: pointAbs.x, y: pointAbs.y - (badgeSize.height / 2 + 10) };
 }
 --- FIN DEL ARCHIVO: src/utils/plano-layout.js ---
+
+--- INICIO DEL ARCHIVO: src/utils/logger.js ---
+// src/utils/logger.js
+
+/**
+ * Sistema de logging condicional para desarrollo/producción
+ *
+ * En producción: Solo errores críticos
+ * En desarrollo: Logs completos con contexto
+ */
+
+const isDevelopment = import.meta.env.DEV || import.meta.env.MODE === 'development';
+
+const LOG_LEVELS = {
+  DEBUG: 0,
+  INFO: 1,
+  WARN: 2,
+  ERROR: 3,
+  NONE: 4
+};
+
+// En producción solo mostramos errores, en desarrollo todo
+const currentLogLevel = isDevelopment ? LOG_LEVELS.DEBUG : LOG_LEVELS.ERROR;
+
+class Logger {
+  constructor(context = 'App') {
+    this.context = context;
+  }
+
+  _log(level, levelName, message, ...args) {
+    if (level < currentLogLevel) return;
+
+    const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+    const prefix = `[${timestamp}] [${this.context}]`;
+
+    switch (level) {
+      case LOG_LEVELS.DEBUG:
+        console.log(`${prefix} 🔍`, message, ...args);
+        break;
+      case LOG_LEVELS.INFO:
+        console.log(`${prefix} ℹ️`, message, ...args);
+        break;
+      case LOG_LEVELS.WARN:
+        console.warn(`${prefix} ⚠️`, message, ...args);
+        break;
+      case LOG_LEVELS.ERROR:
+        console.error(`${prefix} ❌`, message, ...args);
+        break;
+    }
+  }
+
+  debug(message, ...args) {
+    this._log(LOG_LEVELS.DEBUG, 'DEBUG', message, ...args);
+  }
+
+  info(message, ...args) {
+    this._log(LOG_LEVELS.INFO, 'INFO', message, ...args);
+  }
+
+  warn(message, ...args) {
+    this._log(LOG_LEVELS.WARN, 'WARN', message, ...args);
+  }
+
+  error(message, ...args) {
+    this._log(LOG_LEVELS.ERROR, 'ERROR', message, ...args);
+  }
+
+  // Helper para crear loggers con contexto específico
+  static create(context) {
+    return new Logger(context);
+  }
+}
+
+// Logger por defecto
+export const logger = new Logger('App');
+
+// Factory para crear loggers con contexto
+export const createLogger = (context) => new Logger(context);
+
+// Export para usar en console.log existentes sin cambiar mucho código
+export default logger;
+
+--- FIN DEL ARCHIVO: src/utils/logger.js ---
 
 --- INICIO DEL ARCHIVO: src/utils/provincias.js ---
 // src/utils/provincias.js
@@ -2065,9 +2447,13 @@ export async function generateGestionExcel(resumenData) {
 import { ref } from 'vue';
 import { EyeSlashIcon, ArrowUturnLeftIcon, TrashIcon, ChevronDownIcon } from '@heroicons/vue/24/solid';
 
-defineProps({
+const props = defineProps({
   groupedPoints: Array,
   canEdit: Boolean,
+  allIncidencias: {
+    type: Array,
+    default: () => []
+  }
 });
 
 const emit = defineEmits(['select-point', 'update-state', 'delete-new-point']);
@@ -2080,6 +2466,17 @@ const toggleSala = (salaId) => {
 
 function handleUpdateState(punto, newState) {
   emit('update-state', punto, newState);
+}
+
+// Calculate incident counts for a specific point
+function getIncidentCountsForPoint(puntoId) {
+  const incidents = props.allIncidencias.filter(inc => inc.punto_inspeccionado_id === puntoId);
+  return {
+    verde: incidents.filter(inc => inc.gravedad === 'verde').length,
+    ambar: incidents.filter(inc => inc.gravedad === 'ambar').length,
+    rojo: incidents.filter(inc => inc.gravedad === 'rojo').length,
+    total: incidents.length
+  };
 }
 </script>
 
@@ -2101,12 +2498,31 @@ function handleUpdateState(punto, newState) {
             <!-- ===== CORRECCIÓN: El div entero ahora emite el evento para abrir el modal ===== -->
             <div @click="$emit('select-point', punto)" class="flex-1 flex items-center cursor-pointer">
               <span class="w-3 h-3 rounded-full flex-shrink-0" :style="{ backgroundColor: punto.color }"></span>
-              
-              <span 
+
+              <span
                 :class="['font-semibold ml-3', { 'line-through text-slate-500': punto.estado === 'suprimido', 'text-slate-700': punto.estado !== 'suprimido' }]"
               >
                 {{ punto.nomenclatura }}
               </span>
+
+              <!-- Incident indicators (semaphore badges) -->
+              <div v-if="getIncidentCountsForPoint(punto.id).total > 0" class="flex items-center gap-1 ml-2">
+                <!-- Green dot + count -->
+                <div v-if="getIncidentCountsForPoint(punto.id).verde > 0" class="flex items-center gap-0.5">
+                  <span class="h-1.5 w-1.5 rounded-full bg-green-500"></span>
+                  <span class="text-[10px] font-semibold text-slate-600">{{ getIncidentCountsForPoint(punto.id).verde }}</span>
+                </div>
+                <!-- Amber dot + count -->
+                <div v-if="getIncidentCountsForPoint(punto.id).ambar > 0" class="flex items-center gap-0.5">
+                  <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                  <span class="text-[10px] font-semibold text-slate-600">{{ getIncidentCountsForPoint(punto.id).ambar }}</span>
+                </div>
+                <!-- Red dot + count -->
+                <div v-if="getIncidentCountsForPoint(punto.id).rojo > 0" class="flex items-center gap-0.5">
+                  <span class="h-1.5 w-1.5 rounded-full bg-red-500"></span>
+                  <span class="text-[10px] font-semibold text-slate-600">{{ getIncidentCountsForPoint(punto.id).rojo }}</span>
+                </div>
+              </div>
 
               <span v-if="punto.estado === 'nuevo'" class="ml-2 text-xs font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full">NUEVO</span>
             </div>
@@ -2136,13 +2552,14 @@ function handleUpdateState(punto, newState) {
 <script setup>
 import { ref, watch, computed, nextTick, inject } from 'vue';
 import { supabase } from '../supabase';
+// --- INICIO DE LA MODIFICACIÓN: Importamos addToQueue ---
 import { addToQueue, getFileLocally } from '../utils/syncQueue';
+// --- FIN DE LA MODIFICACIÓN ---
 import { checklistItems } from '../utils/checklist';
 import { useFileUpload } from '../composables/useFileUpload';
 import {
   ArrowUpTrayIcon, CheckCircleIcon, XCircleIcon, PlusCircleIcon, TrashIcon,
-  ArrowTrendingUpIcon, ArrowTrendingDownIcon, StopCircleIcon, ChevronUpIcon, ChevronDownIcon,
-  PencilIcon, CheckIcon
+  ChevronUpIcon, ChevronDownIcon, PencilIcon, CheckIcon
 } from '@heroicons/vue/24/solid';
 
 const props = defineProps({
@@ -2151,9 +2568,7 @@ const props = defineProps({
   inspeccionId: Number,
   initialIncidencias: { type: Array, required: true },
   availableCustomFields: { type: Array, required: true },
-  // --- INICIO DE LA CORRECCIÓN: Se define la nueva prop ---
   existingIdentifiersInSala: { type: Array, default: () => [] }
-  // --- FIN DE LA CORRECCIÓN ---
 });
 
 const emit = defineEmits(['close', 'save', 'update-nomenclatura', 'update:incidencias']);
@@ -2206,6 +2621,18 @@ watch(() => props.isOpen, async (newVal) => {
 const handleFileChange = async (event, incidencia) => {
   const file = event.target.files[0];
   if (!file) return;
+
+  // --- INICIO DE LA MODIFICACIÓN: Borrado de foto antigua ---
+  // Si ya hay una foto online, la marcamos para borrar.
+  if (incidencia.url_foto_antes && incidencia.url_foto_antes.startsWith('http')) {
+    addToQueue({
+      type: 'deleteFile',
+      bucket: 'incidencias',
+      url: incidencia.url_foto_antes
+    });
+  }
+  // --- FIN DE LA MODIFICACIÓN ---
+
   const result = await processAndUploadFile(file, incidencia);
   if (result) {
     incidencia.url_foto_antes = result.previewUrl;
@@ -2220,6 +2647,17 @@ const onDrop = async (event, incidencia) => {
   const files = event.dataTransfer.files;
   if (files.length === 0) return;
   const file = files[0];
+  
+  // --- INICIO DE LA MODIFICACIÓN: Borrado de foto antigua ---
+  if (incidencia.url_foto_antes && incidencia.url_foto_antes.startsWith('http')) {
+    addToQueue({
+      type: 'deleteFile',
+      bucket: 'incidencias',
+      url: incidencia.url_foto_antes
+    });
+  }
+  // --- FIN DE LA MODIFICACIÓN ---
+
   const result = await processAndUploadFile(file, incidencia);
   if (result) {
     incidencia.url_foto_antes = result.previewUrl;
@@ -2231,12 +2669,18 @@ const onDrop = async (event, incidencia) => {
 const saveIncidencia = (incidencia) => {
   const { id, ...dataToUpdate } = incidencia;
   dataToUpdate.custom_fields = customValues.value[id] || {};
+
+  // CRITICAL FIX: Update the incidencia object's custom_fields so it persists in the local state
+  // This ensures that when the parent component receives the updated incidencias array,
+  // the custom_fields are included and will be sent in the sync queue payload
+  incidencia.custom_fields = dataToUpdate.custom_fields;
+
   emit('update:incidencias', incidencias.value);
-  
+
   const payload = { ...dataToUpdate };
-  delete payload.url_foto_antes; 
+  delete payload.url_foto_antes;
   delete payload.offlinePhotoKey_antes;
-  
+
   addToQueue({ table: 'incidencias', type: 'update', id: id, payload });
 };
 
@@ -2269,48 +2713,43 @@ const addIncidencia = async (itemId, defaults = {}) => {
   const { id, ...payload } = newIncidencia;
   addToQueue({ table: 'incidencias', type: 'insert', tempId: tempId, payload: payload });
 };
-const deleteIncidencia = async (incidenciaId) => {
-    if (!navigator.onLine) { showNotification("Necesitas conexión para borrar incidencias.", "warning"); return; }
-    const incidencia = incidencias.value.find(inc => inc.id === incidenciaId);
-    if (!incidencia) return;
-    if (incidencia.url_foto_antes) {
-      try {
-        const url = new URL(incidencia.url_foto_antes);
-        const pathParts = url.pathname.split('/');
-        const bucketIndex = pathParts.findIndex(part => part === 'incidencias');
-        if (bucketIndex !== -1) {
-          const filePath = pathParts.slice(bucketIndex + 1).join('/');
-          await supabase.storage.from('incidencias').remove([filePath]);
-        }
-      } catch (error) { console.error('Error processing photo URL for deletion:', error); }
-    }
-    const { error } = await supabase.from('incidencias').delete().eq('id', incidenciaId);
-    if (!error) {
-      incidencias.value = incidencias.value.filter(inc => inc.id !== incidenciaId);
-      delete customValues.value[incidenciaId];
-      emit('update:incidencias', incidencias.value);
-      showNotification('Incidencia eliminada correctamente.', 'success');
-    } else {
-      showNotification("Error al borrar la incidencia: " + error.message, 'error');
-    }
-};
-const toggleItemStatus = async (itemId) => {
-  if (itemId === 3) {
-    alert("El estado de este punto se gestiona automáticamente desde las preguntas superiores.");
-    return;
+
+// --- INICIO DE LA MODIFICACIÓN: Función de borrado offline ---
+const deleteIncidencia = (incidenciaId) => {
+  const incidencia = incidencias.value.find(inc => inc.id === incidenciaId);
+  if (!incidencia) return;
+
+  // 1. Si hay una foto online, la encolamos para su borrado.
+  if (incidencia.url_foto_antes && incidencia.url_foto_antes.startsWith('http')) {
+    addToQueue({
+      type: 'deleteFile',
+      bucket: 'incidencias',
+      url: incidencia.url_foto_antes
+    });
   }
+
+  // 2. Encolamos el borrado del registro de la incidencia.
+  addToQueue({
+    type: 'delete',
+    table: 'incidencias',
+    id: incidenciaId
+  });
+
+  // 3. Actualizamos la interfaz de usuario inmediatamente.
+  incidencias.value = incidencias.value.filter(inc => inc.id !== incidenciaId);
+  delete customValues.value[incidenciaId];
+  emit('update:incidencias', incidencias.value);
+  showNotification('Incidencia eliminada. Se sincronizará en segundo plano.', 'success');
+};
+// --- FIN DE LA MODIFICACIÓN ---
+
+const toggleItemStatus = async (itemId) => {
   const itemIncidencias = getIncidenciasForItem(itemId).value;
   if (itemIncidencias.length > 0) {
-    if (!navigator.onLine) {
-        showNotification("Necesitas conexión para marcar un punto como satisfactorio (requiere borrar incidencias).", "warning");
-        return;
-    }
     if (confirm(`¿Marcar este punto como "Satisfactorio"? Se borrarán las ${itemIncidencias.length} incidencias registradas.`)) {
-      const idsToDelete = itemIncidencias.map(inc => inc.id);
-      const { error } = await supabase.from('incidencias').delete().in('id', idsToDelete);
-      if (!error) {
-        incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
-        emit('update:incidencias', incidencias.value);
+      // Borramos cada incidencia usando la nueva función offline-first
+      for (const incidencia of itemIncidencias) {
+        deleteIncidencia(incidencia.id);
       }
     }
   } else {
@@ -2332,26 +2771,21 @@ const startNameEditing = () => {
   nextTick(() => nameInputRef.value?.focus());
 };
 
-// --- INICIO DE LA CORRECCIÓN: Lógica de guardado con validación ---
 const saveName = () => {
   const newIdentifier = tempPointIdentifier.value.trim();
   const newNomenclature = `${pointPrefix.value}${newIdentifier}`;
   
-  // 1. Validar que el identificador no esté vacío y sea diferente al original.
   if (newIdentifier && newNomenclature !== props.punto.nomenclatura) {
-    // 2. Comprobar si el nuevo identificador ya existe en la sala (usando la nueva prop).
     if (props.existingIdentifiersInSala.includes(newIdentifier)) {
       showNotification(`El identificador "${newIdentifier}" ya existe en esta sala. Por favor, elige otro.`, 'error');
-      return; // Detenemos la ejecución aquí.
+      return;
     }
     
-    // 3. Si la validación pasa, buscamos el punto maestro y emitimos el evento.
     findPuntoMaestroAndEmitUpdate(newNomenclature);
   }
   
   isEditingName.value = false;
 };
-// --- FIN DE LA CORRECCIÓN ---
 
 const findPuntoMaestroAndEmitUpdate = async (newNomenclature) => {
   const { data: puntoMaestro, error } = await supabase.from('puntos_maestros').select('*').eq('id', props.punto.punto_maestro_id).single();
@@ -2366,39 +2800,19 @@ const tienePlaca = computed({
   get: () => puntoInspeccionado.value?.tiene_placa_caracteristicas,
   set: (newValue) => { if (puntoInspeccionado.value) { puntoInspeccionado.value.tiene_placa_caracteristicas = newValue; handlePlacaStatusChange(newValue); } }
 });
-const detalleModificacion = computed({
-  get: () => puntoInspeccionado.value?.detalle_modificacion,
-  set: (newValue) => { if (puntoInspeccionado.value) { puntoInspeccionado.value.detalle_modificacion = newValue; handleModificationChange(newValue); } }
-});
 const handlePlacaStatusChange = async (status) => {
   if (!puntoInspeccionado.value) return;
-  await supabase.from('puntos_inspeccionados').update({ tiene_placa_caracteristicas: status }).eq('id', puntoInspeccionado.value.id);
+  addToQueue({ table: 'puntos_inspeccionados', type: 'update', id: puntoInspeccionado.value.id, payload: { tiene_placa_caracteristicas: status } });
+
   const incidenciasPlaca = getIncidenciasForItem(2).value;
   if (status === true) {
     if (incidenciasPlaca.length > 0) {
-      const idsToDelete = incidenciasPlaca.map(inc => inc.id);
-      await supabase.from('incidencias').delete().in('id', idsToDelete);
-      incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
-      emit('update:incidencias', incidencias.value);
+      for (const inc of incidenciasPlaca) {
+        deleteIncidencia(inc.id);
+      }
     }
   } else {
     if (incidenciasPlaca.length === 0) { await addIncidencia(2, { gravedad: 'verde', observaciones: 'Falta ficha' }); }
-  }
-};
-const handleModificationChange = async (newStatus) => {
-  if (!puntoInspeccionado.value) return;
-  await supabase.from('puntos_inspeccionados').update({ detalle_modificacion: newStatus }).eq('id', puntoInspeccionado.value.id);
-  const incidenciasModificacion = getIncidenciasForItem(3).value;
-  const idsToDelete = incidenciasModificacion.map(inc => inc.id);
-  if (idsToDelete.length > 0) {
-    await supabase.from('incidencias').delete().in('id', idsToDelete);
-    incidencias.value = incidencias.value.filter(inc => !idsToDelete.includes(inc.id));
-    emit('update:incidencias', incidencias.value);
-  }
-  if (newStatus === 'aumentado') {
-    await addIncidencia(3, { gravedad: 'ambar', observaciones: 'Se ha aumentado el número de módulos y/o niveles.' });
-  } else if (newStatus === 'disminuido') {
-    await addIncidencia(3, { gravedad: 'verde', observaciones: 'Se ha disminuido el número de módulos y/o niveles.' });
   }
 };
 const getIncidenciasForItem = (itemId) => computed(() => incidencias.value.filter(inc => inc.item_checklist === itemId));
@@ -2467,23 +2881,12 @@ class="text-xl font-bold text-slate-800 p-0 border-none focus:ring-0 w-24"
         <p v-if="tienePlaca !== null" class="text-xs text-slate-500 mt-3 text-center">El estado del punto "2. Tiene las placas de identificación..." se ha actualizado automáticamente.</p>
       </div>
 
-      <div class="bg-orange-50 border-2 border-orange-200 rounded-lg p-4 mb-6">
-        <h3 class="font-bold text-orange-800 mb-3">¿Ha habido alguna modificación en los módulos/niveles?</h3>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <button @click="detalleModificacion = 'aumentado'" :class="['flex items-center justify-center gap-2 py-2 px-4 rounded-md font-semibold transition-all', detalleModificacion === 'aumentado' ? 'bg-amber-500 text-white shadow-md ring-2 ring-offset-2 ring-amber-500' : 'bg-white border text-slate-700 hover:bg-slate-100']"><ArrowTrendingUpIcon class="h-5 w-5" />Ha aumentado</button>
-          <button @click="detalleModificacion = 'disminuido'" :class="['flex items-center justify-center gap-2 py-2 px-4 rounded-md font-semibold transition-all', detalleModificacion === 'disminuido' ? 'bg-teal-500 text-white shadow-md ring-2 ring-offset-2 ring-teal-500' : 'bg-white border text-slate-700 hover:bg-slate-100']"><ArrowTrendingDownIcon class="h-5 w-5" />Ha disminuido</button>
-          <button @click="detalleModificacion = null" :class="['flex items-center justify-center gap-2 py-2 px-4 rounded-md font-semibold transition-all', detalleModificacion === null ? 'bg-slate-600 text-white shadow-md ring-2 ring-offset-2 ring-slate-500' : 'bg-white border text-slate-700 hover:bg-slate-100']"><StopCircleIcon class="h-5 w-5" />No ha cambiado</button>
-        </div>
-        <p v-if="detalleModificacion !== undefined" class="text-xs text-slate-500 mt-3 text-center">El estado del punto "3. El número de módulos y niveles..." se ha actualizado automáticamente.</p>
-      </div>
-
       <div v-for="item in checklistItems" :key="item.id" class="bg-white rounded-lg shadow-sm border transition-all duration-300">
         <div class="p-3 flex items-center justify-between">
           <p class="text-slate-700">{{ item.id }}. {{ item.text }}</p>
           <button
             @click="toggleItemStatus(item.id)"
-            :disabled="item.id === 3"
-            :class="['px-3 py-1 text-xs font-bold rounded-full disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500',
+            :class="['px-3 py-1 text-xs font-bold rounded-full',
                      getIncidenciasForItem(item.id).value.length > 0 ? 'bg-red-100 text-red-800 hover:bg-red-200' : 'bg-green-100 text-green-800 hover:bg-green-200']"
           >
             {{ getIncidenciasForItem(item.id).value.length > 0 ? 'INSATISFACTORIO' : 'SATISFACTORIO' }}
@@ -2502,13 +2905,10 @@ class="text-xl font-bold text-slate-800 p-0 border-none focus:ring-0 w-24"
           </div>
 
           <div v-show="!isCollapsed(item.id)" class="bg-slate-50 p-4 space-y-4">
-            <div v-if="item.id === 3" class="text-center text-sm text-slate-600 bg-slate-200 p-2 rounded-md">
-              Este parámetro se gestiona automáticamente desde las preguntas superiores.
-            </div>
             <div v-for="(incidencia, index) in getIncidenciasForItem(item.id).value" :key="incidencia.id" class="bg-white border rounded-lg p-4 shadow-sm relative">
               <div class="flex justify-between items-center mb-3">
                 <h4 class="font-bold text-slate-700">Incidencia #{{ index + 1 }}</h4>
-                <button v-if="item.id !== 3" @click="deleteIncidencia(incidencia.id)" title="Borrar esta incidencia" class="p-1 text-slate-400 hover:text-red-500"><TrashIcon class="h-5 w-5"/></button>
+                <button @click="deleteIncidencia(incidencia.id)" title="Borrar esta incidencia" class="p-1 text-slate-400 hover:text-red-500"><TrashIcon class="h-5 w-5"/></button>
               </div>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="space-y-4">
@@ -2594,7 +2994,7 @@ class="text-xl font-bold text-slate-800 p-0 border-none focus:ring-0 w-24"
               </div>
             </div>
 
-            <div v-if="item.id !== 3">
+            <div>
               <button @click="addIncidencia(item.id)" class="w-full flex items-center justify-center gap-2 py-2 text-sm font-semibold text-blue-700 bg-blue-50 rounded-md hover:bg-blue-100 border border-dashed border-blue-300"><PlusCircleIcon class="h-5 w-5"/>Añadir otra incidencia</button>
             </div>
           </div>
@@ -2623,6 +3023,18 @@ const props = defineProps({
   canEdit: Boolean,
   salas: Array,
   puntosAgrupados: Array,
+  allIncidencias: {
+    type: Array,
+    default: () => []
+  },
+  isPlanoEditingMode: {
+    type: Boolean,
+    default: false
+  },
+  isMobileAddPointOpen: {
+    type: Boolean,
+    default: false
+  }
 });
 
 const emit = defineEmits([
@@ -2635,18 +3047,20 @@ const emit = defineEmits([
   'update-point-state',
   'delete-new-point',
   'update-point-nomenclatura',
+  'update:is-mobile-add-point-open'
 ]);
 
-const isPlanoEditingMode = ref(false);
+// Estado local para desktop
+const isPlanoEditingModeLocal = ref(false);
 const showAddSalaForm = ref(false);
 const newSalaName = ref('');
 const showAddPointForm = ref(false);
 const isPlacementMode = ref(false);
 
 const handleTogglePlanoEditing = () => {
-  isPlanoEditingMode.value = !isPlanoEditingMode.value;
-  emit('toggle-plano-editing', isPlanoEditingMode.value);
-  if (!isPlanoEditingMode.value) {
+  isPlanoEditingModeLocal.value = !isPlanoEditingModeLocal.value;
+  emit('toggle-plano-editing', isPlanoEditingModeLocal.value);
+  if (!isPlanoEditingModeLocal.value) {
     showAddSalaForm.value = false;
   }
 };
@@ -2662,6 +3076,7 @@ const handleAddSala = () => {
 const handleStartPlacement = (salaId) => {
   isPlacementMode.value = true;
   showAddPointForm.value = false;
+  emit('update:is-mobile-add-point-open', false);
   emit('start-placement-mode', salaId);
 };
 
@@ -2672,21 +3087,22 @@ const handleCancelPlacement = () => {
 </script>
 
 <template>
-  <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col h-1/2 lg:h-full">
-    <div class="p-4 flex-shrink-0 border-b">
-      <button v-if="canEdit" @click="handleTogglePlanoEditing" 
+  <aside class="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
+    <!-- Botón Editar Plano - SOLO VISIBLE EN DESKTOP -->
+    <div class="hidden lg:block p-4 flex-shrink-0 border-b">
+      <button v-if="canEdit" @click="handleTogglePlanoEditing"
               :class="[
                 'w-full flex items-center justify-center gap-2 px-4 py-2 font-semibold rounded-md shadow-sm transition-colors',
-                isPlanoEditingMode ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+                isPlanoEditingModeLocal ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
               ]">
         <PencilSquareIcon class="h-5 w-5" />
-        {{ isPlanoEditingMode ? 'Finalizar Edición Plano' : 'Editar Plano' }}
+        {{ isPlanoEditingModeLocal ? 'Finalizar Edición Plano' : 'Editar Plano' }}
       </button>
     </div>
 
-    <!-- ===== INICIO DE LA CORRECCIÓN: Se restaura este bloque completo ===== -->
-    <div class="p-4 flex-shrink-0 space-y-2">
-       <div v-if="canEdit && isPlanoEditingMode" class="p-3 bg-orange-50 border border-orange-200 rounded-lg space-y-3">
+    <!-- Formularios de Edición - SOLO VISIBLE EN DESKTOP -->
+    <div class="hidden lg:block p-4 flex-shrink-0 space-y-2">
+       <div v-if="canEdit && isPlanoEditingModeLocal" class="p-3 bg-orange-50 border border-orange-200 rounded-lg space-y-3">
           <h3 class="font-bold text-orange-800">Modo Edición de Plano</h3>
           <form v-if="showAddSalaForm" @submit.prevent="handleAddSala" class="flex gap-2">
               <input v-model="newSalaName" type="text" placeholder="Nombre nueva sala..." class="flex-1 block w-full rounded-md border-slate-300 shadow-sm text-sm">
@@ -2697,9 +3113,9 @@ const handleCancelPlacement = () => {
              <PlusIcon class="h-5 w-5" /> Añadir Sala
           </button>
        </div>
-       
-       <div v-if="canEdit && !isPlanoEditingMode">
-          <AddPointForm 
+
+       <div v-if="canEdit && !isPlanoEditingModeLocal">
+          <AddPointForm
              v-if="showAddPointForm"
              :salas="salas"
              @save="handleStartPlacement"
@@ -2715,20 +3131,34 @@ const handleCancelPlacement = () => {
           </button>
        </div>
     </div>
-    <!-- ===== FIN DE LA CORRECCIÓN ===== -->
+
+    <!-- Formulario móvil de Agregar Punto - SOLO VISIBLE EN MÓVIL -->
+    <div v-if="canEdit && !isPlanoEditingMode && isMobileAddPointOpen" class="lg:hidden p-4 flex-shrink-0 border-b bg-blue-50">
+       <AddPointForm
+          :salas="salas"
+          @save="handleStartPlacement"
+          @cancel="emit('update:is-mobile-add-point-open', false)"
+       />
+    </div>
+
+    <!-- Mensaje de modo edición en móvil -->
+    <div v-if="canEdit && isPlanoEditingMode" class="lg:hidden p-3 bg-orange-50 border-b border-orange-200">
+       <p class="text-sm font-medium text-orange-800 text-center">Modo Edición de Plano activo</p>
+    </div>
 
     <div class="flex-1 overflow-y-auto px-4 pb-4">
-      <PointList 
+      <PointList
         :grouped-points="puntosAgrupados"
         :can-edit="canEdit"
+        :all-incidencias="allIncidencias"
         @select-point="$emit('select-point', $event)"
         @update-state="(point, newState) => $emit('update-point-state', point, newState)"
         @delete-new-point="$emit('delete-new-point', $event)"
         @update-point-nomenclatura="(point, newName) => $emit('update-point-nomenclatura', point, newName)"
-        :class="{ 'pointer-events-none opacity-50': isPlacementMode || isPlanoEditingMode }"
+        :class="{ 'pointer-events-none opacity-50': isPlacementMode || isPlanoEditingMode || isPlanoEditingModeLocal }"
       >
         <template #sala-actions="{ sala }">
-          <button v-if="isPlanoEditingMode" @click="$emit('start-area-drawing', sala)" class="p-1 text-slate-400 hover:text-blue-600" title="Definir área de la sala">
+          <button v-if="isPlanoEditingMode || isPlanoEditingModeLocal" @click="$emit('start-area-drawing', sala)" class="p-1 text-slate-400 hover:text-blue-600" title="Definir área de la sala">
             <MapIcon class="h-5 w-5" />
           </button>
         </template>
@@ -3025,25 +3455,29 @@ const { isOnline } = useOnlineStatus();
 
 <template>
   <!-- ======================== MODO MÓVIL (ICONO COMPACTO) ======================== -->
-  <div v-if="mode === 'mobile'" class="relative flex items-center justify-center w-8 h-8">
-    <!-- Offline (Máxima Prioridad) -->
-    <div v-if="!isOnline" title="Estás sin conexión">
-      <SignalSlashIcon class="h-6 w-6 text-red-500" />
-    </div>
-    <!-- Sincronizando -->
-    <div v-else-if="isProcessing" title="Sincronizando cambios...">
-      <CloudArrowUpIcon class="h-6 w-6 text-blue-500 animate-pulse" />
-    </div>
-    <!-- Cambios Pendientes -->
-    <div v-else-if="syncQueue.length > 0" title="Cambios pendientes de sincronizar">
-      <CloudArrowUpIcon class="h-6 w-6 text-amber-500" />
-      <span class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-white text-[10px] font-bold">
-        {{ syncQueue.length }}
-      </span>
-    </div>
-    <!-- Online y Sincronizado -->
-    <div v-else title="Conectado y sincronizado">
-      <WifiIcon class="h-6 w-6 text-green-500" />
+  <!-- INICIO DE LA CORRECCIÓN: Añadido un div contenedor -->
+  <div v-if="mode === 'mobile'">
+  <!-- FIN DE LA CORRECCIÓN -->
+    <div class="relative flex items-center justify-center w-8 h-8">
+      <!-- Offline (Máxima Prioridad) -->
+      <div v-if="!isOnline" title="Estás sin conexión">
+        <SignalSlashIcon class="h-6 w-6 text-red-500" />
+      </div>
+      <!-- Sincronizando -->
+      <div v-else-if="isProcessing" title="Sincronizando cambios...">
+        <CloudArrowUpIcon class="h-6 w-6 text-blue-500 animate-pulse" />
+      </div>
+      <!-- Cambios Pendientes -->
+      <div v-else-if="syncQueue.length > 0" title="Cambios pendientes de sincronizar">
+        <CloudArrowUpIcon class="h-6 w-6 text-amber-500" />
+        <span class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-white text-[10px] font-bold">
+          {{ syncQueue.length }}
+        </span>
+      </div>
+      <!-- Online y Sincronizado -->
+      <div v-else title="Conectado y sincronizado">
+        <WifiIcon class="h-6 w-6 text-green-500" />
+      </div>
     </div>
   </div>
 
@@ -3166,6 +3600,8 @@ const isUploadingLogo = ref(false);
 const logoInput = ref(null);
 const zonas = ref([]);
 const provincias = ref([]); // <-- Ahora es reactivo
+const selectedLogoFile = ref(null); // Archivo seleccionado antes de guardar
+const previewLogoUrl = ref(null); // URL de preview temporal
 
 onMounted(async () => {
   // Cargar las listas desde Supabase cuando el componente se monta
@@ -3181,35 +3617,56 @@ onMounted(async () => {
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
     form.value = props.centro ? { ...props.centro } : { nombre: '', direccion: '', responsable_nombre: '', responsable_email: '', provincia: '', zona: '', url_logo_cliente: null };
+    // Limpiar archivo y preview al abrir el modal
+    selectedLogoFile.value = null;
+    if (previewLogoUrl.value) {
+      URL.revokeObjectURL(previewLogoUrl.value);
+      previewLogoUrl.value = null;
+    }
   }
 });
 
 const handleLogoSelected = async (event) => {
   const file = event.target.files[0];
-  if (!file || !form.value.id) {
-    if(!form.value.id) alert("Guarda primero el centro para poder asignarle un logo.");
-    return;
-  }
-  isUploadingLogo.value = true;
-  const fileName = `cliente_${form.value.id}/${Date.now()}_${file.name}`;
-  const { error: uploadError } = await supabase.storage.from('logos-clientes').upload(fileName, file);
-  if (uploadError) {
-    alert("Error al subir el logo: " + uploadError.message);
+  if (!file) return;
+
+  // Si el centro ya existe (modo edición), subir directamente
+  if (form.value.id) {
+    isUploadingLogo.value = true;
+    const fileName = `cliente_${form.value.id}/${Date.now()}_${file.name}`;
+    const { error: uploadError } = await supabase.storage.from('logos-clientes').upload(fileName, file);
+    if (uploadError) {
+      alert("Error al subir el logo: " + uploadError.message);
+      isUploadingLogo.value = false;
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from('logos-clientes').getPublicUrl(fileName);
+    const { error: updateError } = await supabase.from('centros').update({ url_logo_cliente: publicUrl }).eq('id', form.value.id);
+    if (updateError) {
+      alert("Error al guardar la URL del logo: " + updateError.message);
+    } else {
+      form.value.url_logo_cliente = publicUrl;
+    }
     isUploadingLogo.value = false;
-    return;
-  }
-  const { data: { publicUrl } } = supabase.storage.from('logos-clientes').getPublicUrl(fileName);
-  const { error: updateError } = await supabase.from('centros').update({ url_logo_cliente: publicUrl }).eq('id', form.value.id);
-  if (updateError) {
-    alert("Error al guardar la URL del logo: " + updateError.message);
   } else {
-    form.value.url_logo_cliente = publicUrl;
+    // Si es un centro nuevo, guardar el archivo para subirlo después
+    selectedLogoFile.value = file;
+    // Limpiar preview anterior si existe
+    if (previewLogoUrl.value) {
+      URL.revokeObjectURL(previewLogoUrl.value);
+    }
+    // Crear preview temporal
+    previewLogoUrl.value = URL.createObjectURL(file);
   }
-  isUploadingLogo.value = false;
 };
 
 const handleSubmit = () => {
-  emit('save', form.value);
+  // Incluir el archivo del logo si fue seleccionado
+  const dataToSave = { ...form.value };
+  if (selectedLogoFile.value) {
+    dataToSave._logoFile = selectedLogoFile.value;
+  }
+  emit('save', dataToSave);
 };
 </script>
 
@@ -3255,21 +3712,21 @@ const handleSubmit = () => {
              <input type="file" ref="logoInput" @change="handleLogoSelected" accept="image/*" class="hidden">
              <label class="block text-sm font-medium text-slate-600 mb-1">Logo del Cliente</label>
              <div class="aspect-video bg-slate-100 rounded-md flex items-center justify-center border-2 border-dashed">
-                <img v-if="form.url_logo_cliente" :src="form.url_logo_cliente" class="object-contain w-full h-full p-2">
+                <img v-if="previewLogoUrl || form.url_logo_cliente" :src="previewLogoUrl || form.url_logo_cliente" class="object-contain w-full h-full p-2">
                 <div v-else class="text-center text-slate-500 p-4">Sin logo</div>
              </div>
-             <button 
-                type="button" 
-                @click="logoInput.click()" 
-                :disabled="!form.id || isUploadingLogo"
+             <button
+                type="button"
+                @click="logoInput.click()"
+                :disabled="isUploadingLogo"
                 class="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold rounded-md transition-colors
                        disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed
                        text-slate-700 bg-white border border-slate-300 hover:bg-slate-50"
               >
                <ArrowUpTrayIcon class="h-4 w-4" />
-               {{ isUploadingLogo ? 'Subiendo...' : (form.url_logo_cliente ? 'Cambiar Logo' : 'Subir Logo') }}
+               {{ isUploadingLogo ? 'Subiendo...' : ((previewLogoUrl || form.url_logo_cliente) ? 'Cambiar Logo' : 'Subir Logo') }}
              </button>
-             <p v-if="!form.id" class="text-xs text-slate-500 mt-1 text-center">Debes guardar el centro antes de subir un logo.</p>
+             <p v-if="!form.id && selectedLogoFile" class="text-xs text-green-600 mt-1 text-center">Logo seleccionado. Se subirá al guardar.</p>
           </div>
         </div>
         <div class="p-6 bg-slate-50 border-t flex justify-end space-x-4">
@@ -3708,6 +4165,7 @@ const props = defineProps({
   isReadOnly: { type: Boolean, default: false },
   isPlacementMode: { type: Boolean, default: false },
   isAreaDrawingMode: { type: Boolean, default: false },
+  allIncidencias: { type: Array, default: () => [] }
 });
 
 const emit = defineEmits(['add-point', 'delete-point', 'update-point-position', 'point-click', 'area-drawn', 'drawing-cancelled', 'image-error']);
@@ -3876,6 +4334,22 @@ const handlePointClick = (point) => {
   if (props.isPlacementMode || props.isAreaDrawingMode) return;
   emit('point-click', point);
 };
+
+// Get incident badge data for a point (highest severity and count)
+function getPointIncidentBadge(puntoId) {
+  const incidents = props.allIncidencias.filter(inc => inc.punto_inspeccionado_id === puntoId);
+  if (incidents.length === 0) return null;
+
+  const hasRojo = incidents.some(inc => inc.gravedad === 'rojo');
+  const hasAmbar = incidents.some(inc => inc.gravedad === 'ambar');
+
+  return {
+    count: incidents.length,
+    color: hasRojo ? '#EF4444' : hasAmbar ? '#F59E0B' : '#22C55E',
+    severity: hasRojo ? 'rojo' : hasAmbar ? 'ambar' : 'verde',
+    shouldPulse: hasRojo // Pulse effect for critical incidents
+  };
+}
 </script>
 
 <template>
@@ -3955,7 +4429,18 @@ const handlePointClick = (point) => {
            @click.stop="handlePointClick(point)"
          >
           {{ point.nomenclatura.split('-').pop() || '?' }}
-          <button 
+
+          <!-- Incident count badge -->
+          <div
+            v-if="getPointIncidentBadge(point.id)"
+            class="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white shadow-lg"
+            :class="{ 'animate-pulse': getPointIncidentBadge(point.id).shouldPulse }"
+            :style="{ backgroundColor: getPointIncidentBadge(point.id).color }"
+          >
+            {{ getPointIncidentBadge(point.id).count }}
+          </div>
+
+          <button
             v-if="!isReadOnly && (point.estado === 'nuevo' || point.estado === undefined)"
             @click.stop="handleDeleteClick(point)"
             class="absolute -top-2 -right-2 w-5 h-5 bg-red-600 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
@@ -4044,9 +4529,14 @@ const dataToSave = { ...centroData };
 // Debemos eliminarlas antes de intentar guardar los datos en Supabase para evitar el error.
 delete dataToSave.numero_informes;
 delete dataToSave.ultima_revision;
+
+// Extraer el archivo del logo si existe (propiedad especial)
+const logoFile = dataToSave._logoFile;
+delete dataToSave._logoFile;
 // --- FIN DE LA CORRECCIÓN ---
 
 let error;
+let centroId = dataToSave.id;
 
 if (dataToSave.id) {
 // --- LÓGICA DE ACTUALIZACIÓN ---
@@ -4059,10 +4549,35 @@ error = updateError;
 } else {
 // --- LÓGICA DE CREACIÓN ---
 delete dataToSave.id; // Nos aseguramos de que no haya un id (aunque sea null)
-const { error: insertError } = await supabase
+const { data: insertData, error: insertError } = await supabase
 .from('centros')
-.insert(dataToSave);
+.insert(dataToSave)
+.select()
+.single();
 error = insertError;
+
+if (!error && insertData) {
+centroId = insertData.id;
+
+// Si hay un logo seleccionado, subirlo ahora que tenemos el ID
+if (logoFile) {
+const fileName = `cliente_${centroId}/${Date.now()}_${logoFile.name}`;
+const { error: uploadError } = await supabase.storage
+.from('logos-clientes')
+.upload(fileName, logoFile);
+
+if (!uploadError) {
+const { data: { publicUrl } } = supabase.storage
+.from('logos-clientes')
+.getPublicUrl(fileName);
+
+// Actualizar el centro con la URL del logo
+await supabase.from('centros')
+.update({ url_logo_cliente: publicUrl })
+.eq('id', centroId);
+}
+}
+}
 }
 
 if (error) {
@@ -4816,13 +5331,14 @@ import InteractiveMap from '../components/InteractiveMap.vue';
 import ChecklistModal from '../components/ChecklistModal.vue';
 import InspectionSidebar from '../components/InspectionSidebar.vue';
 import GlobalStatusIndicator from '../components/GlobalStatusIndicator.vue';
-import { CheckCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
+import { CheckCircleIcon, InformationCircleIcon, MapIcon, PlusIcon, PencilSquareIcon, ArrowLeftIcon, ListBulletIcon, Bars3Icon } from '@heroicons/vue/24/solid';
 import { generateTextReport } from '../utils/pdf';
 import SkeletonLoader from '../components/SkeletonLoader.vue';
-import { addToQueue } from '../utils/syncQueue';
+import { addToQueue, processQueue, syncQueue, waitForQueueToEmpty } from '../utils/syncQueue';
 
 const showNotification = inject('showNotification');
 const showConfirm = inject('showConfirm');
+const toggleSidebar = inject('toggleSidebar', null);
 const route = useRoute();
 const router = useRouter();
 const inspeccionId = Number(route.params.id);
@@ -4843,6 +5359,9 @@ const isPlacementMode = ref(false);
 const newPointSalaId = ref(null);
 const isAreaDrawingMode = ref(false);
 const salaParaDibujar = ref(null);
+const isPlanoEditingMode = ref(false);
+const isMobileAddPointOpen = ref(false);
+const showMapInMobile = ref(false);
 
 const canEditInspection = computed(() => {
   return inspeccion.value?.estado === 'en_progreso';
@@ -5062,7 +5581,26 @@ const handleDeleteNewPoint = async (punto) => {
   }
 };
 const handleTogglePlanoEditing = (isActive) => {
-  if (!isActive) { isAreaDrawingMode.value = false; salaParaDibujar.value = null; }
+  isPlanoEditingMode.value = isActive;
+  if (!isActive) {
+    isAreaDrawingMode.value = false;
+    salaParaDibujar.value = null;
+  }
+};
+
+// Función para manejar el toggle desde el header móvil
+const toggleMobilePlanoEditing = () => {
+  isPlanoEditingMode.value = !isPlanoEditingMode.value;
+  handleTogglePlanoEditing(isPlanoEditingMode.value);
+};
+
+// Función para hacer toggle del mapa en móvil
+const toggleMapInMobile = () => {
+  showMapInMobile.value = !showMapInMobile.value;
+  // Si estamos mostrando el mapa, desactivamos el modo de agregar puntos
+  if (showMapInMobile.value) {
+    isMobileAddPointOpen.value = false;
+  }
 };
 const handleAddSala = async (name) => {
     if(!navigator.onLine){ showNotification("Necesitas conexión para añadir salas.", "warning"); return; }
@@ -5144,6 +5682,29 @@ const finalizarInspeccion = async () => {
     if (!confirmed) return;
     isFinalizing.value = true;
     try {
+        // Wait for sync queue to be processed before generating PDF
+        if (syncQueue.value.length > 0) {
+            showNotification(`Sincronizando ${syncQueue.value.length} cambios pendientes...`, 'info', 3000);
+
+            try {
+                // Trigger queue processing
+                await processQueue();
+                // Wait for queue to be completely empty
+                await waitForQueueToEmpty();
+                showNotification('Sincronización completa', 'success', 2000);
+            } catch (syncError) {
+                console.error('Error during sync:', syncError);
+                const continueAnyway = await showConfirm(
+                    'Error de sincronización',
+                    `No se pudieron sincronizar todos los cambios: ${syncError.message}\n\n¿Deseas continuar de todos modos? El PDF podría no incluir todos los cambios offline.`
+                );
+                if (!continueAnyway) {
+                    isFinalizing.value = false;
+                    return;
+                }
+            }
+        }
+
         const report = await generateTextReport(inspeccionId, 'initial', 'blob');
         if (!report || !report.blob) throw new Error("La generación del PDF falló.");
         const base64File = await blobToBase64(report.blob);
@@ -5198,12 +5759,97 @@ const finalizarInspeccion = async () => {
     </div>
     
     <div v-else-if="inspeccion && centro && version" class="flex-1 flex flex-col min-h-0">
-      <header class="flex-shrink-0 px-4 md:px-8 pt-6 pb-4 bg-slate-100/80 backdrop-blur-sm border-b border-slate-200 z-10">
-        <div class="flex flex-col md:flex-row justify-between items-start gap-4">
+      <!-- ============ HEADER MÓVIL COMPACTO (visible solo < lg) ============ -->
+      <header class="lg:hidden flex-shrink-0 px-3 py-2 bg-white border-b border-slate-200 z-10">
+        <div class="flex items-center justify-between gap-2">
+          <!-- Botón hamburguesa para el menú lateral -->
+          <button
+            v-if="toggleSidebar"
+            @click="toggleSidebar"
+            class="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+            title="Abrir Menú"
+            aria-label="Abrir Menú">
+            <Bars3Icon class="h-5 w-5" />
+          </button>
+
+          <!-- Indicador de conexión -->
+          <GlobalStatusIndicator mode="mobile" />
+
+          <!-- Botones de acción compactos -->
+          <div class="flex items-center gap-1">
+            <!-- Botón Editar Plano -->
+            <button
+              v-if="canEditInspection"
+              @click="toggleMobilePlanoEditing"
+              :class="[
+                'p-2 rounded-md transition-colors',
+                isPlanoEditingMode ? 'bg-orange-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              ]"
+              :title="isPlanoEditingMode ? 'Finalizar Edición' : 'Editar Plano'"
+              :aria-label="isPlanoEditingMode ? 'Finalizar Edición' : 'Editar Plano'">
+              <PencilSquareIcon class="h-5 w-5" />
+            </button>
+
+            <!-- Botón Agregar Punto -->
+            <button
+              v-if="canEditInspection && !isPlanoEditingMode"
+              @click="isMobileAddPointOpen = !isMobileAddPointOpen"
+              :class="[
+                'p-2 rounded-md transition-colors',
+                isMobileAddPointOpen ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              ]"
+              title="Agregar Punto"
+              aria-label="Agregar Punto">
+              <PlusIcon class="h-5 w-5" />
+            </button>
+
+            <!-- Botón Ver Plano / Ver Lista -->
+            <button
+              @click="toggleMapInMobile"
+              :class="[
+                'p-2 rounded-md transition-colors',
+                showMapInMobile ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              ]"
+              :title="showMapInMobile ? 'Ver Lista' : 'Ver Plano'"
+              :aria-label="showMapInMobile ? 'Ver Lista' : 'Ver Plano'">
+              <component :is="showMapInMobile ? ListBulletIcon : MapIcon" class="h-5 w-5" />
+            </button>
+
+            <!-- Botón Finalizar o Volver -->
+            <button
+              v-if="canEditInspection"
+              @click="finalizarInspeccion"
+              :disabled="isFinalizing"
+              class="p-2 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:bg-slate-400 transition-colors"
+              title="Finalizar Inspección"
+              :aria-label="isFinalizing ? 'Finalizando...' : 'Finalizar Inspección'">
+              <CheckCircleIcon class="h-5 w-5" />
+            </button>
+            <button
+              v-else
+              @click="router.push(`/centros/${centro.id}/historial`)"
+              class="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+              title="Volver al Historial"
+              aria-label="Volver al Historial">
+              <ArrowLeftIcon class="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        <!-- Aviso de solo lectura compacto (móvil) -->
+        <div v-if="!canEditInspection" class="mt-2 flex items-center gap-2 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded px-2 py-1">
+          <InformationCircleIcon class="h-4 w-4 flex-shrink-0" />
+          <span>Solo lectura</span>
+        </div>
+      </header>
+
+      <!-- ============ HEADER DESKTOP COMPLETO (visible solo >= lg) ============ -->
+      <header class="hidden lg:flex flex-shrink-0 px-4 md:px-8 pt-6 pb-4 bg-slate-100/80 backdrop-blur-sm border-b border-slate-200 z-10">
+        <div class="flex flex-col md:flex-row justify-between items-start gap-4 w-full">
           <div class="flex-1">
             <h1 class="text-2xl md:text-3xl font-bold text-slate-800 mb-1">Inspección: {{ centro.nombre }}</h1>
             <p class="text-slate-500 text-sm">
-              Técnico: <span class="font-medium">{{ inspeccion.tecnico_nombre }}</span> | 
+              Técnico: <span class="font-medium">{{ inspeccion.tecnico_nombre }}</span> |
               Fecha: <span class="font-medium">{{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString() }}</span> |
               Plano: <strong class="text-blue-600">{{ version.nombre }}</strong>
             </p>
@@ -5213,7 +5859,6 @@ const finalizarInspeccion = async () => {
             </div>
           </div>
           <div class="w-full md:w-auto flex items-center flex-col sm:flex-row gap-2">
-            <GlobalStatusIndicator mode="mobile" class="w-full justify-center md:hidden" />
             <button v-if="canEditInspection" @click="finalizarInspeccion" :disabled="isFinalizing" class="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm disabled:bg-slate-400">
               <CheckCircleIcon class="h-5 w-5" />
               {{ isFinalizing ? 'Finalizando...' : 'Finalizar Inspección' }}
@@ -5226,11 +5871,18 @@ const finalizarInspeccion = async () => {
       </header>
       
       <div class="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        
+
         <InspectionSidebar
+          :class="[
+            'lg:block',
+            showMapInMobile ? 'hidden' : 'block'
+          ]"
           :can-edit="canEditInspection"
           :salas="salas"
           :puntos-agrupados="puntosAgrupadosPorSala"
+          :all-incidencias="allIncidencias"
+          :is-plano-editing-mode="isPlanoEditingMode"
+          :is-mobile-add-point-open="isMobileAddPointOpen"
           @toggle-plano-editing="handleTogglePlanoEditing"
           @add-sala="handleAddSala"
           @start-area-drawing="handleStartAreaDrawing"
@@ -5240,15 +5892,22 @@ const finalizarInspeccion = async () => {
           @update-point-state="updatePuntoEstado"
           @delete-new-point="handleDeleteNewPoint"
           @update-point-nomenclatura="handleUpdatePointNomenclatura"
+          @update:is-mobile-add-point-open="isMobileAddPointOpen = $event"
         />
-        
-        <main class="flex-1 bg-slate-100 min-w-0 h-1/2 lg:h-full overflow-auto">
+
+        <main
+          :class="[
+            'flex-1 bg-slate-100 min-w-0 lg:h-full overflow-auto',
+            showMapInMobile ? 'block' : 'hidden lg:block'
+          ]"
+        >
           <InteractiveMap
             v-if="!loading && version?.url_imagen_plano"
             :key="inspeccionId"
             :image-url="version.url_imagen_plano"
             :points="puntosParaMostrar.filter(p => p.estado !== 'suprimido')"
             :salas="salas"
+            :all-incidencias="allIncidencias"
             :is-read-only="!canEditInspection || (!isPlacementMode && !isAreaDrawingMode)"
             :is-placement-mode="isPlacementMode"
             :is-area-drawing-mode="isAreaDrawingMode"
@@ -5601,10 +6260,11 @@ const closeModal = () => {
 --- INICIO DEL ARCHIVO: src/views/CentroVersionsView.vue ---
 <!-- src/views/CentroVersionsView.vue -->
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, inject, nextTick, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
-import { PlusIcon, PencilIcon, CheckCircleIcon, ArchiveBoxIcon } from '@heroicons/vue/24/solid';
+import { PlusIcon, PencilIcon, CheckCircleIcon, ArchiveBoxIcon, CheckIcon } from '@heroicons/vue/24/solid';
+import { addToQueue } from '../utils/syncQueue';
 
 const route = useRoute();
 const router = useRouter();
@@ -5614,6 +6274,13 @@ const loading = ref(true);
 const centro = ref(null);
 const versiones = ref([]);
 const newVersionName = ref('');
+
+// Inline editing state
+const editingVersionId = ref(null);
+const tempVersionName = ref('');
+
+// Inject notification system
+const showNotification = inject('showNotification');
 
 const fetchVersions = async () => {
   loading.value = true;
@@ -5660,7 +6327,88 @@ const createNewVersion = async () => {
     }
 };
 
-onMounted(fetchVersions);
+// Inline editing functions
+const startEditingName = (version) => {
+  editingVersionId.value = version.id;
+  tempVersionName.value = version.nombre;
+  nextTick(() => {
+    // Find the input element by its data attribute
+    const inputElement = document.querySelector(`input[data-version-id="${version.id}"]`);
+    if (inputElement) {
+      inputElement.focus();
+      inputElement.select(); // Also select all text for easier editing
+    }
+  });
+};
+
+const cancelEditingName = () => {
+  editingVersionId.value = null;
+  tempVersionName.value = '';
+};
+
+const saveVersionName = async (versionId) => {
+  const newName = tempVersionName.value.trim();
+
+  // Validation
+  if (!newName) {
+    showNotification('El nombre de la versión no puede estar vacío.', 'error');
+    return;
+  }
+
+  if (newName.length > 100) {
+    showNotification('El nombre es demasiado largo (máximo 100 caracteres).', 'error');
+    return;
+  }
+
+  try {
+    // Use sync queue for offline support
+    addToQueue({
+      table: 'versiones_plano',
+      type: 'update',
+      id: versionId,
+      payload: { nombre: newName }
+    });
+
+    // Update local state immediately
+    const version = versiones.value.find(v => v.id === versionId);
+    if (version) {
+      version.nombre = newName;
+    }
+
+    showNotification('Nombre de versión actualizado correctamente.', 'success');
+    cancelEditingName();
+  } catch (error) {
+    console.error('Error updating version name:', error);
+    showNotification('Error al actualizar el nombre: ' + error.message, 'error');
+  }
+};
+
+// Handle clicking outside to cancel edit
+const handleClickOutside = (event) => {
+  if (editingVersionId.value === null) {
+    return; // Not editing, nothing to do
+  }
+
+  // Check if click target is the pencil button itself
+  const pencilButton = event.target.closest('button[title="Editar nombre"]');
+  if (pencilButton) {
+    return; // Ignore clicks on the pencil button
+  }
+
+  const editContainer = document.querySelector('.version-name-edit-container');
+  if (editContainer && !editContainer.contains(event.target)) {
+    cancelEditingName();
+  }
+};
+
+onMounted(() => {
+  fetchVersions();
+  document.addEventListener('click', handleClickOutside);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside);
+});
 </script>
 
 <template>
@@ -5707,7 +6455,40 @@ onMounted(fetchVersions);
           </li>
           <li v-for="version in versiones" :key="version.id" class="p-4 grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
             <div class="md:col-span-1">
-              <p class="font-semibold text-slate-800 text-lg">{{ version.nombre }}</p>
+              <!-- Editable version name -->
+              <div class="flex items-center gap-2 group version-name-edit-container">
+                <!-- Edit mode -->
+                <div v-if="editingVersionId === version.id" class="flex items-center gap-1 flex-1">
+                  <input
+                    :data-version-id="version.id"
+                    v-model="tempVersionName"
+                    type="text"
+                    @keyup.enter="saveVersionName(version.id)"
+                    @keyup.esc="cancelEditingName"
+                    class="font-semibold text-slate-800 text-lg px-2 py-1 border-2 border-blue-400 rounded-md focus:ring-2 focus:ring-blue-400 focus:outline-none flex-1"
+                    maxlength="100"
+                  />
+                  <button
+                    @mousedown.prevent="saveVersionName(version.id)"
+                    class="p-1.5 text-green-600 hover:bg-green-100 rounded-md transition-colors"
+                    title="Guardar"
+                  >
+                    <CheckIcon class="h-5 w-5" />
+                  </button>
+                </div>
+
+                <!-- View mode -->
+                <div v-else class="flex items-center gap-2 flex-1">
+                  <p class="font-semibold text-slate-800 text-lg">{{ version.nombre }}</p>
+                  <button
+                    @click="startEditingName(version)"
+                    class="p-1 text-slate-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Editar nombre"
+                  >
+                    <PencilIcon class="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
               <p class="text-sm text-slate-500">Creada: {{ new Date(version.fecha_creacion).toLocaleDateString() }}</p>
             </div>
             <div class="md:col-span-1">
@@ -7293,6 +8074,9 @@ export function useOnlineStatus() {
 
 import { ref, onMounted, onUnmounted, readonly } from 'vue';
 import { supabase } from '../supabase';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('Inspections');
 
 // Web Worker for processing inspection details
 const createProcessingWorker = () => {
@@ -7360,7 +8144,7 @@ export function useInspections(centroId) {
         const { data, timestamp } = JSON.parse(cached);
         if (Date.now() - timestamp < CACHE_DURATION) return data;
       }
-    } catch (error) { console.warn('Error reading cache:', error); }
+    } catch (error) { logger.warn('Error reading cache:', error); }
     return null;
   };
 
@@ -7368,7 +8152,7 @@ export function useInspections(centroId) {
     try {
       const cacheData = { data, timestamp: Date.now() };
       localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
-    } catch (error) { console.warn('Error writing cache:', error); }
+    } catch (error) { logger.warn('Error writing cache:', error); }
   };
 
   const fetchData = async (page = 1, append = false, silent = false) => {
@@ -7527,6 +8311,9 @@ export function useInspections(centroId) {
 import { ref } from 'vue';
 import { useNotification } from '../utils/notification';
 import { addToQueue, FILE_STORAGE_KEY_PREFIX } from '../utils/syncQueue';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('FileUpload');
 
 function readFileAsArrayBuffer(file) {
   return new Promise((resolve, reject) => {
@@ -7591,12 +8378,11 @@ export function useFileUpload(inspeccionId, puntoId) {
       const arrayBuffer = await readFileAsArrayBuffer(fileToUpload);
       const stableBlob = new Blob([arrayBuffer], { type: fileToUpload.type });
       const stableBlobUrl = URL.createObjectURL(stableBlob);
-      
-      const fileName = `inspeccion_${inspeccionId}/punto_${puntoId}/${Date.now()}_${file.name}`;
-      
-      const fileId = `${FILE_STORAGE_KEY_PREFIX}${Date.now()}`; // Generamos la clave aquí
 
-      await addToQueue({
+      const fileName = `inspeccion_${inspeccionId}/punto_${puntoId}/${Date.now()}_${file.name}`;
+
+      // addToQueue manejará la creación del fileId internamente
+      const queueAction = {
         type: 'uploadAndUpdate',
         bucket: 'incidencias',
         path: fileName,
@@ -7604,20 +8390,20 @@ export function useFileUpload(inspeccionId, puntoId) {
         table: 'incidencias',
         recordId: incidencia.id,
         urlColumn: 'url_foto_antes',
-        fileId: fileId, // Pasamos la clave a la cola
-      });
+      };
+
+      await addToQueue(queueAction);
 
       showNotification('Foto guardada localmente.', 'success');
-      
-      // --- INICIO DE LA MODIFICACIÓN: Devolvemos la clave y la URL de preview ---
+
+      // addToQueue modifica el objeto queueAction y le añade el fileId
       return {
-          offlinePhotoKey: fileId,
+          offlinePhotoKey: queueAction.fileId, // Usamos el fileId que addToQueue creó
           previewUrl: stableBlobUrl,
       };
-      // --- FIN DE LA MODIFICACIÓN ---
 
     } catch (error) {
-      console.error('Error procesando imagen para guardado local:', error);
+      logger.error('Error procesando imagen para guardado local:', error);
       showNotification('Error al procesar la imagen: ' + error.message, 'error');
       return null;
     } finally {
@@ -7637,6 +8423,9 @@ export function useFileUpload(inspeccionId, puntoId) {
 
 import { createRouter, createWebHistory } from 'vue-router'
 import { supabase } from '../supabase'
+import { createLogger } from '../utils/logger'
+
+const logger = createLogger('Router')
 
 // Importación de Vistas y Componentes
 import Login from '../components/Login.vue'
@@ -7649,7 +8438,7 @@ const routes = [
   { path: '/centros/:id/versiones', name: 'CentroVersions', component: () => import('../views/CentroVersionsView.vue'), meta: { requiresAuth: true } },
   { path: '/versiones/:id/configurar', name: 'VersionConfig', component: () => import('../views/CentroConfigView.vue'), meta: { requiresAuth: true } },
   { path: '/inspecciones', name: 'InspeccionesList', component: () => import('../views/InspeccionesListView.vue'), meta: { requiresAuth: true } },
-  { path: '/inspecciones/:id', name: 'InspeccionDetail', component: () => import('../views/InspeccionDetailView.vue'), meta: { requiresAuth: true } },
+  { path: '/inspecciones/:id', name: 'InspeccionDetail', component: () => import('../views/InspeccionDetailView.vue'), meta: { requiresAuth: true, hideDefaultHeader: true } },
   { path: '/centros/:id/historial', name: 'CentroHistorial', component: () => import('../views/CentroHistorialView.vue'), meta: { requiresAuth: true } },
   {
     path: '/inspecciones/:id/plano-preview',
@@ -7672,12 +8461,12 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to, from, next) => {
-  console.log(`[Router] Navegando de '${from.fullPath}' a '${to.fullPath}'`);
-  
+  logger.debug(`Navegando de '${from.fullPath}' a '${to.fullPath}'`);
+
   const { data: { session } } = await supabase.auth.getSession()
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
 
-  if (requiresAuth && !session) { next({ name: 'Login' }) } 
+  if (requiresAuth && !session) { next({ name: 'Login' }) }
   else if (session && to.name === 'Login') { next({ name: 'Dashboard' }) }
   else { next() }
 })
@@ -7706,7 +8495,7 @@ onMounted(() => console.log('[BlankLayout.vue] Componente montado en el DOM.'));
 --- INICIO DEL ARCHIVO: src/layouts/DefaultLayout.vue ---
 <!-- src/layouts/DefaultLayout.vue -->
 <script setup>
-import { ref } from 'vue';
+import { ref, provide } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { HomeIcon, ListBulletIcon, DocumentMagnifyingGlassIcon, Cog6ToothIcon, Bars3Icon, TableCellsIcon } from '@heroicons/vue/24/outline';
 import { supabase } from '../supabase';
@@ -7718,6 +8507,9 @@ import GlobalStatusIndicator from '../components/GlobalStatusIndicator.vue';
 const route = useRoute();
 const router = useRouter();
 const isSidebarOpen = ref(false);
+
+// Proporcionar el estado del sidebar a los componentes hijos
+provide('toggleSidebar', () => { isSidebarOpen.value = true; });
 
 const navigation = [
   { name: 'Menú Principal', href: '/dashboard', icon: HomeIcon },
@@ -7784,7 +8576,9 @@ const handleLogout = async () => {
 
   <!-- Contenido Principal -->
   <div class="flex-1 flex flex-col overflow-hidden">
-      <header class="md:hidden h-16 bg-white shadow-sm flex items-center justify-between px-4 flex-shrink-0">
+      <header
+        v-if="!route.meta.hideDefaultHeader"
+        class="md:hidden h-16 bg-white shadow-sm flex items-center justify-between px-4 flex-shrink-0">
         <button @click="isSidebarOpen = true" class="text-slate-600">
           <Bars3Icon class="h-6 w-6" />
         </button>
@@ -7793,7 +8587,7 @@ const handleLogout = async () => {
         <GlobalStatusIndicator mode="mobile" />
         <!-- --- FIN DE LA MODIFICACIÓN --- -->
       </header>
-      
+
       <main class="flex-1 overflow-y-auto">
         <router-view />
       </main>

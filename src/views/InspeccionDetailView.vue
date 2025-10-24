@@ -7,7 +7,8 @@ import InteractiveMap from '../components/InteractiveMap.vue';
 import ChecklistModal from '../components/ChecklistModal.vue';
 import InspectionSidebar from '../components/InspectionSidebar.vue';
 import GlobalStatusIndicator from '../components/GlobalStatusIndicator.vue';
-import { CheckCircleIcon, InformationCircleIcon, MapIcon, PlusIcon, PencilSquareIcon, ArrowLeftIcon, ListBulletIcon, Bars3Icon } from '@heroicons/vue/24/solid';
+import AddPointForm from '../components/AddPointForm.vue';
+import { CheckCircleIcon, InformationCircleIcon, MapIcon, PlusIcon, PencilSquareIcon, ArrowLeftIcon, ListBulletIcon, Bars3Icon, XCircleIcon } from '@heroicons/vue/24/solid';
 import { generateTextReport } from '../utils/pdf';
 import SkeletonLoader from '../components/SkeletonLoader.vue';
 import { addToQueue, processQueue, syncQueue, waitForQueueToEmpty } from '../utils/syncQueue';
@@ -38,6 +39,8 @@ const salaParaDibujar = ref(null);
 const isPlanoEditingMode = ref(false);
 const isMobileAddPointOpen = ref(false);
 const showMapInMobile = ref(false);
+const showAddSalaForm = ref(false);
+const newSalaName = ref('');
 
 const canEditInspection = computed(() => {
   return inspeccion.value?.estado === 'en_progreso';
@@ -261,6 +264,8 @@ const handleTogglePlanoEditing = (isActive) => {
   if (!isActive) {
     isAreaDrawingMode.value = false;
     salaParaDibujar.value = null;
+    showAddSalaForm.value = false;
+    newSalaName.value = '';
   }
 };
 
@@ -435,84 +440,29 @@ const finalizarInspeccion = async () => {
     </div>
     
     <div v-else-if="inspeccion && centro && version" class="flex-1 flex flex-col min-h-0">
-      <!-- ============ HEADER MÓVIL COMPACTO (visible solo < lg) ============ -->
+      <!-- ============ HEADER MÓVIL CONTEXTUAL (visible solo < lg) ============ -->
       <header class="lg:hidden flex-shrink-0 px-3 py-2 bg-white border-b border-slate-200 z-10">
-        <div class="flex items-center justify-between gap-2">
-          <!-- Botón hamburguesa para el menú lateral -->
-          <button
-            v-if="toggleSidebar"
-            @click="toggleSidebar"
-            class="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
-            title="Abrir Menú"
-            aria-label="Abrir Menú">
-            <Bars3Icon class="h-5 w-5" />
-          </button>
-
-          <!-- Indicador de conexión -->
+        <!-- === VISTA MAPA === -->
+        <div v-if="showMapInMobile" class="flex items-center justify-between gap-2">
+          <button v-if="toggleSidebar" @click="toggleSidebar" class="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200" title="Abrir Menú"><Bars3Icon class="h-5 w-5" /></button>
           <GlobalStatusIndicator mode="mobile" />
-
-          <!-- Botones de acción compactos -->
           <div class="flex items-center gap-1">
-            <!-- Botón Editar Plano -->
-            <button
-              v-if="canEditInspection"
-              @click="toggleMobilePlanoEditing"
-              :class="[
-                'p-2 rounded-md transition-colors',
-                isPlanoEditingMode ? 'bg-orange-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              ]"
-              :title="isPlanoEditingMode ? 'Finalizar Edición' : 'Editar Plano'"
-              :aria-label="isPlanoEditingMode ? 'Finalizar Edición' : 'Editar Plano'">
-              <PencilSquareIcon class="h-5 w-5" />
-            </button>
-
-            <!-- Botón Agregar Punto -->
-            <button
-              v-if="canEditInspection && !isPlanoEditingMode"
-              @click="isMobileAddPointOpen = !isMobileAddPointOpen"
-              :class="[
-                'p-2 rounded-md transition-colors',
-                isMobileAddPointOpen ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              ]"
-              title="Agregar Punto"
-              aria-label="Agregar Punto">
-              <PlusIcon class="h-5 w-5" />
-            </button>
-
-            <!-- Botón Ver Plano / Ver Lista -->
-            <button
-              @click="toggleMapInMobile"
-              :class="[
-                'p-2 rounded-md transition-colors',
-                showMapInMobile ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              ]"
-              :title="showMapInMobile ? 'Ver Lista' : 'Ver Plano'"
-              :aria-label="showMapInMobile ? 'Ver Lista' : 'Ver Plano'">
-              <component :is="showMapInMobile ? ListBulletIcon : MapIcon" class="h-5 w-5" />
-            </button>
-
-            <!-- Botón Finalizar o Volver -->
-            <button
-              v-if="canEditInspection"
-              @click="finalizarInspeccion"
-              :disabled="isFinalizing"
-              class="p-2 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:bg-slate-400 transition-colors"
-              title="Finalizar Inspección"
-              :aria-label="isFinalizing ? 'Finalizando...' : 'Finalizar Inspección'">
-              <CheckCircleIcon class="h-5 w-5" />
-            </button>
-            <button
-              v-else
-              @click="router.push(`/centros/${centro.id}/historial`)"
-              class="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
-              title="Volver al Historial"
-              aria-label="Volver al Historial">
-              <ArrowLeftIcon class="h-5 w-5" />
-            </button>
+            <button v-if="canEditInspection" @click="toggleMobilePlanoEditing" :class="['p-2 rounded-md transition-colors', isPlanoEditingMode ? 'bg-orange-500 text-white' : 'bg-slate-100 text-slate-600']" title="Editar Plano"><PencilSquareIcon class="h-5 w-5" /></button>
+            <button v-if="canEditInspection && !isPlanoEditingMode" @click="isMobileAddPointOpen = !isMobileAddPointOpen" :class="['p-2 rounded-md transition-colors', isMobileAddPointOpen ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600']" title="Agregar Punto"><PlusIcon class="h-5 w-5" /></button>
+            <button @click="toggleMapInMobile" class="p-2 rounded-md bg-blue-500 text-white" title="Ver Lista"><ListBulletIcon class="h-5 w-5" /></button>
+            <button v-if="canEditInspection" @click="finalizarInspeccion" :disabled="isFinalizing" class="p-2 rounded-md bg-green-600 text-white disabled:bg-slate-400" title="Finalizar Inspección"><CheckCircleIcon class="h-5 w-5" /></button>
           </div>
         </div>
-
-        <!-- Aviso de solo lectura compacto (móvil) -->
+        <!-- === VISTA LISTA === -->
+        <div v-else class="flex items-center justify-between gap-2">
+           <button v-if="toggleSidebar" @click="toggleSidebar" class="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200" title="Abrir Menú"><Bars3Icon class="h-5 w-5" /></button>
+           <GlobalStatusIndicator mode="mobile" />
+           <div class="flex items-center gap-1">
+             <button @click="toggleMapInMobile" class="p-2 rounded-md bg-slate-100 text-slate-600" title="Ver Plano"><MapIcon class="h-5 w-5" /></button>
+             <button @click="router.push(`/centros/${centro.id}/historial`)" class="p-2 rounded-md bg-slate-100 text-slate-600" title="Volver al Historial"><ArrowLeftIcon class="h-5 w-5" /></button>
+           </div>
+        </div>
+         <!-- Aviso de solo lectura compacto (móvil) -->
         <div v-if="!canEditInspection" class="mt-2 flex items-center gap-2 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded px-2 py-1">
           <InformationCircleIcon class="h-4 w-4 flex-shrink-0" />
           <span>Solo lectura</span>
@@ -577,6 +527,39 @@ const finalizarInspeccion = async () => {
             showMapInMobile ? 'block' : 'hidden lg:block'
           ]"
         >
+          <!-- Panels for mobile map view - Only visible on mobile when showMapInMobile = true -->
+          <div v-if="showMapInMobile" class="lg:hidden">
+            <!-- Panel for adding sala (plano editing mode) -->
+            <div v-if="canEditInspection && isPlanoEditingMode" class="p-3 bg-orange-50 border-b border-orange-200 space-y-3">
+              <h3 class="font-bold text-orange-800 text-center">Modo Edición de Plano</h3>
+              <form v-if="showAddSalaForm" @submit.prevent="handleAddSala(newSalaName)" class="flex gap-2">
+                <input v-model="newSalaName" type="text" placeholder="Nombre nueva sala..." class="flex-1 block w-full rounded-md border-slate-300 shadow-sm text-sm">
+                <button type="submit" class="p-2 bg-green-600 text-white rounded-md hover:bg-green-700"><CheckCircleIcon class="h-5 w-5"/></button>
+                <button @click="showAddSalaForm = false" type="button" class="p-2 bg-red-600 text-white rounded-md hover:bg-red-700"><XCircleIcon class="h-5 w-5"/></button>
+              </form>
+              <button v-else @click="showAddSalaForm = true" class="w-full flex items-center justify-center gap-2 px-4 py-2 font-semibold text-slate-600 bg-white rounded-md hover:bg-slate-50 border">
+                <PlusIcon class="h-5 w-5" /> Añadir Sala
+              </button>
+            </div>
+
+            <!-- Panel for adding point (add point mode) -->
+            <div v-if="canEditInspection && !isPlanoEditingMode && isMobileAddPointOpen" class="p-4 bg-blue-50 border-b">
+              <AddPointForm
+                :salas="salas"
+                @save="handleStartPlacementMode"
+                @cancel="isMobileAddPointOpen = false"
+              />
+            </div>
+
+            <!-- Button to cancel placement mode -->
+            <div v-if="canEditInspection && !isPlanoEditingMode && isPlacementMode" class="p-4 border-b">
+              <button @click="handleCancelPlacementMode" class="w-full flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-red-600 rounded-md hover:bg-red-700">
+                <XCircleIcon class="h-5 w-5" />
+                Cancelar Colocación
+              </button>
+            </div>
+          </div>
+
           <InteractiveMap
             v-if="!loading && version?.url_imagen_plano"
             :key="inspeccionId"

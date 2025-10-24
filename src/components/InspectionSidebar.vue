@@ -127,10 +127,27 @@ const handleCancelPlacement = () => {
        />
     </div>
 
-    <!-- Mensaje de modo edición en móvil -->
-    <div v-if="canEdit && isPlanoEditingMode" class="lg:hidden p-3 bg-orange-50 border-b border-orange-200">
-       <p class="text-sm font-medium text-orange-800 text-center">Modo Edición de Plano activo</p>
+    <!-- Botón Cancelar Colocación en Móvil - SOLO VISIBLE EN MÓVIL -->
+    <div v-if="canEdit && !isPlanoEditingMode && isPlacementMode" class="lg:hidden p-4 flex-shrink-0 border-b">
+       <button @click="handleCancelPlacement" class="w-full flex items-center justify-center gap-2 px-4 py-2 font-semibold text-white bg-red-600 rounded-md hover:bg-red-700">
+          <XCircleIcon class="h-5 w-5" />
+          Cancelar Colocación
+       </button>
     </div>
+
+    <!-- --- INICIO DE LA MODIFICACIÓN: Panel de Edición de Plano en Móvil --- -->
+    <div v-if="canEdit && isPlanoEditingMode" class="lg:hidden p-3 bg-orange-50 border-b border-orange-200 space-y-3">
+       <h3 class="font-bold text-orange-800 text-center">Modo Edición de Plano</h3>
+       <form v-if="showAddSalaForm" @submit.prevent="handleAddSala" class="flex gap-2">
+          <input v-model="newSalaName" type="text" placeholder="Nombre nueva sala..." class="flex-1 block w-full rounded-md border-slate-300 shadow-sm text-sm">
+          <button type="submit" class="p-2 bg-green-600 text-white rounded-md hover:bg-green-700"><CheckCircleIcon class="h-5 w-5"/></button>
+          <button @click="showAddSalaForm = false" type="button" class="p-2 bg-red-600 text-white rounded-md hover:bg-red-700"><XCircleIcon class="h-5 w-5"/></button>
+       </form>
+       <button v-else @click="showAddSalaForm = true" class="w-full flex items-center justify-center gap-2 px-4 py-2 font-semibold text-slate-600 bg-white rounded-md hover:bg-slate-50 border">
+          <PlusIcon class="h-5 w-5" /> Añadir Sala
+       </button>
+    </div>
+    <!-- --- FIN DE LA MODIFICACIÓN --- -->
 
     <div class="flex-1 overflow-y-auto px-4 pb-4">
       <PointList
