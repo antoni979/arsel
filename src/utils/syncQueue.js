@@ -105,169 +105,213 @@ function hasTempId(tempId) {
 
 export async function processQueue() {
   if (isProcessing.value || !navigator.onLine) {
+    logger.debug(`processQueue skipped: isProcessing=${isProcessing.value}, onLine=${navigator.onLine}`);
     return Promise.resolve();
   }
+
   isProcessing.value = true;
+  logger.info(`Starting queue processing. Queue length: ${syncQueue.value.length}`);
 
-  // Límite para evitar bucles infinitos
-  let processedActions = 0;
-  const maxActionsInCycle = syncQueue.value.length * 2;
+  try {
+    // Límite para evitar bucles infinitos
+    let processedActions = 0;
+    const maxActionsInCycle = syncQueue.value.length * 2;
+    const MAX_RETRIES = 3; // Máximo de reintentos por acción
 
-  while (syncQueue.value.length > 0 && processedActions < maxActionsInCycle) {
-    const action = syncQueue.value[0];
-    let success = false;
-    processedActions++;
+    while (syncQueue.value.length > 0 && processedActions < maxActionsInCycle) {
+      const action = syncQueue.value[0];
+      let success = false;
+      processedActions++;
 
-    try {
-      if (action.payload) {
-        for (const key in action.payload) {
-          if (typeof action.payload[key] === 'string' && action.payload[key].startsWith('temp_')) {
-            const realId = getTempId(action.payload[key]);
-            if (realId) {
-              action.payload[key] = realId;
-            } else {
-              throw new Error(`Dependencia de ID temporal (${action.payload[key]}) no resuelta. Reintentando...`);
+      // Inicializar contador de reintentos si no existe
+      if (!action.retryCount) {
+        action.retryCount = 0;
+      }
+
+      try {
+        if (action.payload) {
+          for (const key in action.payload) {
+            if (typeof action.payload[key] === 'string' && action.payload[key].startsWith('temp_')) {
+              const realId = getTempId(action.payload[key]);
+              if (realId) {
+                action.payload[key] = realId;
+              } else {
+                throw new Error(`Dependencia de ID temporal (${action.payload[key]}) no resuelta. Reintentando...`);
+              }
             }
+          }
+        }
+
+        const sanitizedPayload = action.payload ? { ...action.payload } : {};
+        if(sanitizedPayload.id) delete sanitizedPayload.id;
+        if(sanitizedPayload.created_at) delete sanitizedPayload.created_at;
+
+        switch (action.type) {
+          case 'insert':
+            const { data: insertData, error: insertError } = await supabase.from(action.table).insert(sanitizedPayload).select().single();
+            if (insertError) throw insertError;
+            if (action.tempId) {
+              setTempId(action.tempId, insertData.id);
+            }
+            logger.debug(`Insert successful for table ${action.table}, tempId: ${action.tempId}`);
+            success = true;
+            break;
+
+          case 'update':
+            let updateId = action.id;
+            if (typeof updateId === 'string' && updateId.startsWith('temp_')) {
+              const realId = getTempId(updateId);
+              if (!realId) {
+                logger.warn(`Update de ${updateId} reordenado - esperando resolución`);
+                throw new Error(`ID temporal ${updateId} no encontrado para actualizar.`);
+              }
+              updateId = realId;
+              logger.debug(`Update resolved: ${action.id} → ${updateId}`);
+            }
+            const { error: updateError } = await supabase.from(action.table).update(sanitizedPayload).eq('id', updateId);
+            if (updateError) throw updateError;
+            logger.debug(`Update successful for table ${action.table}, id: ${updateId}`);
+            success = true;
+            break;
+
+          case 'delete':
+            if (typeof action.id === 'string' && action.id.startsWith('temp_')) {
+              success = true;
+            } else {
+              const { error: deleteError } = await supabase.from(action.table).delete().eq('id', action.id);
+              if (!deleteError || deleteError.code === 'PGRST116') {
+                logger.debug(`Delete successful for table ${action.table}, id: ${action.id}`);
+                success = true;
+              } else {
+                throw deleteError;
+              }
+            }
+            break;
+
+          case 'deleteFile':
+            try {
+              const url = new URL(action.url);
+              const pathParts = url.pathname.split('/');
+              const bucketIndex = pathParts.findIndex(part => part === action.bucket);
+              if (bucketIndex === -1) throw new Error(`Bucket '${action.bucket}' no encontrado en la URL.`);
+              const filePath = pathParts.slice(bucketIndex + 1).join('/');
+              const { error: fileDeleteError } = await supabase.storage.from(action.bucket).remove([filePath]);
+              if (fileDeleteError && fileDeleteError.message !== 'The resource was not found') {
+                logger.error('Error al borrar archivo del storage:', fileDeleteError);
+              }
+            } catch(e) {
+                logger.error('URL de archivo inválida para borrado:', action.url, e);
+            }
+            success = true;
+            break;
+
+          case 'uploadAndUpdate':
+            let fileData = await getFileLocally(action.fileId);
+            if (!fileData) {
+              logger.warn(`Archivo local ${action.fileId} no encontrado, saltando acción`);
+              success = true;
+              break;
+            }
+            const fileToUpload = new Blob([fileData], { type: fileData.type });
+            const { error: uploadError } = await supabase.storage.from(action.bucket).upload(action.path, fileToUpload, { upsert: true });
+            if (uploadError) throw uploadError;
+
+            const { data: { publicUrl } } = supabase.storage.from(action.bucket).getPublicUrl(action.path);
+
+            let recordId = action.recordId;
+            if (typeof recordId === 'string' && recordId.startsWith('temp_')) {
+              const realRecordId = getTempId(recordId);
+              if (!realRecordId) {
+                logger.error(`ID temporal ${recordId} no encontrado. Map size: ${tempIdMap.size}`);
+                throw new Error(`ID temporal ${recordId} no encontrado para actualizar URL.`);
+              }
+              logger.debug(`Resolviendo ${recordId} → ${realRecordId}`);
+              recordId = realRecordId;
+            }
+
+            const updateUrlPayload = {};
+            updateUrlPayload[action.urlColumn] = publicUrl;
+            const { error: urlUpdateError } = await supabase.from(action.table).update(updateUrlPayload).eq('id', recordId);
+            if (urlUpdateError) throw urlUpdateError;
+
+            await deleteFileLocally(action.fileId);
+            logger.debug(`Archivo subido y URL actualizada para recordId ${recordId}`);
+            success = true;
+            break;
+
+          default:
+            throw new Error(`Tipo de acción desconocido: ${action.type}`);
+        }
+      } catch (error) {
+        logger.error('Error al procesar la acción de la cola:', error);
+
+        // === MANEJO ROBUSTO DE ERRORES ===
+        if (error.message.includes('Dependencia de ID temporal') || error.message.includes('ID temporal no encontrado')) {
+          // Error de dependencia: la acción depende de un ID temporal que aún no se ha resuelto
+          action.retryCount++;
+
+          // Si excedemos el límite de reintentos por dependencias, removemos la acción
+          if (action.retryCount > MAX_RETRIES * 2) {
+            logger.error(`Acción descartada después de ${action.retryCount} reintentos por dependencia no resuelta:`, action);
+            showNotification('Error: No se pudo sincronizar un cambio por dependencia no resuelta.', 'error', 5000);
+            syncQueue.value.shift();
+          } else {
+            logger.warn(`Reordenando acción por dependencia no resuelta (intento ${action.retryCount}):`, action);
+            const failingAction = syncQueue.value.shift();
+            syncQueue.value.push(failingAction);
+          }
+          // NO marcamos success=true, el bucle continuará con el siguiente elemento
+        } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+          // Error de red: detenemos el procesamiento para reintentar más tarde
+          logger.info('Fallo de red. La sincronización se detiene y reintentará más tarde.');
+          break;
+        } else if (error.code === 'PGRST116' || error.message.includes('no rows returned')) {
+          // El registro no existe en la BD (probablemente ya fue borrado)
+          // Esto puede pasar si intentamos actualizar/borrar algo que ya no existe
+          logger.warn(`Registro no encontrado, removiendo acción de la cola:`, action);
+          success = true; // Marcamos como éxito para remover la acción
+        } else {
+          // Error grave e inesperado: incrementar contador de reintentos
+          action.retryCount++;
+
+          if (action.retryCount > MAX_RETRIES) {
+            // Después de MAX_RETRIES intentos, removemos la acción y notificamos
+            logger.error(`Acción descartada después de ${MAX_RETRIES} reintentos:`, action, error);
+            showNotification(`Error de sincronización persistente: ${error.message}`, 'error', 5000);
+            success = true; // Marcamos como éxito para remover la acción y continuar
+          } else {
+            // Reordenar al final para reintentar después
+            logger.warn(`Reintentando acción (intento ${action.retryCount}/${MAX_RETRIES}):`, action);
+            const failingAction = syncQueue.value.shift();
+            syncQueue.value.push(failingAction);
           }
         }
       }
 
-      const sanitizedPayload = action.payload ? { ...action.payload } : {};
-      if(sanitizedPayload.id) delete sanitizedPayload.id;
-      if(sanitizedPayload.created_at) delete sanitizedPayload.created_at;
+      if (success) {
+        syncQueue.value.shift();
+        logger.debug(`Action completed successfully. Remaining queue: ${syncQueue.value.length}`);
 
-      switch (action.type) {
-        case 'insert':
-          const { data: insertData, error: insertError } = await supabase.from(action.table).insert(sanitizedPayload).select().single();
-          if (insertError) throw insertError;
-          if (action.tempId) {
-            setTempId(action.tempId, insertData.id);
-          }
-          success = true;
-          break;
-
-        case 'update':
-          let updateId = action.id;
-          if (typeof updateId === 'string' && updateId.startsWith('temp_')) {
-            const realId = getTempId(updateId);
-            if (!realId) {
-              logger.warn(`Update de ${updateId} reordenado - esperando resolución`);
-              throw new Error(`ID temporal ${updateId} no encontrado para actualizar.`);
-            }
-            updateId = realId;
-            logger.debug(`Update resolved: ${action.id} → ${updateId}`);
-          }
-          const { error: updateError } = await supabase.from(action.table).update(sanitizedPayload).eq('id', updateId);
-          if (updateError) throw updateError;
-          success = true;
-          break;
-        
-        case 'delete':
-          if (typeof action.id === 'string' && action.id.startsWith('temp_')) {
-            success = true;
-          } else {
-            const { error: deleteError } = await supabase.from(action.table).delete().eq('id', action.id);
-            if (!deleteError || deleteError.code === 'PGRST116') {
-              success = true;
-            } else {
-              throw deleteError;
-            }
-          }
-          break;
-
-        case 'deleteFile':
-          try {
-            const url = new URL(action.url);
-            const pathParts = url.pathname.split('/');
-            const bucketIndex = pathParts.findIndex(part => part === action.bucket);
-            if (bucketIndex === -1) throw new Error(`Bucket '${action.bucket}' no encontrado en la URL.`);
-            const filePath = pathParts.slice(bucketIndex + 1).join('/');
-            const { error: fileDeleteError } = await supabase.storage.from(action.bucket).remove([filePath]);
-            if (fileDeleteError && fileDeleteError.message !== 'The resource was not found') {
-              logger.error('Error al borrar archivo del storage:', fileDeleteError);
-            }
-          } catch(e) {
-              logger.error('URL de archivo inválida para borrado:', action.url, e);
-          }
-          success = true;
-          break;
-
-        case 'uploadAndUpdate':
-          let fileData = await getFileLocally(action.fileId);
-          if (!fileData) {
-            logger.warn(`Archivo local ${action.fileId} no encontrado, saltando acción`);
-            success = true;
-            break;
-          }
-          const fileToUpload = new Blob([fileData], { type: fileData.type });
-          const { error: uploadError } = await supabase.storage.from(action.bucket).upload(action.path, fileToUpload, { upsert: true });
-          if (uploadError) throw uploadError;
-
-          const { data: { publicUrl } } = supabase.storage.from(action.bucket).getPublicUrl(action.path);
-
-          let recordId = action.recordId;
-          if (typeof recordId === 'string' && recordId.startsWith('temp_')) {
-            const realRecordId = getTempId(recordId);
-            if (!realRecordId) {
-              logger.error(`ID temporal ${recordId} no encontrado. Map size: ${tempIdMap.size}`);
-              throw new Error(`ID temporal ${recordId} no encontrado para actualizar URL.`);
-            }
-            logger.debug(`Resolviendo ${recordId} → ${realRecordId}`);
-            recordId = realRecordId;
-          }
-
-          const updateUrlPayload = {};
-          updateUrlPayload[action.urlColumn] = publicUrl;
-          const { error: urlUpdateError } = await supabase.from(action.table).update(updateUrlPayload).eq('id', recordId);
-          if (urlUpdateError) throw urlUpdateError;
-
-          await deleteFileLocally(action.fileId);
-          logger.debug(`Archivo subido y URL actualizada para recordId ${recordId}`);
-          success = true;
-          break;
-
-        default:
-          throw new Error(`Tipo de acción desconocido: ${action.type}`);
+        // NOTA: NO limpiamos el tempIdMap aquí
+        // El mapa persiste durante toda la sesión para manejar updates tardíos
+        // que puedan llegar después de que el insert se haya procesado
       }
-    } catch (error) {
-      logger.error('Error al procesar la acción de la cola:', error);
 
-      // === MANEJO ROBUSTO DE ERRORES ===
-      if (error.message.includes('Dependencia de ID temporal') || error.message.includes('ID temporal no encontrado')) {
-        // Error de dependencia: la acción depende de un ID temporal que aún no se ha resuelto
-        logger.warn(`Reordenando acción por dependencia no resuelta:`, action);
-        const failingAction = syncQueue.value.shift();
-        syncQueue.value.push(failingAction);
-        // NO marcamos success=true, el bucle continuará con el siguiente elemento
-      } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-        // Error de red: detenemos el procesamiento para reintentar más tarde
-        logger.info('Fallo de red. La sincronización se detiene y reintentará más tarde.');
-        break;
-      } else if (error.code === 'PGRST116' || error.message.includes('no rows returned')) {
-        // El registro no existe en la BD (probablemente ya fue borrado)
-        // Esto puede pasar si intentamos actualizar/borrar algo que ya no existe
-        logger.warn(`Registro no encontrado, removiendo acción de la cola:`, action);
-        success = true; // Marcamos como éxito para remover la acción
-      } else {
-        // Error grave e inesperado: detenemos la cola y notificamos
-        showNotification(`Error de sincronización: ${error.message}`, 'error');
-        logger.error('Error grave en cola de sincronización:', error, action);
-        break;
-      }
-    }
-    if (success) {
-      syncQueue.value.shift();
-
-      // NOTA: NO limpiamos el tempIdMap aquí
-      // El mapa persiste durante toda la sesión para manejar updates tardíos
-      // que puedan llegar después de que el insert se haya procesado
+      // Siempre guardamos el estado actual de la cola, especialmente si la hemos reordenado.
+      saveQueueToStorage();
     }
 
-    // Siempre guardamos el estado actual de la cola, especialmente si la hemos reordenado.
-    saveQueueToStorage();
+    logger.info(`Queue processing completed. Remaining items: ${syncQueue.value.length}`);
+  } catch (error) {
+    // Capturar cualquier error inesperado del bucle completo
+    logger.error('Error crítico en processQueue:', error);
+    showNotification('Error crítico en la sincronización. Revisa la consola.', 'error');
+  } finally {
+    // SIEMPRE resetear isProcessing, incluso si hubo un error
+    isProcessing.value = false;
+    logger.debug('isProcessing set to false');
   }
 
-  isProcessing.value = false;
   return Promise.resolve();
 }
 

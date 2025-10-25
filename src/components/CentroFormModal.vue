@@ -3,13 +3,14 @@
 import { ref, watch, onMounted } from 'vue';
 import { supabase } from '../supabase';
 import { ArrowUpTrayIcon } from '@heroicons/vue/24/outline';
+import { TrashIcon } from '@heroicons/vue/24/solid';
 
 const props = defineProps({
   isOpen: Boolean,
   centro: Object,
 });
 
-const emit = defineEmits(['close', 'save']);
+const emit = defineEmits(['close', 'save', 'delete']);
 
 const form = ref({});
 const isUploadingLogo = ref(false);
@@ -84,6 +85,12 @@ const handleSubmit = () => {
   }
   emit('save', dataToSave);
 };
+
+const handleDelete = () => {
+  if (form.value.id) {
+    emit('delete', form.value.id);
+  }
+};
 </script>
 
 <template>
@@ -145,9 +152,21 @@ const handleSubmit = () => {
              <p v-if="!form.id && selectedLogoFile" class="text-xs text-green-600 mt-1 text-center">Logo seleccionado. Se subirá al guardar.</p>
           </div>
         </div>
-        <div class="p-6 bg-slate-50 border-t flex justify-end space-x-4">
-          <button type="button" @click="$emit('close')" class="px-4 py-2 font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">Cancelar</button>
-          <button type="submit" class="px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">Guardar Cambios</button>
+        <div class="p-6 bg-slate-50 border-t flex justify-between items-center">
+          <button
+            v-if="centro"
+            type="button"
+            @click="handleDelete"
+            class="flex items-center gap-2 px-4 py-2 font-semibold text-white bg-red-600 rounded-md hover:bg-red-700"
+          >
+            <TrashIcon class="h-4 w-4" />
+            Eliminar Centro
+          </button>
+          <div v-else></div>
+          <div class="flex space-x-4">
+            <button type="button" @click="$emit('close')" class="px-4 py-2 font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">Cancelar</button>
+            <button type="submit" class="px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">Guardar Cambios</button>
+          </div>
         </div>
       </form>
     </div>

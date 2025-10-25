@@ -284,13 +284,37 @@ const toggleMapInMobile = () => {
   }
 };
 const handleAddSala = async (name) => {
-    if(!navigator.onLine){ showNotification("Necesitas conexión para añadir salas.", "warning"); return; }
-    const { data: newSala, error } = await supabase.from('salas').insert({ version_id: version.value.id, nombre: name, color: '#808080' }).select().single();
-    if (error) { showNotification('Error al crear la sala: ' + error.message, 'error'); return; }
-    newSala.isNew = true;
+    // Generar ID temporal para la sala
+    const tempSalaId = `temp_sala_${Date.now()}`;
+
+    // Crear objeto de sala local
+    const newSala = {
+        id: tempSalaId,
+        version_id: version.value.id,
+        nombre: name,
+        color: '#808080',
+        area_puntos: null,
+        isNew: true
+    };
+
+    // Agregar sala localmente al array
     salas.value.push(newSala);
     salas.value.sort((a,b) => a.nombre.localeCompare(b.nombre));
-    showNotification(`Sala "${name}" creada en el plano.`, 'success');
+
+    // Agregar a la cola de sincronización
+    const { id, isNew, ...payloadSala } = newSala;
+    addToQueue({
+        table: 'salas',
+        type: 'insert',
+        tempId: tempSalaId,
+        payload: payloadSala
+    });
+
+    const statusMsg = navigator.onLine
+        ? `Sala "${name}" creada en el plano.`
+        : `Sala "${name}" creada localmente. Se sincronizará cuando haya conexión.`;
+    showNotification(statusMsg, 'success');
+
     handleStartAreaDrawing(newSala);
 };
 const handleStartAreaDrawing = (sala) => {

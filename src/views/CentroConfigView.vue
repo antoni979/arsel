@@ -4,8 +4,9 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { supabase } from '../supabase';
 import InteractiveMap from '../components/InteractiveMap.vue';
-import { ArrowPathIcon, ArrowUpTrayIcon, PlusIcon, TrashIcon, MapIcon, XCircleIcon, PencilIcon, CheckCircleIcon, InformationCircleIcon, BackspaceIcon } from '@heroicons/vue/24/solid';
+import { ArrowPathIcon, ArrowUpTrayIcon, PlusIcon, TrashIcon, MapIcon, XCircleIcon, PencilIcon, CheckCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/solid';
 import NomenclatureModal from '../components/NomenclatureModal.vue';
+import EditSalaModal from '../components/EditSalaModal.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -28,6 +29,10 @@ const activeSala = computed(() => salas.value.find(s => s.id === activeSalaId.va
 
 const isNomenclatureModalOpen = ref(false);
 const newPointCoords = ref(null);
+
+const isEditSalaModalOpen = ref(false);
+const salaToEdit = ref(null);
+const salaEditPermission = ref({ canEdit: false, usageCount: 0 });
 
 const existingIdentifiersInActiveSala = computed(() => {
     if (!activeSalaId.value) return [];
@@ -247,6 +252,23 @@ const handleSaveNomenclature = async (pointIdentifier) => {
 
 const handleDeletePoint = async (point) => {
     if (confirm(`¿Estás seguro de que quieres borrar el punto "${point.nomenclatura}" de este plano?`)) {
+        // Check if point is referenced in any inspections
+        const { count, error: checkError } = await supabase
+            .from('puntos_inspeccionados')
+            .select('*', { count: 'exact', head: true })
+            .eq('punto_maestro_id', point.id);
+
+        if (checkError) {
+            alert('Error al verificar el punto: ' + checkError.message);
+            return;
+        }
+
+        if (count > 0) {
+            alert(`No se puede borrar el punto "${point.nomenclatura}" porque ha sido usado en ${count} inspección(es). Los puntos con datos históricos no pueden eliminarse.`);
+            return;
+        }
+
+        // Proceed with deletion if no references found
         const { error } = await supabase.from('puntos_maestros').delete().eq('id', point.id);
         if (error) {
             alert('Error al borrar el punto: ' + error.message);
@@ -331,6 +353,93 @@ const handleUpdatePosition = async (point) => {
 const saveSalaColor = async (sala) => {
   await supabase.from('salas').update({ color: sala.color }).eq('id', sala.id);
 };
+
+const checkIfSalaCanBeEdited = async (salaId) => {
+  // Get all puntos_maestros for the sala
+  const { data: puntosMaestrosIds, error: puntosError } = await supabase
+    .from('puntos_maestros')
+    .select('id')
+    .eq('sala_id', salaId);
+
+  if (puntosError) {
+    console.error('Error checking puntos_maestros:', puntosError);
+    return { canEdit: false, usageCount: 0 };
+  }
+
+  // If no puntos_maestros exist, sala can be edited
+  if (!puntosMaestrosIds || puntosMaestrosIds.length === 0) {
+    return { canEdit: true, usageCount: 0 };
+  }
+
+  // Check if any punto_maestro is referenced in puntos_inspeccionados
+  const { count, error: countError } = await supabase
+    .from('puntos_inspeccionados')
+    .select('id', { count: 'exact', head: true })
+    .in('punto_maestro_id', puntosMaestrosIds.map(p => p.id));
+
+  if (countError) {
+    console.error('Error checking puntos_inspeccionados:', countError);
+    return { canEdit: false, usageCount: 0 };
+  }
+
+  return {
+    canEdit: count === 0,
+    usageCount: count || 0
+  };
+};
+
+const handleEditSala = async (sala) => {
+  salaToEdit.value = sala;
+  salaEditPermission.value = await checkIfSalaCanBeEdited(sala.id);
+  isEditSalaModalOpen.value = true;
+};
+
+const handleSaveSalaName = async (newName) => {
+  if (!salaToEdit.value) return;
+
+  try {
+    const { error } = await supabase
+      .from('salas')
+      .update({ nombre: newName })
+      .eq('id', salaToEdit.value.id);
+
+    if (error) {
+      alert('Error al actualizar el nombre de la sala: ' + error.message);
+    } else {
+      // Update local state
+      const sala = salas.value.find(s => s.id === salaToEdit.value.id);
+      if (sala) {
+        sala.nombre = newName;
+      }
+
+      // Update puntos nomenclatura for this sala
+      const puntosInSala = puntos.value.filter(p => p.sala_id === salaToEdit.value.id);
+      for (const punto of puntosInSala) {
+        const identifier = punto.nomenclatura.split('-').pop();
+        const newNomenclature = `${newName}-${identifier}`;
+
+        const { error: updateError } = await supabase
+          .from('puntos_maestros')
+          .update({ nomenclatura: newNomenclature })
+          .eq('id', punto.id);
+
+        if (!updateError) {
+          punto.nomenclatura = newNomenclature;
+        }
+      }
+
+      // Close modal and reset
+      isEditSalaModalOpen.value = false;
+      salaToEdit.value = null;
+      salaEditPermission.value = { canEdit: false, usageCount: 0 };
+
+      alert(`Sala renombrada exitosamente a "${newName}".`);
+    }
+  } catch (err) {
+    console.error('Error updating sala name:', err);
+    alert('Error inesperado al actualizar el nombre de la sala.');
+  }
+};
 </script>
 
 
@@ -383,6 +492,12 @@ const saveSalaColor = async (sala) => {
                     <input type="color" v-model="sala.color" @input="saveSalaColor(sala)" class="w-6 h-6 p-0 border-none rounded-md cursor-pointer flex-shrink-0">
                     <span class="font-semibold" :class="{'text-blue-800': activeSalaId === sala.id}">{{ sala.nombre }}</span>
                   </div>
+                  <button
+                    @click.stop="handleEditSala(sala)"
+                    class="opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Editar nombre de la sala">
+                    <PencilIcon class="h-4 w-4 text-slate-500 hover:text-blue-600" />
+                  </button>
                 </div>
                 <div v-if="activeSalaId === sala.id" class="pl-10 pt-1 pb-2 flex items-center space-x-4">
                     <button @click="enterDrawingMode" :disabled="isPointEditingMode || isSavingArea" class="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 disabled:text-slate-400 disabled:cursor-not-allowed">
@@ -452,6 +567,16 @@ const saveSalaColor = async (sala) => {
       :existing-identifiers="existingIdentifiersInActiveSala"
       @close="isNomenclatureModalOpen = false"
       @save="handleSaveNomenclature"
+    />
+
+    <EditSalaModal
+      :is-open="isEditSalaModalOpen"
+      :sala="salaToEdit"
+      :all-salas="salas"
+      :can-edit="salaEditPermission.canEdit"
+      :usage-count="salaEditPermission.usageCount"
+      @close="isEditSalaModalOpen = false"
+      @save="handleSaveSalaName"
     />
   </div>
 </template>

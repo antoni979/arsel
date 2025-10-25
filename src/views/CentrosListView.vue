@@ -2,6 +2,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { supabase } from '../supabase';
+import { useNotification } from '../utils/notification';
 import {
 PlusIcon,
 PencilIcon,
@@ -21,6 +22,7 @@ const selectedCentro = ref(null);
 const filterZona = ref('');
 const searchTerm = ref('');
 const zonas = ref([]); // <-- Ahora es reactivo
+const { showNotification, showConfirm } = useNotification();
 
 const getZonaColor = (zona) => {
 const colors = {
@@ -125,6 +127,28 @@ alert(error.message);
 } else {
 isModalOpen.value = false;
 await fetchCentros(); // Recargamos la lista para ver los cambios
+}
+};
+
+const handleDeleteCentro = async (centroId) => {
+const confirmed = await showConfirm(
+'Eliminar Centro',
+'¿Estás seguro de que deseas eliminar este centro? Esta acción no afectará a las inspecciones, fotos ni planos asociados.'
+);
+
+if (!confirmed) return;
+
+const { error } = await supabase
+.from('centros')
+.delete()
+.eq('id', centroId);
+
+if (error) {
+showNotification('Error al eliminar el centro: ' + error.message, 'error');
+} else {
+showNotification('Centro eliminado correctamente', 'success');
+isModalOpen.value = false;
+await fetchCentros();
 }
 };
 
@@ -252,6 +276,6 @@ class="block w-full rounded-md border-slate-300 py-2 pl-10 text-sm shadow-sm foc
   </div>
 </div>
 
-<CentroFormModal :is-open="isModalOpen" :centro="selectedCentro" @close="isModalOpen = false" @save="handleSaveCentro" />
+<CentroFormModal :is-open="isModalOpen" :centro="selectedCentro" @close="isModalOpen = false" @save="handleSaveCentro" @delete="handleDeleteCentro" />
 </div>
 </template>
