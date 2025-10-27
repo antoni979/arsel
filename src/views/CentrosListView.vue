@@ -131,24 +131,184 @@ await fetchCentros(); // Recargamos la lista para ver los cambios
 };
 
 const handleDeleteCentro = async (centroId) => {
-const confirmed = await showConfirm(
-'Eliminar Centro',
-'¿Estás seguro de que deseas eliminar este centro? Esta acción no afectará a las inspecciones, fotos ni planos asociados.'
-);
+try {
+// 1. Obtener todas las versiones de plano del centro
+const { data: versionesData, error: versionesError } = await supabase
+.from('versiones_plano')
+.select('id')
+.eq('centro_id', centroId);
 
+if (versionesError) {
+showNotification('Error al verificar versiones de plano: ' + versionesError.message, 'error');
+return;
+}
+
+// 2. Obtener todas las inspecciones del centro
+const { data: inspeccionesData, error: inspeccionesError } = await supabase
+.from('inspecciones')
+.select('id')
+.eq('centro_id', centroId);
+
+if (inspeccionesError) {
+showNotification('Error al verificar inspecciones: ' + inspeccionesError.message, 'error');
+return;
+}
+
+// 3. Obtener todas las salas de todas las versiones
+let salasData = [];
+if (versionesData && versionesData.length > 0) {
+const versionIds = versionesData.map(v => v.id);
+const { data: fetchedSalas, error: salasError } = await supabase
+.from('salas')
+.select('id')
+.in('version_id', versionIds);
+
+if (salasError) {
+showNotification('Error al verificar salas: ' + salasError.message, 'error');
+return;
+}
+salasData = fetchedSalas || [];
+}
+
+// 4. Contar registros para mensaje de confirmación
+const numVersiones = versionesData?.length || 0;
+const numInspecciones = inspeccionesData?.length || 0;
+const numSalas = salasData.length;
+
+// 5. Mostrar confirmación detallada
+let confirmMessage = '';
+if (numVersiones > 0 || numInspecciones > 0 || numSalas > 0) {
+const partes = [];
+if (numVersiones > 0) {
+partes.push(`${numVersiones} versión${numVersiones !== 1 ? 'es' : ''} de plano`);
+}
+if (numSalas > 0) {
+partes.push(`${numSalas} sala${numSalas !== 1 ? 's' : ''}`);
+}
+if (numInspecciones > 0) {
+partes.push(`${numInspecciones} inspección${numInspecciones !== 1 ? 'es' : ''} con todos sus datos relacionados`);
+}
+confirmMessage = `Vas a borrar este centro junto con ${partes.join(', ')}. Esta acción eliminará permanentemente todos los registros asociados (incidencias, puntos inspeccionados, puntos maestros, etc.). ¿Estás seguro?`;
+} else {
+confirmMessage = '¿Estás seguro de que deseas eliminar este centro?';
+}
+
+const confirmed = await showConfirm('Eliminar Centro', confirmMessage);
 if (!confirmed) return;
 
-const { error } = await supabase
+// 6. CASCADA DE ELIMINACIÓN EN ORDEN CORRECTO (de hoja a raíz)
+
+// 6.1. Eliminar incidencias de puntos_inspeccionados relacionados con inspecciones de este centro
+if (numInspecciones > 0) {
+const inspeccionIds = inspeccionesData.map(i => i.id);
+
+// Obtener todos los puntos_inspeccionados de estas inspecciones
+const { data: puntosInspeccionados, error: puntosInspeccionadosError } = await supabase
+.from('puntos_inspeccionados')
+.select('id')
+.in('inspeccion_id', inspeccionIds);
+
+if (puntosInspeccionadosError) {
+showNotification('Error al obtener puntos inspeccionados: ' + puntosInspeccionadosError.message, 'error');
+return;
+}
+
+if (puntosInspeccionados && puntosInspeccionados.length > 0) {
+const puntoInspeccionadoIds = puntosInspeccionados.map(p => p.id);
+
+// Eliminar incidencias
+const { error: deleteIncidenciasError } = await supabase
+.from('incidencias')
+.delete()
+.in('punto_inspeccionado_id', puntoInspeccionadoIds);
+
+if (deleteIncidenciasError) {
+showNotification('Error al eliminar incidencias: ' + deleteIncidenciasError.message, 'error');
+return;
+}
+}
+
+// 6.2. Eliminar puntos_inspeccionados
+const { error: deletePuntosInspeccionadosError } = await supabase
+.from('puntos_inspeccionados')
+.delete()
+.in('inspeccion_id', inspeccionIds);
+
+if (deletePuntosInspeccionadosError) {
+showNotification('Error al eliminar puntos inspeccionados: ' + deletePuntosInspeccionadosError.message, 'error');
+return;
+}
+}
+
+// 6.3. Eliminar puntos_maestros de las salas
+if (numSalas > 0) {
+const salaIds = salasData.map(s => s.id);
+
+const { error: deletePuntosMaestrosError } = await supabase
+.from('puntos_maestros')
+.delete()
+.in('sala_id', salaIds);
+
+if (deletePuntosMaestrosError) {
+showNotification('Error al eliminar puntos maestros: ' + deletePuntosMaestrosError.message, 'error');
+return;
+}
+
+// 6.4. Eliminar salas
+const { error: deleteSalasError } = await supabase
+.from('salas')
+.delete()
+.in('id', salaIds);
+
+if (deleteSalasError) {
+showNotification('Error al eliminar salas: ' + deleteSalasError.message, 'error');
+return;
+}
+}
+
+// 6.5. Eliminar inspecciones
+if (numInspecciones > 0) {
+const { error: deleteInspeccionesError } = await supabase
+.from('inspecciones')
+.delete()
+.eq('centro_id', centroId);
+
+if (deleteInspeccionesError) {
+showNotification('Error al eliminar inspecciones: ' + deleteInspeccionesError.message, 'error');
+return;
+}
+}
+
+// 6.6. Eliminar versiones de plano
+if (numVersiones > 0) {
+const { error: deleteVersionesError } = await supabase
+.from('versiones_plano')
+.delete()
+.eq('centro_id', centroId);
+
+if (deleteVersionesError) {
+showNotification('Error al eliminar versiones de plano: ' + deleteVersionesError.message, 'error');
+return;
+}
+}
+
+// 6.7. Finalmente eliminar el centro
+const { error: deleteCentroError } = await supabase
 .from('centros')
 .delete()
 .eq('id', centroId);
 
-if (error) {
-showNotification('Error al eliminar el centro: ' + error.message, 'error');
+if (deleteCentroError) {
+showNotification('Error al eliminar el centro: ' + deleteCentroError.message, 'error');
 } else {
-showNotification('Centro eliminado correctamente', 'success');
+showNotification('Centro y todos sus registros asociados eliminados correctamente', 'success');
 isModalOpen.value = false;
 await fetchCentros();
+}
+} catch (error) {
+// Manejo de errores inesperados
+showNotification('Error inesperado al eliminar el centro: ' + error.message, 'error');
+console.error('Error en handleDeleteCentro:', error);
 }
 };
 
