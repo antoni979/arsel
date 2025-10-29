@@ -1,11 +1,9 @@
 // src/utils/pdf/pdf-module-summary.js
 
-import { MARGIN } from './pdf-helpers';
-
 function drawInfoBadge(pdf, position, pointData, badgeSizeMM) {
     const { width: BADGE_WIDTH_MM, height: BADGE_HEIGHT_MM } = badgeSizeMM;
 
-    const FONT_SIZE_HEADER = BADGE_HEIGHT_MM * 0.70;
+    const FONT_SIZE_HEADER = BADGE_HEIGHT_MM * 0.50;
     const FONT_SIZE_STATE = BADGE_HEIGHT_MM * 0.38;
     const FONT_SIZE_SEMAPHORE = BADGE_HEIGHT_MM * 0.45;
 
@@ -19,7 +17,9 @@ function drawInfoBadge(pdf, position, pointData, badgeSizeMM) {
     let currentY = position.y - BADGE_HEIGHT_MM / 2;
 
     pdf.setFillColor(255, 255, 255);
-    pdf.roundedRect(startX, currentY, BADGE_WIDTH_MM, BADGE_HEIGHT_MM, 1, 1, 'F');
+    pdf.setDrawColor(80, 80, 80);
+    pdf.setLineWidth(0.3);
+    pdf.roundedRect(startX, currentY, BADGE_WIDTH_MM, BADGE_HEIGHT_MM, 1, 1, 'FD');
 
     pdf.setFontSize(FONT_SIZE_HEADER).setFont(undefined, 'bold');
     pdf.setTextColor(50, 50, 50);
@@ -68,10 +68,12 @@ function drawLeaderLine(pdf, from, to) {
 export async function buildSummaryAnnex(pdf, reportData, finalLabels, originalDimensions) {
     const { planoBase64 } = reportData;
 
+    const PLANO_MARGIN = 5; // Margen reducido para maximizar el plano en A3
+
     const PAGE_WIDTH_MM = pdf.internal.pageSize.getWidth();
     const PAGE_HEIGHT_MM = pdf.internal.pageSize.getHeight();
-    
-    const pageBounds = { x: MARGIN, y: MARGIN, width: PAGE_WIDTH_MM - MARGIN * 2, height: PAGE_HEIGHT_MM - MARGIN * 2 };
+
+    const pageBounds = { x: PLANO_MARGIN, y: PLANO_MARGIN, width: PAGE_WIDTH_MM - PLANO_MARGIN * 2, height: PAGE_HEIGHT_MM - PLANO_MARGIN * 2 };
 
     const pageAspectRatio = pageBounds.width / pageBounds.height;
     const imageAspectRatio = originalDimensions.width / originalDimensions.height;

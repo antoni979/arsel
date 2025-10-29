@@ -18,14 +18,14 @@
       <!-- Fila de círculos con espaciado explícito -->
       <div class="flex items-center">
         <!-- ===== INICIO DE LA SOLUCIÓN FINAL ===== -->
-        <div 
-          v-for="(item, index) in semaphoreItems" 
+        <div
+          v-for="(item, index) in semaphoreItems"
           :key="item.label"
-          :class="['w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center', { 'mx-1': index === 1 }]"
+          :class="['w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center', { 'mx-1': index === 1 }]"
           :style="{ backgroundColor: item.color }"
           :title="`${item.count} incidencias de tipo ${item.label}`"
         >
-          <span class="text-white font-bold text-[10px] leading-none">
+          <span class="text-white font-bold text-[11px] leading-none">
             {{ item.count }}
           </span>
         </div>

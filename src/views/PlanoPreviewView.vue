@@ -24,7 +24,7 @@ const isGenerating = ref(false);
 const draggedLabel = ref(null);
 const dragOffset = ref({ x: 0, y: 0 });
 
-const BADGE_WIDTH_RATIO = 0.04; // El ancho del badge será el 4% del ancho del plano
+const BADGE_WIDTH_RATIO = 0.07; // El ancho del badge será el 7% del ancho del plano
 const BADGE_ASPECT_RATIO = 45 / 55; // Altura / Ancho
 
 const loadData = async () => {
