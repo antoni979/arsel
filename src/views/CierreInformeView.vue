@@ -76,21 +76,15 @@ const handleFileUpload = async (file, incidencia) => {
   isUploading.value = incidencia.id;
 
   try {
-    // Compress image if it's large
-    let fileToUpload = file;
+    // SIEMPRE comprimir para unificar calidad (cámara y galería)
+    showNotification('Comprimiendo imagen...', 'info');
+
     const originalSize = file.size;
+    const fileToUpload = await compressImage(file);
 
-    if (file.size > 500 * 1024) { // Compress if larger than 500KB
-      showNotification('Comprimiendo imagen...', 'info');
-
-      // Use canvas API for compression
-      const compressedFile = await compressImage(file);
-      fileToUpload = compressedFile;
-
-      const compressionRatio = ((originalSize - compressedFile.size) / originalSize * 100).toFixed(1);
-      if (compressionRatio > 5) {
-        showNotification(`Imagen comprimida: ${compressionRatio}% de reducción`, 'success');
-      }
+    const compressionRatio = ((originalSize - fileToUpload.size) / originalSize * 100).toFixed(1);
+    if (compressionRatio > 5) {
+      showNotification(`Imagen comprimida: ${compressionRatio}% de reducción`, 'success');
     }
 
     // Cambiamos el nombre de la carpeta para mantener consistencia

@@ -34,6 +34,7 @@ const tempPointIdentifier = ref('');
 const nameInputRef = ref(null);
 const { isUploading, handleFileUpload: processAndUploadFile } = useFileUpload(props.inspeccionId, props.punto.id);
 const dragOverIncidenceId = ref(null);
+const detalleModificacion = ref(null);
 
 
 const hydrateOfflineImages = async () => {
@@ -59,11 +60,14 @@ watch(() => props.isOpen, async (newVal) => {
     incidencias.value.forEach(inc => {
         customValues.value[inc.id] = inc.custom_fields || {};
     });
-    
+
     await hydrateOfflineImages();
 
     isEditingName.value = false;
     collapsedItems.value.clear();
+
+    // Inicializar detalleModificacion con el valor existente
+    detalleModificacion.value = puntoInspeccionado.value?.detalle_modificacion || null;
   }
 }, { immediate: true });
 
@@ -201,6 +205,20 @@ const toggleItemStatus = async (itemId) => {
       for (const incidencia of itemIncidencias) {
         deleteIncidencia(incidencia.id);
       }
+
+      // Si es el punto 3, limpiar detalle_modificacion
+      if (itemId === 3) {
+        detalleModificacion.value = null;
+        addToQueue({
+          table: 'puntos_inspeccionados',
+          type: 'update',
+          id: puntoInspeccionado.value.id,
+          payload: { detalle_modificacion: null }
+        });
+        if (puntoInspeccionado.value) {
+          puntoInspeccionado.value.detalle_modificacion = null;
+        }
+      }
     }
   } else {
     await addIncidencia(itemId);
@@ -271,6 +289,21 @@ const isCollapsed = (itemId) => collapsedItems.value.has(itemId);
 const toggleCollapse = (itemId) => { if (isCollapsed(itemId)) { collapsedItems.value.delete(itemId); } else { collapsedItems.value.add(itemId); } };
 const onDragOver = (event, incidenceId) => { event.preventDefault(); dragOverIncidenceId.value = incidenceId; };
 const onDragLeave = (event) => { event.preventDefault(); dragOverIncidenceId.value = null; };
+
+const handleDetalleModificacionChange = (newValue) => {
+  detalleModificacion.value = newValue;
+
+  addToQueue({
+    table: 'puntos_inspeccionados',
+    type: 'update',
+    id: puntoInspeccionado.value.id,
+    payload: { detalle_modificacion: newValue }
+  });
+
+  if (puntoInspeccionado.value) {
+    puntoInspeccionado.value.detalle_modificacion = newValue;
+  }
+};
 const handleClose = () => {
   for (const item of checklistItems) {
     const itemFields = getCustomFieldsForItem(item.id);
@@ -435,16 +468,48 @@ class="text-xl font-bold text-slate-800 p-0 border-none focus:ring-0 w-24"
                       <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'cameraInput-' + incidencia.id" accept="image/*" capture="environment">
                       <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-' + incidencia.id" accept="image/*">
                     </div>
-                    <div v-if="incidencia.url_foto_antes" class="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                    <div v-if="incidencia.url_foto_antes" class="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-2 transition-opacity">
+                       <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'cameraInput-change-' + incidencia.id" accept="image/*" capture="environment">
                        <input type="file" @change="handleFileChange($event, incidencia)" class="hidden" :id="'fileInput-change-' + incidencia.id" accept="image/*">
-                       <label :for="'fileInput-change-' + incidencia.id" class="cursor-pointer text-white text-sm font-semibold">Cambiar Foto</label>
+
+                       <label :for="'cameraInput-change-' + incidencia.id" class="cursor-pointer flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">
+                         <ArrowUpTrayIcon class="h-4 w-4" /> Hacer Foto
+                       </label>
+                       <label :for="'fileInput-change-' + incidencia.id" class="cursor-pointer text-sm text-white hover:underline">
+                         o seleccionar de la galería
+                       </label>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div>
+            <!-- Selector de detalle_modificacion para punto 3 -->
+            <div v-if="item.id === 3 && getIncidenciasForItem(item.id).value.length > 0" class="bg-blue-50 border-2 border-blue-200 rounded-lg p-4">
+              <h4 class="font-bold text-blue-800 mb-3">¿Los módulos/niveles han aumentado o disminuido?</h4>
+              <div class="flex flex-col sm:flex-row gap-4">
+                <button
+                  @click="handleDetalleModificacionChange('aumentado')"
+                  :class="['w-full flex items-center justify-center gap-2 py-2 px-4 rounded-md font-semibold transition-all',
+                           detalleModificacion === 'aumentado'
+                             ? 'bg-blue-600 text-white shadow-md ring-2 ring-offset-2 ring-blue-500'
+                             : 'bg-white border text-slate-700 hover:bg-slate-100']"
+                >
+                  Aumentado
+                </button>
+                <button
+                  @click="handleDetalleModificacionChange('disminuido')"
+                  :class="['w-full flex items-center justify-center gap-2 py-2 px-4 rounded-md font-semibold transition-all',
+                           detalleModificacion === 'disminuido'
+                             ? 'bg-blue-600 text-white shadow-md ring-2 ring-offset-2 ring-blue-500'
+                             : 'bg-white border text-slate-700 hover:bg-slate-100']"
+                >
+                  Disminuido
+                </button>
+              </div>
+            </div>
+
+            <div v-if="item.id !== 3">
               <button @click="addIncidencia(item.id)" class="w-full flex items-center justify-center gap-2 py-2 text-sm font-semibold text-blue-700 bg-blue-50 rounded-md hover:bg-blue-100 border border-dashed border-blue-300"><PlusCircleIcon class="h-5 w-5"/>Añadir otra incidencia</button>
             </div>
           </div>

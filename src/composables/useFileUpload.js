@@ -61,12 +61,10 @@ export function useFileUpload(inspeccionId, puntoId) {
     isUploading.value = incidencia.id;
 
     try {
-      let fileToUpload = file;
-      if (file.size > 500 * 1024) {
-        showNotification('Comprimiendo imagen...', 'info');
-        fileToUpload = await compressImage(file);
-      }
-      
+      // SIEMPRE comprimir para unificar calidad (cámara y galería)
+      showNotification('Comprimiendo imagen...', 'info');
+      const fileToUpload = await compressImage(file);
+
       const arrayBuffer = await readFileAsArrayBuffer(fileToUpload);
       const stableBlob = new Blob([arrayBuffer], { type: fileToUpload.type });
       const stableBlobUrl = URL.createObjectURL(stableBlob);

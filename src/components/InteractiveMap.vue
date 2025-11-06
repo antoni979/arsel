@@ -145,6 +145,15 @@ const getSalaColor = (salaId) => {
   return sala ? sala.color : '#9CA3AF';
 };
 
+const getPointColor = (point) => {
+  // If point is suprimido, always return gray
+  if (point.estado === 'suprimido') {
+    return '#9CA3AF';
+  }
+  // Otherwise, use the point's color or the room's color
+  return point.color || getSalaColor(point.sala_id);
+};
+
 const startDrag = (point, event) => {
   if (props.isReadOnly) return;
   event.preventDefault();
@@ -267,7 +276,8 @@ function getPointIncidentBadge(puntoId) {
            :style="{
              left: (point.coordenada_x * imageRect.width + imageRect.left) + 'px',
              top: (point.coordenada_y * imageRect.height + imageRect.top) + 'px',
-             backgroundColor: point.color || getSalaColor(point.sala_id)
+             backgroundColor: getPointColor(point),
+             opacity: point.estado === 'suprimido' ? '0.6' : '1'
            }"
            @mousedown.stop="startDrag(point, $event)"
            @click.stop="handlePointClick(point)"

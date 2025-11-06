@@ -478,13 +478,26 @@ const finalizarInspeccion = async () => {
           </div>
         </div>
         <!-- === VISTA LISTA === -->
-        <div v-else class="flex items-center justify-between gap-2">
-           <button v-if="toggleSidebar" @click="toggleSidebar" class="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200" title="Abrir Menú"><Bars3Icon class="h-5 w-5" /></button>
-           <GlobalStatusIndicator mode="mobile" />
-           <div class="flex items-center gap-1">
-             <button @click="toggleMapInMobile" class="p-2 rounded-md bg-slate-100 text-slate-600" title="Ver Plano"><MapIcon class="h-5 w-5" /></button>
-             <button @click="router.push(`/centros/${centro.id}/historial`)" class="p-2 rounded-md bg-slate-100 text-slate-600" title="Volver al Historial"><ArrowLeftIcon class="h-5 w-5" /></button>
-           </div>
+        <div v-else class="space-y-2">
+          <!-- Info Header -->
+          <div class="flex items-center justify-between bg-gradient-to-r from-blue-50 to-slate-50 rounded-lg px-3 py-2 border border-slate-200">
+            <div class="flex-1 min-w-0">
+              <h2 class="text-sm font-bold text-slate-800 truncate">{{ centro.nombre }}</h2>
+              <p class="text-xs text-slate-600 mt-0.5">
+                {{ new Date(inspeccion.fecha_inspeccion).toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: 'numeric' }) }}
+              </p>
+            </div>
+          </div>
+
+          <!-- Button Row -->
+          <div class="flex items-center justify-between gap-2">
+            <button v-if="toggleSidebar" @click="toggleSidebar" class="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200" title="Abrir Menú"><Bars3Icon class="h-5 w-5" /></button>
+            <GlobalStatusIndicator mode="mobile" />
+            <div class="flex items-center gap-1">
+              <button @click="toggleMapInMobile" class="p-2 rounded-md bg-slate-100 text-slate-600" title="Ver Plano"><MapIcon class="h-5 w-5" /></button>
+              <button @click="router.push(`/centros/${centro.id}/historial`)" class="p-2 rounded-md bg-slate-100 text-slate-600" title="Volver al Historial"><ArrowLeftIcon class="h-5 w-5" /></button>
+            </div>
+          </div>
         </div>
          <!-- Aviso de solo lectura compacto (móvil) -->
         <div v-if="!canEditInspection" class="mt-2 flex items-center gap-2 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded px-2 py-1">
@@ -588,7 +601,7 @@ const finalizarInspeccion = async () => {
             v-if="!loading && version?.url_imagen_plano"
             :key="inspeccionId"
             :image-url="version.url_imagen_plano"
-            :points="puntosParaMostrar.filter(p => p.estado !== 'suprimido')"
+            :points="puntosParaMostrar"
             :salas="salas"
             :all-incidencias="allIncidencias"
             :is-read-only="!canEditInspection || (!isPlacementMode && !isAreaDrawingMode)"
