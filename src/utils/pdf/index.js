@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import { fetchReportData } from './pdf-data';
 import { buildTextPages } from './pdf-module-text';
+import { buildTextPagesCierre } from './pdf-module-text-cierre';
 import { buildInitialPhotoAnnex, buildRemediationPhotoAnnex } from './pdf-module-photos';
 import { buildChecklistAnnex } from './pdf-module-checklist';
 import { buildSummaryAnnex } from './pdf-module-summary';
@@ -21,10 +22,17 @@ export async function generateTextReport(inspeccionId, reportType = 'initial', o
     if (!reportData) throw new Error("No se pudieron cargar los datos para el informe.");
     
     const pdf = new jsPDF('p', 'mm', 'a4');
-    
-    console.log("Construyendo páginas de texto...");
-    await buildTextPages(pdf, reportData);
-    
+
+    // Usar módulo de texto diferente según el tipo de informe
+    if (reportType === 'initial') {
+      console.log("Construyendo páginas de texto (informe inicial)...");
+      await buildTextPages(pdf, reportData);
+    } else if (reportType === 'remediation') {
+      console.log("Construyendo páginas de texto (informe de cierre)...");
+      await buildTextPagesCierre(pdf, reportData);
+    }
+
+    // Construir anexo de fotos según el tipo de informe
     if (reportType === 'initial') {
       console.log("Construyendo anexo de fotos inicial...");
       await buildInitialPhotoAnnex(pdf, reportData);
@@ -32,9 +40,12 @@ export async function generateTextReport(inspeccionId, reportType = 'initial', o
       console.log("Construyendo anexo de fotos de subsanación...");
       await buildRemediationPhotoAnnex(pdf, reportData);
     }
-    
-    console.log("Construyendo anexo de checklist...");
-    await buildChecklistAnnex(pdf, reportData);
+
+    // Solo incluir checklist en informe inicial
+    if (reportType === 'initial') {
+      console.log("Construyendo anexo de checklist...");
+      await buildChecklistAnnex(pdf, reportData);
+    }
 
     // --- INICIO DE LA CORRECCIÓN: Obtenemos y pasamos el logo de Arsel a la cabecera ---
     console.log("Añadiendo página de Anexo de Planos...");
@@ -43,7 +54,9 @@ export async function generateTextReport(inspeccionId, reportType = 'initial', o
     await drawHeader(pdf, reportData.inspectionData, arselLogoUrl); // Pasamos la URL a la función
     pdf.setFontSize(FONT_SIZES.annexTitle);
     pdf.setFont('helvetica', 'bold');
-    pdf.text('ANEXO 03:', DOC_WIDTH / 2, 145, { align: 'center' });
+    // Número de anexo depende del tipo de informe (02 para cierre, 03 para inicial)
+    const annexNumber = reportType === 'remediation' ? '02' : '03';
+    pdf.text(`ANEXO ${annexNumber}:`, DOC_WIDTH / 2, 145, { align: 'center' });
     pdf.text('PLANOS', DOC_WIDTH / 2, 155, { align: 'center' });
     // --- FIN DE LA CORRECCIÓN ---
     

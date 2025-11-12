@@ -116,7 +116,7 @@ export async function buildInitialPhotoAnnex(pdf, reportData) {
 
 // --- ANEXO DE FOTOS DE SUBSANACIÓN (OPTIMIZADO) ---
 export async function buildRemediationPhotoAnnex(pdf, reportData) {
-  const { inspectionData, incidenciasData, puntosMaestrosData, puntosInspeccionadosData } = reportData;
+  const { inspectionData, incidenciasData, puntosMaestrosData, puntosInspeccionadosData, salasData } = reportData;
 
   const incidenciasCorregidas = incidenciasData.filter(inc => inc.url_foto_antes && inc.url_foto_despues);
   if (incidenciasCorregidas.length === 0) return;
@@ -142,34 +142,62 @@ export async function buildRemediationPhotoAnnex(pdf, reportData) {
     const puntoInspeccionado = puntosInspeccionadosData.find(pi => pi.id === incidencia.punto_inspeccionado_id);
     const puntoMaestro = puntoInspeccionado ? puntosMaestrosData.find(pm => pm.id === puntoInspeccionado.punto_maestro_id) : null;
     if (!puntoMaestro) continue;
-    
+
+    // Obtener sala y checklist item
+    const sala = salasData.find(s => s.id === puntoMaestro.sala_id);
+    const checklistItem = checklistItems.find(item => item.id === incidencia.item_checklist);
+
     pdf.addPage();
     await drawHeader(pdf, inspectionData, arselLogoUrl);
-    pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'normal').text(`Corrección de Incidencia: ${puntoMaestro.nomenclatura}`, MARGIN, 45);
+
+    // Título: Nombre de la sala en negrita y grande
+    let currentY = 45;
+    pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'bold');
+    pdf.text(sala ? sala.nombre.toUpperCase() : 'SALA DESCONOCIDA', MARGIN, currentY);
+    currentY += 7;
+
+    // Nomenclatura del punto
+    pdf.setFontSize(FONT_SIZES.body).setFont('helvetica', 'normal');
+    pdf.text(`Punto: ${puntoMaestro.nomenclatura}`, MARGIN, currentY);
+    currentY += 6;
+
+    // Item del checklist subsanado (subtítulo)
+    if (checklistItem) {
+      pdf.setFontSize(FONT_SIZES.body - 1).setFont('helvetica', 'italic');
+      const checklistText = `Item ${checklistItem.id}: ${checklistItem.text}`;
+      const checklistLines = pdf.splitTextToSize(checklistText, DOC_WIDTH - (MARGIN * 2));
+      pdf.text(checklistLines, MARGIN, currentY);
+    }
 
     const [fotoAntesBase64, fotoDespuesBase64] = await Promise.all([
       loadImageAsBase64(incidencia.url_foto_antes, { maxWidth: 600, maxHeight: 600 }),
       loadImageAsBase64(incidencia.url_foto_despues, { maxWidth: 600, maxHeight: 600 })
     ]);
-    
-    const photoBoxY = 65;
+
+    // Ajustar posición de fotos después del título
+    currentY += 10; // Espacio después del checklist item
     const photoBoxSize = (DOC_WIDTH - (MARGIN * 2) - 10) / 2;
     const photoPadding = 2;
 
-    pdf.text('ANTES', MARGIN + (photoBoxSize / 2), 60, { align: 'center' });
+    pdf.setFont('helvetica', 'bold').setFontSize(FONT_SIZES.body);
+    pdf.text('ANTES', MARGIN + (photoBoxSize / 2), currentY, { align: 'center' });
+
+    currentY += 5; // Espacio entre etiqueta y foto
+    const photoBoxY = currentY;
+
     pdf.rect(MARGIN, photoBoxY, photoBoxSize, photoBoxSize);
     if (fotoAntesBase64) {
       pdf.addImage(fotoAntesBase64, 'JPEG', MARGIN + photoPadding, photoBoxY + photoPadding, photoBoxSize - (photoPadding * 2), photoBoxSize - (photoPadding * 2), undefined, 'MEDIUM');
     }
-    
+
     const secondPhotoX = MARGIN + photoBoxSize + 10;
-    pdf.text('DESPUÉS', secondPhotoX + (photoBoxSize / 2), 60, { align: 'center' });
+    pdf.text('DESPUÉS', secondPhotoX + (photoBoxSize / 2), photoBoxY - 5, { align: 'center' });
     pdf.rect(secondPhotoX, photoBoxY, photoBoxSize, photoBoxSize);
     if (fotoDespuesBase64) {
       pdf.addImage(fotoDespuesBase64, 'JPEG', secondPhotoX + photoPadding, photoBoxY + photoPadding, photoBoxSize - (photoPadding * 2), photoBoxSize - (photoPadding * 2), undefined, 'MEDIUM');
     }
-    
-    let obsBlockY = 160;
+
+    let obsBlockY = photoBoxY + photoBoxSize + 5; // Dinámicamente después de las fotos
     pdf.setFontSize(FONT_SIZES.body);
     let obsText = '';
     if (incidencia.custom_fields) {
