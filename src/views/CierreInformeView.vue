@@ -200,8 +200,9 @@ const deletePhoto = async (incidencia) => {
 };
 
 const todasSubsanadas = computed(() => {
-  if (incidencias.value.length === 0) return true;
-  return incidencias.value.every(inc => !!inc.url_foto_despues);
+  // Siempre permite cerrar el informe, sin validar fotos de subsanación
+  // Solo se incluirán en el PDF las incidencias que tengan foto_antes Y foto_despues
+  return true;
 });
 
 function blobToBase64(blob) {

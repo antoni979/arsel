@@ -150,21 +150,20 @@ export async function buildRemediationPhotoAnnex(pdf, reportData) {
     pdf.addPage();
     await drawHeader(pdf, inspectionData, arselLogoUrl);
 
-    // Título: Nombre de la sala en negrita y grande
+    // Extraer número del punto (última parte de la nomenclatura)
+    const numeroPunto = puntoMaestro.nomenclatura.split('-').pop();
+    const nombreSala = sala ? sala.nombre : 'SALA DESCONOCIDA';
+
+    // Título unificado: Reserva: [SALA] - Alineación [NUMERO]
     let currentY = 45;
     pdf.setFontSize(FONT_SIZES.h2).setFont('helvetica', 'bold');
-    pdf.text(sala ? sala.nombre.toUpperCase() : 'SALA DESCONOCIDA', MARGIN, currentY);
-    currentY += 7;
+    pdf.text(`Reserva: ${nombreSala} - Alineación ${numeroPunto}`, MARGIN, currentY);
+    currentY += 8;
 
-    // Nomenclatura del punto
-    pdf.setFontSize(FONT_SIZES.body).setFont('helvetica', 'normal');
-    pdf.text(`Punto: ${puntoMaestro.nomenclatura}`, MARGIN, currentY);
-    currentY += 6;
-
-    // Item del checklist subsanado (subtítulo)
+    // Checklist subsanado (cambiar "Item" por "Punto")
     if (checklistItem) {
-      pdf.setFontSize(FONT_SIZES.body - 1).setFont('helvetica', 'italic');
-      const checklistText = `Item ${checklistItem.id}: ${checklistItem.text}`;
+      pdf.setFontSize(FONT_SIZES.body).setFont('helvetica', 'normal');
+      const checklistText = `Punto ${checklistItem.id}: ${checklistItem.text}`;
       const checklistLines = pdf.splitTextToSize(checklistText, DOC_WIDTH - (MARGIN * 2));
       pdf.text(checklistLines, MARGIN, currentY);
     }
